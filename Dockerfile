@@ -57,6 +57,11 @@ fi
 # $HOME is /root; the user has no entry in /etc/passwd, so point it somewhere writable.
 exec setpriv --reuid="$uid" --regid="$gid" --clear-groups --inh-caps=-all env HOME=/tmp "$@"
 EOF
+# Git on Windows checks this Dockerfile out with CRLF line endings (`core.autocrlf=true`).
+# Docker drops the CR of its instructions but keeps the ones inside a heredoc, so the script
+# would start with `#!/bin/sh<CR>`, a shell that does not exist, and every `cargo xtask docker`
+# would fail with "exec /usr/local/bin/srr-entrypoint: no such file or directory".
+RUN sed -i 's/\r$//' /usr/local/bin/srr-entrypoint
 
 WORKDIR /work
 # `cargo xtask docker serve` runs the LAN server on this port.
