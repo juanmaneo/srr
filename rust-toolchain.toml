@@ -1,0 +1,7 @@
+# The Rust toolchain of the project: the single place naming the compiler, the components and
+# the targets. rustup picks it up on every machine, and the Docker image installs it from this
+# very file (so there is no version to keep in step anywhere else).
+[toolchain]
+channel = "1.99"
+components = ["clippy", "rustfmt", "llvm-tools-preview"]
+targets = ["wasm32-unknown-unknown"]

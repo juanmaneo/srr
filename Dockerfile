@@ -15,29 +15,35 @@
 #   at /work and runs `cargo xtask <task>` inside it, so build outputs (dist/) land on the host.
 #   The container runs the command as the owner of /work, so those outputs belong to the host
 #   user rather than to root.
-ARG RUST_VERSION=1.88
 ARG DEBIAN_RELEASE=bookworm
 
 # ---------------------------------------------------------------------------------------------
 # Toolchain
 # ---------------------------------------------------------------------------------------------
-FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE} AS toolchain
-
-# Must match the `wasm-bindgen` crate version in Cargo.lock (`cargo tree -i wasm-bindgen`).
-ARG WASM_BINDGEN_VERSION=0.2.129
+# Any `rust` image does: only its rustup is used. The compiler, components and targets come
+# from the project's rust-toolchain.toml, so the version is written in one place only.
+FROM rust:${DEBIAN_RELEASE} AS toolchain
 
 # The native build of the game (run by `cargo test --workspace`) plays the music through ALSA.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libasound2-dev pkg-config \
  && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /work
+# The project's toolchain, with its components and targets, exactly as rustup would install it
+# on a developer's machine from the same file.
+COPY rust-toolchain.toml .
+RUN rustup toolchain install
+
+# `wasm-bindgen-cli` must be the version of the `wasm-bindgen` crate in Cargo.lock: read it
+# from there rather than repeating it here.
 # The base image already makes $CARGO_HOME and $RUSTUP_HOME world-writable; the files these
-# installs add (crate registry, package cache lock) must be too, for the non-root user below.
-RUN rustup target add wasm32-unknown-unknown \
- && rustup component add llvm-tools-preview \
- && cargo install --locked wasm-bindgen-cli --version ${WASM_BINDGEN_VERSION} \
+# installs add (crate registry, package cache lock, the toolchain) must be too, for the
+# non-root user below.
+COPY Cargo.lock .
+RUN cargo install --locked wasm-bindgen-cli --version "$(awk '/^name = "wasm-bindgen"$/ { getline; sub(/^version = "/, ""); sub(/"$/, ""); print; exit }' Cargo.lock)" \
  && cargo install --locked cargo-llvm-cov \
- && chmod -R a+rwX ${CARGO_HOME}
+ && chmod -R a+rwX ${CARGO_HOME} ${RUSTUP_HOME}
 
 # Runs the command as the owner of /work (the project, bind-mounted by `cargo xtask docker`),
 # so that target/ and dist/ are created with the host user's uid/gid instead of root's. Stays
@@ -63,7 +69,6 @@ EOF
 # would fail with "exec /usr/local/bin/srr-entrypoint: no such file or directory".
 RUN sed -i 's/\r$//' /usr/local/bin/srr-entrypoint
 
-WORKDIR /work
 # `cargo xtask docker serve` runs the LAN server on this port.
 EXPOSE 8080
 ENTRYPOINT ["srr-entrypoint"]

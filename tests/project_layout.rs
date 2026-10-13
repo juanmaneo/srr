@@ -281,11 +281,37 @@ fn the_readme_documents_the_xtask_workflow() {
 fn the_dockerfile_can_build_test_cover_and_package_the_game() {
     let dockerfile = read("Dockerfile");
     assert!(dockerfile.contains("FROM "));
+    // The compiler version, components and targets live in rust-toolchain.toml only; the image
+    // installs them from that file instead of repeating them.
+    let toolchain = read("rust-toolchain.toml");
     assert!(
-        dockerfile.contains("wasm32-unknown-unknown"),
-        "wasm target missing"
+        toolchain.contains("wasm32-unknown-unknown"),
+        "wasm target missing from rust-toolchain.toml"
     );
+    assert!(
+        toolchain.contains("llvm-tools-preview"),
+        "coverage component missing from rust-toolchain.toml"
+    );
+    assert!(
+        dockerfile.contains("COPY rust-toolchain.toml")
+            && dockerfile.contains("rustup toolchain install"),
+        "the image must install the toolchain from rust-toolchain.toml"
+    );
+    for repeated in ["RUST_VERSION", "rustup target add", "rustup component add"] {
+        assert!(
+            !dockerfile.contains(repeated),
+            "`{repeated}` repeats what rust-toolchain.toml says"
+        );
+    }
     assert!(dockerfile.contains("wasm-bindgen"), "wasm-bindgen missing");
+    assert!(
+        !dockerfile.contains("WASM_BINDGEN_VERSION") && dockerfile.contains("Cargo.lock"),
+        "the wasm-bindgen-cli version must be read from Cargo.lock, not repeated"
+    );
+    assert!(
+        !read("Cargo.toml").contains("rust-version"),
+        "rust-toolchain.toml already names the compiler"
+    );
     assert!(dockerfile.contains("llvm-cov"), "coverage tooling missing");
     assert!(
         dockerfile.contains("WORKDIR /work"),
