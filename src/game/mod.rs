@@ -1,0 +1,48 @@
+//! The engine-agnostic game rules.
+//!
+//! Nothing in here knows about rendering, wall-clock time, threads or randomness: a [`Match`]
+//! is a pure function of its previous state and the inputs of one tick. That keeps the rules
+//! unit-testable, identical in the browser, and ready for lock-step / rollback online play.
+//!
+//! One [`Match::step`] is one tick of a fixed timestep ([`TICKS_PER_SECOND`]):
+//!
+//! 1. every fighter is updated, in roster order, from its own input and its previous state
+//!    (nobody turns by itself: free fighters face the direction pressed with down, then act
+//!    with the priority technique > attack > grab > jump > crouch > walk; grappling fighters
+//!    stay put);
+//! 2. overlapping push boxes are separated, so fighters cannot walk through each other (but
+//!    can jump over each other);
+//! 3. every attack (strike) that is active after that resolves against the updated state, so
+//!    simultaneous attacks trade hits, high attacks pass over crouching fighters and stepping
+//!    back on the hit tick blocks; a grappler that
+//!    is hit frees its partner;
+//! 4. every grapple plays one tick from the fresh presses of its two fighters (a projection
+//!    counters or lands; otherwise reversal glitch, escape, referee stand-up, then submission
+//!    drain, advance or strike);
+//! 5. every active judo technique, then every active grab, connects with the first fighter it
+//!    can catch: they come after strikes (a strike interrupts them) and cannot be blocked;
+//! 6. the round timer runs and the outcome is evaluated.
+//!
+//! A [`Bot`] plays a fighter for a player who is alone: it reads the [`Match`] and answers with
+//! an [`Input`], deterministically (its randomness is a seeded generator).
+
+mod bot;
+mod config;
+mod fighter;
+mod grapple;
+mod input;
+mod roster;
+mod simulation;
+mod technique;
+
+pub use bot::Bot;
+pub use config::{
+    AttackData, ConfigError, Glitch, GlitchSet, GrappleData, MatchConfig, TICKS_PER_SECOND,
+    TechniqueData,
+};
+pub use fighter::{AttackPhase, Facing, Fighter, FighterState};
+pub use grapple::{Grapple, GrapplePosition, GrappleRole};
+pub use input::{Attack, Input, Key, KeyBindings, Limb, Strength};
+pub use roster::{PlayerId, PlayerSlot, Roster, RosterError, TeamId};
+pub use simulation::{Match, Outcome, Phase, SetupError};
+pub use technique::Technique;

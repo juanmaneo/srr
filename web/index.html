@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shattered Realm: Rampage</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #120f1a;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        outline: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="srr-canvas" tabindex="0"></canvas>
+    <script type="module">
+      import init from "./srr.js";
+
+      init().catch((error) => {
+        // winit uses an exception for control flow on the web; it is not a real failure.
+        if (!String(error).includes("Using exceptions for control flow")) {
+          throw error;
+        }
+      });
+      document.getElementById("srr-canvas").focus();
+    </script>
+  </body>
+</html>

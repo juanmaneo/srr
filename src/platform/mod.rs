@@ -1,0 +1,123 @@
+//! The engine-independent client shell: the [`Game`] wired to the browser's WebSocket and to
+//! the audio output.
+//!
+//! An engine backend ([`crate::engine`]) owns one [`Shell`], calls [`Shell::tick`] once per
+//! fixed tick with the keys held, and draws [`Shell::frame`]. Like the backends, this module
+//! only moves bytes and samples around; it is checked by playing and excluded from the
+//! coverage gate.
+//!
+//! In the browser the shell talks to the relay server; add `?practice` to the URL to play
+//! alone (against the training dummy, or the computer once the offer is accepted). Native builds
+//! always play alone.
+//!
+//! Natively the music starts with the intro. In the browser it starts on the first key press,
+//! click or touch, from inside the DOM event (see `web::AudioUnlock`), because of the autoplay
+//! policy; the intro shows which of the two applies ([`crate::front::SoundState`]).
+
+use std::collections::HashSet;
+
+use crate::front::{Frame, Game};
+use crate::game::{Key, MatchConfig};
+use crate::net::Client;
+
+pub mod sound;
+#[cfg(target_arch = "wasm32")]
+mod web;
+
+/// The running game as seen by an engine backend.
+pub struct Shell {
+    game: Game,
+    #[cfg(target_arch = "wasm32")]
+    connection: Option<web::Connection>,
+    /// Owns the music once a gesture started it.
+    #[cfg(target_arch = "wasm32")]
+    audio: Option<web::AudioUnlock>,
+    /// Kept alive while the music plays; dropping it stops the music.
+    #[cfg(not(target_arch = "wasm32"))]
+    _sound: Option<sound::Sound>,
+}
+
+impl std::fmt::Debug for Shell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Shell")
+            .field("game", &self.game)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for Shell {
+    fn default() -> Self {
+        Shell::new()
+    }
+}
+
+impl Shell {
+    /// Practice natively and with `?practice`; otherwise connects to the server that served
+    /// the page.
+    pub fn new() -> Self {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let (client, connection) = if web::practice_requested() {
+                (Client::practice(MatchConfig::default()), None)
+            } else {
+                web::connect()
+            };
+            let mut game = Game::new(client);
+            let audio = web::AudioUnlock::install(game.music().clone());
+            if audio.is_none() {
+                game.set_sound(crate::front::SoundState::Unavailable);
+            }
+            Shell {
+                game,
+                connection,
+                audio,
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use crate::front::SoundState;
+
+            let mut game = Game::new(Client::practice(MatchConfig::default()));
+            let sound = sound::Sound::start(game.music().clone());
+            game.set_sound(if sound.is_some() {
+                SoundState::Playing
+            } else {
+                SoundState::Unavailable
+            });
+            Shell {
+                game,
+                _sound: sound,
+            }
+        }
+    }
+
+    /// One fixed tick: reads the network, advances the game with the keys held and sends this
+    /// tick's input.
+    pub fn tick(&mut self, pressed: &HashSet<Key>) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(connection) = &self.connection {
+                connection.receive(&mut self.game);
+            }
+            if let Some(audio) = &self.audio {
+                self.game.set_sound(audio.state());
+            }
+        }
+
+        let outgoing = self.game.tick(pressed);
+
+        #[cfg(target_arch = "wasm32")]
+        if let Some(connection) = &self.connection {
+            for frame in &outgoing {
+                connection.send(frame);
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        drop(outgoing);
+    }
+
+    /// What to draw now.
+    pub fn frame(&self) -> Frame {
+        self.game.frame()
+    }
+}

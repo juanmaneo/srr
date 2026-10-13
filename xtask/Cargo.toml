@@ -1,0 +1,8 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+description = "Build automation for Shattered Realm: Rampage (`cargo xtask <task>`)"
+publish = false
+
+[dependencies]

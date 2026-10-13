@@ -1,0 +1,59 @@
+[package]
+name = "srr"
+version = "0.1.0"
+edition = "2024"
+description = "Shattered Realm: Rampage - a versus fighting game built around intentional glitches"
+publish = false
+
+[features]
+# The playable game runs on one engine, picked at compile time: Bevy (default) or Fyrox
+# (`--no-default-features --features fyrox`). Everything but the thin `src/engine/<name>.rs`
+# backend is shared. The relay server only needs the rules and the protocol, so it depends on
+# this crate with `default-features = false` and never compiles an engine.
+default = ["bevy"]
+bevy = ["client", "dep:bevy"]
+fyrox = ["client", "dep:fyrox"]
+# Engine-independent client glue: browser WebSocket and the audio output of the music.
+client = ["dep:cpal", "dep:js-sys", "dep:wasm-bindgen", "dep:web-sys"]
+
+[[bin]]
+name = "srr"
+path = "src/main.rs"
+required-features = ["client"]
+
+[dependencies]
+# Audio output for the generated music, natively (ALSA, ...) and in the browser (WebAudio).
+# Pinned to 0.17.1: it is the last cpal linking `alsa-sys` 0.3, the one Fyrox (`tinyaudio`)
+# links too; Cargo allows a single crate per `links = "alsa"`, even across optional deps.
+cpal = { version = "=0.17.1", optional = true }
+# Alternative engine. Pinned like Bevy.
+fyrox = { version = "=1.0.1", optional = true }
+# Pinned: Bevy breaks its API with every minor release. Only the features the prototype needs
+# are enabled, which also avoids native audio / gamepad libraries (alsa, udev) at build time.
+# For faster native iteration use `cargo run --features bevy/dynamic_linking` (never for WASM).
+bevy = { version = "0.15", optional = true, default-features = false, features = ["bevy_asset", "bevy_core_pipeline", "bevy_render", "bevy_sprite", "bevy_text", "bevy_ui", "bevy_winit", "default_font", "multi_threaded", "webgl2", "x11"] }
+
+# `ahash` (pulled in by Bevy) uses getrandom 0.3, which refuses to compile for the browser unless
+# its JavaScript backend is selected. Since 0.3.4 the `wasm_js` feature alone is enough (no
+# `--cfg getrandom_backend` flag needed). Not used directly: only here to unify the feature.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+cpal = { version = "=0.17.1", optional = true, features = ["wasm-bindgen"] }
+# The browser's WebSocket, for online play, and the audio unlock (`AudioContext` state, gesture
+# listeners, console messages). Same versions as the ones Bevy already pulls in.
+js-sys = { version = "0.3.106", optional = true }
+wasm-bindgen = { version = "0.2.129", optional = true }
+web-sys = { version = "0.3.106", optional = true, features = ["AudioContext", "AudioContextState", "BinaryType", "CloseEvent", "console", "Event", "EventTarget", "Location", "MessageEvent", "WebSocket", "Window"] }
+
+[workspace]
+members = ["xtask", "server"]
+
+# Debug builds of Bevy are unusably slow without optimisation.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
