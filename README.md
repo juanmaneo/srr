@@ -1,17 +1,17 @@
 Shattered Realm: Rampage (SRR): Emphasizes a chaotic, broken world built for intense combat encounters.
 
-This is a game created to test and push to limits of "vibe coding".
+This is a game created to test and push the limits of "vibe coding".
 
-It MUST be entrirely written in Rust.
+It MUST be entirely written in Rust.
 It MUST run in a browser in WASM.
-It MUST have 100% tests coverage.
-It MUST have an `cargo xtask` pattern for build, tests, coverage, and distribution.
-It MUST have a docker to be able to build on any machine (via docker)
+It MUST have 100% test coverage.
+It MUST have a `cargo xtask` pattern for build, tests, coverage, and distribution.
+It MUST have a Docker setup to be able to build on any machine (via Docker).
 
-It is a versus type of game that can be played 1v1 (2 players) or 1v1v1 (3 players) or 2v1 (3 players). 
-The goal is to be able to play up to 10 players online (in local network in first iterations) with any kind of alliance or as full brawler.
+It is a versus type of game that can be played 1v1 (2 players) or 1v1v1 (3 players) or 2v1 (3 players).
+The goal is to be able to play up to 10 players online (on a local network in the first iterations) with any kind of alliance or as full brawler.
 
-The lore is inspired by games like Street Fighter, Tekken, Mortal Kombat but the idea of on purpose "glittles" to exploit comes from BERP (BErseRk online Passion) fictive game in manga/anime "Shangri-La Frontier".
+The lore is inspired by games like Street Fighter, Tekken, Mortal Kombat but the idea of on purpose "glitches" to exploit comes from BERP (BErseRk online Passion), a fictional game in the manga/anime "Shangri-La Frontier".
 
 The street look comes from **Streets of Rage**: like its cover art, the title is splashed over
 the city as graffiti, the fights happen in back alleys, and the soundtrack is club music — here
