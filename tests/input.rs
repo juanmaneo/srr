@@ -588,14 +588,17 @@ fn keys_are_ordered_as_declared() {
 }
 
 #[test]
-fn only_enter_and_escape_cannot_be_bound() {
+fn only_enter_escape_and_the_pause_key_cannot_be_bound() {
     for key in ALL_KEYS {
         assert_eq!(
             key.is_bindable(),
-            key != Key::Enter && key != Key::Escape,
+            key != Key::Enter && key != Key::Escape && key != Key::P,
             "{key:?}"
         );
     }
+    let mut layout = KeyBindings::STANDARD;
+    assert!(!layout.bind(0, Key::P));
+    assert_eq!(layout, KeyBindings::STANDARD);
 }
 
 #[test]
@@ -695,7 +698,10 @@ fn key_of_names_the_key_of_each_attack() {
         KeyBindings::STANDARD.key_of(Attack::kick(Strength::High)),
         Key::Numpad9
     );
-    assert_eq!(KeyBindings::WASD.key_of(Attack::punch(Strength::Low)), Key::B);
+    assert_eq!(
+        KeyBindings::WASD.key_of(Attack::punch(Strength::Low)),
+        Key::B
+    );
 }
 
 #[test]

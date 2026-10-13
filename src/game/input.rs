@@ -340,6 +340,7 @@ pub enum Key {
     M,
     N,
     O,
+    /// `P`: pauses the fight and opens the controls page (and resumes from there).
     P,
     Q,
     R,
@@ -413,9 +414,9 @@ impl Key {
     }
 
     /// Whether the key can be bound to an action: every key but Enter and Escape, which drive
-    /// the menus (and the readiness for the next match).
+    /// the menus (and the readiness for the next match), and `P`, which pauses the fight.
     pub fn is_bindable(self) -> bool {
-        !matches!(self, Key::Enter | Key::Escape)
+        !matches!(self, Key::Enter | Key::Escape | Key::P)
     }
 }
 

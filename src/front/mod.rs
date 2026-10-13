@@ -11,12 +11,16 @@
 //!
 //! 1. [`Screen::Intro`]: the graffiti title ([`intro`]), until Enter or Escape is pressed;
 //!    `C` opens the controls page;
-//! 2. [`Screen::Controls`]: choose a keyboard preset or remap any action ([`controls`]);
+//! 2. [`Screen::Controls`]: choose a keyboard preset or remap any action ([`controls`]); it is
+//!    also the pause menu of the fight screen (`P`), going back to the fight;
 //! 3. [`Screen::Fight`]: the arena ([`arena`]) under the versus HUD ([`hud`]): health bars with
 //!    the red "recoverable damage" trail, round wins, timer, grapple meter and banners.
 //!
 //! On the fight screen, Enter means "ready": online, the server starts the next match (1v1,
 //! 1v1v1 or 1v1v1v1) once every seated player is ready; alone, it starts the next round.
+//! `P` pauses: a local match (the dummy or the bot) freezes until the pause menu is left; an
+//! online match cannot wait for one player, so it goes on with the paused player standing
+//! still.
 //!
 //! A player who is alone (practice mode, or nobody else in the online room) is *offered* a
 //! match against the computer and has to confirm it: Y fights the [bot](crate::game::Bot), N
@@ -30,7 +34,9 @@
 use std::collections::HashSet;
 
 use crate::audio::{Mood, MusicControl};
-use crate::game::{GrapplePosition, Key, KeyBindings, Match, Phase, PlayerId, TICKS_PER_SECOND};
+use crate::game::{
+    GrapplePosition, Input, Key, KeyBindings, Match, Phase, PlayerId, TICKS_PER_SECOND,
+};
 use crate::net::{Client, MAX_PLAYERS, Rival, Status};
 
 pub mod arena;
@@ -43,7 +49,7 @@ pub mod render;
 mod scene;
 pub mod stick;
 
-pub use controls::ControlsPage;
+pub use controls::{ControlsPage, PAUSE_KEY};
 pub use headless::Headless;
 pub use hud::HealthBar;
 pub use intro::Intro;
@@ -277,6 +283,11 @@ impl Game {
         &self.controls
     }
 
+    /// Whether the fight is paused: the pause menu (the controls page) is shown over it.
+    pub fn is_paused(&self) -> bool {
+        self.screen == Screen::Controls && self.controls.is_paused()
+    }
+
     /// The screen shown.
     pub fn screen(&self) -> Screen {
         self.screen
@@ -299,12 +310,14 @@ impl Game {
     /// fight screen, and a fresh `C` to the controls page (see [`ControlsPage::tick`]), which
     /// comes back to the intro.
     ///
-    /// On the fight screen, while [the bot is offered](Game::is_offering_bot), a fresh Y
-    /// accepts and a fresh N declines; nothing else happens until then. Otherwise a fresh Y
-    /// accepts a declined offer while alone online, a fresh Escape leaves an online match
-    /// against the computer, a fresh Enter tells [`Client::ready`], and the keys become this
-    /// tick's [`Input`](crate::game::Input) through the [bindings](Game::bindings) for
-    /// [`Client::tick`].
+    /// On the fight screen, a fresh `P` ([`PAUSE_KEY`]) pauses: the controls page opens as the
+    /// pause menu and comes back to the fight. While paused, a local match is not ticked (it
+    /// freezes), and an online one is ticked with no input (it cannot wait). Otherwise, while
+    /// [the bot is offered](Game::is_offering_bot), a fresh Y accepts and a fresh N declines;
+    /// nothing else happens until then. Otherwise a fresh Y accepts a declined offer while
+    /// alone online, a fresh Escape leaves an online match against the computer, a fresh Enter
+    /// tells [`Client::ready`], and the keys become this tick's [`Input`] through the
+    /// [bindings](Game::bindings) for [`Client::tick`].
     pub fn tick(&mut self, pressed: &HashSet<Key>) -> Vec<Vec<u8>> {
         let mut fresh: Vec<Key> = pressed.difference(&self.held).copied().collect();
         fresh.sort_unstable();
@@ -322,13 +335,23 @@ impl Game {
                 }
             }
             Screen::Controls => {
+                let paused = self.controls.is_paused();
                 if self.controls.tick(&fresh, &mut self.bindings) {
-                    self.screen = Screen::Intro;
+                    self.screen = if paused { Screen::Fight } else { Screen::Intro };
+                }
+                if paused {
+                    self.stand_still(&mut outgoing);
                 }
             }
             Screen::Fight => {
-                self.fight_ticks = self.fight_ticks.saturating_add(1);
-                self.fight(pressed, &fresh, &mut outgoing);
+                if fresh.contains(&PAUSE_KEY) {
+                    self.controls = ControlsPage::paused();
+                    self.screen = Screen::Controls;
+                    self.stand_still(&mut outgoing);
+                } else {
+                    self.fight_ticks = self.fight_ticks.saturating_add(1);
+                    self.fight(pressed, &fresh, &mut outgoing);
+                }
             }
         }
         self.held.clone_from(pressed);
@@ -365,6 +388,15 @@ impl Game {
         }
         let input = self.bindings.to_input(pressed);
         outgoing.extend(self.active_mut().tick(input));
+    }
+
+    /// One paused tick. A local match (the dummy, or the bot, online too) is simply not
+    /// ticked, so it freezes; an online match cannot wait for one player, so its lockstep goes
+    /// on with the paused player standing still.
+    fn stand_still(&mut self, outgoing: &mut Vec<Vec<u8>>) {
+        if !self.client.is_local() {
+            outgoing.extend(self.client.tick(Input::NONE));
+        }
     }
 
     /// A match against the computer: it replaces the practice dummy, or is played locally
@@ -414,6 +446,7 @@ impl Game {
     fn update_music(&self) {
         let status = self.active_client().status();
         let (mood, tension) = match (self.screen, status, self.shown_match()) {
+            (Screen::Controls, _, _) if self.controls.is_paused() => (Mood::Breakdown, 0.0),
             (Screen::Intro | Screen::Controls, _, _) => (Mood::Intro, 0.0),
             (Screen::Fight, Status::Playing, Some(current)) => match current.phase() {
                 Phase::Countdown { .. } => (Mood::Fight, 0.0),

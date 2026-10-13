@@ -44,9 +44,9 @@ Alone? The game **offers** a match against the computer (the bot) and waits for 
 ### Controls
 
 Each player plays on their own keyboard and can pick their own layout on the controls page
-(press `C` on the title screen, see [Keyboard layout](#keyboard-layout)). The default
-(**Standard**) puts the attacks on the numeric keypad; the **WASD** preset is for keyboards
-without one.
+(press `C` on the title screen, or `P` to pause during a fight, see
+[Keyboard layout](#keyboard-layout)). The default (**Standard**) puts the attacks on the
+numeric keypad; the **WASD** preset is for keyboards without one.
 
 | Action                | Standard (default) | WASD preset |
 | --------------------- | ------------------ | ----------- |
@@ -62,6 +62,7 @@ without one.
 | Counter a judo technique         | the same two keys, while being thrown | same |
 | Escape a grapple                 | mash any key           | same |
 | Controls page (title screen)     | `C`                    | same |
+| Pause the fight / change the controls | `P`               | same |
 | Skip the title screen   | `Enter` or `Esc` | same |
 | Ready for the next match (lobby, or after a round) | `Enter` | same |
 | Answer "Fight the bot?" (alone) | `Y` yes / `N` no | same |
@@ -102,16 +103,24 @@ without one.
 
 ### Keyboard layout
 
-Press `C` on the title screen to open the controls page:
+Press `C` on the title screen to open the controls page, or `P` at any time during a fight:
+the fight **pauses** and the same page opens as the pause menu (titled PAUSED), so the layout
+can be changed whenever you want, not only before playing.
 
 * `↑` / `↓` choose a row (the arrows always drive this page, whatever the layout);
 * on the **Preset** row, `←` / `→` (or `Enter`) switch between **Standard (arrows + keypad)**
   and **WASD (letters + space)**;
 * on an action row, `Enter` then the new key remaps it (`Esc` cancels). A key already used by
-  another action swaps with it, so a key never does two things. `Enter` and `Esc` cannot be
-  bound (they drive the menus and the readiness for the next match; `Y` / `N` only answer
-  the bot offer while it is shown, so they stay bindable). The preset row then reads **Custom**;
-* `Esc` (or `Enter` on "Back to the title") goes back to the title.
+  another action swaps with it, so a key never does two things. `Enter`, `Esc` and `P` cannot
+  be bound (they drive the menus, the readiness for the next match and the pause; `Y` / `N`
+  only answer the bot offer while it is shown, so they stay bindable). The preset row then
+  reads **Custom**;
+* `Esc` (or `Enter` on "Back to the title") goes back to the title; from the pause menu, `Esc`,
+  `P` or `Enter` on "Resume the fight" goes back to the fight.
+
+Pausing freezes a match against the dummy or the computer. An online match cannot wait for
+one player: it goes on while the pause menu is open, with your fighter standing still (the
+others see it idle), so pause between rounds when you can.
 
 The layout is local to your machine: each player picks their own, and the in-fight controls
 reminder and the `COUNTER` prompts name your keys. Keys are **physical positions**, so the

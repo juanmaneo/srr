@@ -8,11 +8,12 @@
 //!   wrap); a customised layout goes back to the first preset;
 //! * on an action row, `Enter` waits for a key: a bindable key is bound (swapping with the
 //!   action that had it), `Esc` cancels, Enter is ignored and it keeps waiting;
-//! * `Esc`, or `Enter` on the last row, leaves the page.
+//! * `Esc`, or `Enter` on the last row, leaves the page; opened as the pause menu of a fight
+//!   (`ControlsPage::paused`), `P` leaves it too.
 
 use srr::front::controls::{
-    COLUMN_X, ControlsPage, FIRST_ROW_Y, ROW_HEIGHT, ROWS, Row, controls_lines, preset_name,
-    technique_keys,
+    COLUMN_X, ControlsPage, FIRST_ROW_Y, PAUSE_KEY, ROW_HEIGHT, ROWS, Row, controls_lines,
+    preset_name, technique_keys,
 };
 use srr::front::{Align, Frame, Rgba};
 use srr::game::{Input, Key, KeyBindings, Technique};
@@ -85,14 +86,14 @@ fn the_controls_lines_follow_the_layout() {
         [
             "Move: Left / Right   Jump: Up   Crouch: Down   Turn: Down+Left / Down+Right   \
              Block: step back",
-            "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Enter: ready",
+            "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Enter: ready   P: pause",
         ]
     );
     assert_eq!(
         controls_lines(&KeyBindings::WASD),
         [
             "Move: A / D   Jump: W   Crouch: S   Turn: S+A / S+D   Block: step back",
-            "Punch: B H J   Kick: G Y U   Grab: Space   Judo: H+U, Y+U   Enter: ready",
+            "Punch: B H J   Kick: G Y U   Grab: Space   Judo: H+U, Y+U   Enter: ready   P: pause",
         ]
     );
 }
@@ -107,6 +108,66 @@ fn a_new_page_selects_the_preset_and_waits_for_nothing() {
     assert_eq!(page, ControlsPage::default());
     assert_eq!(page.selected(), Row::Preset);
     assert!(!page.is_waiting());
+    assert!(!page.is_paused());
+}
+
+#[test]
+fn the_pause_menu_is_the_page_opened_from_the_fight() {
+    assert_eq!(PAUSE_KEY, Key::P);
+    assert!(!PAUSE_KEY.is_bindable());
+    let page = ControlsPage::paused();
+    assert!(page.is_paused());
+    assert_eq!(page.selected(), Row::Preset);
+    assert!(!page.is_waiting());
+    assert_ne!(page, ControlsPage::new());
+}
+
+#[test]
+fn the_pause_key_leaves_the_pause_menu_only() {
+    let mut bindings = KeyBindings::STANDARD;
+    let mut page = ControlsPage::new();
+    assert!(
+        !press(&mut page, &mut bindings, PAUSE_KEY),
+        "from the title: ignored"
+    );
+    assert_eq!(page, ControlsPage::new());
+
+    let mut paused = ControlsPage::paused();
+    press(&mut paused, &mut bindings, Key::ArrowDown);
+    assert!(
+        press(&mut paused, &mut bindings, PAUSE_KEY),
+        "from the fight: resumes"
+    );
+    assert!(paused.is_paused(), "the page itself does not change");
+    assert_eq!(bindings, KeyBindings::STANDARD);
+
+    let mut paused = ControlsPage::paused();
+    press(&mut paused, &mut bindings, Key::ArrowDown);
+    press(&mut paused, &mut bindings, Key::Enter);
+    assert!(paused.is_waiting());
+    assert!(
+        !press(&mut paused, &mut bindings, PAUSE_KEY),
+        "while waiting for a key, P is just not bindable"
+    );
+    assert!(paused.is_waiting());
+    assert_eq!(bindings, KeyBindings::STANDARD);
+}
+
+#[test]
+fn the_pause_menu_remaps_and_leaves_like_the_controls_page() {
+    let mut bindings = KeyBindings::STANDARD;
+    let mut page = ControlsPage::paused();
+    press(&mut page, &mut bindings, Key::ArrowRight);
+    assert_eq!(bindings, KeyBindings::WASD);
+    press(&mut page, &mut bindings, Key::ArrowDown);
+    press(&mut page, &mut bindings, Key::Enter);
+    press(&mut page, &mut bindings, Key::Z);
+    assert_eq!(bindings.left, Key::Z);
+    assert!(press(&mut page, &mut bindings, Key::Escape));
+    let mut page = ControlsPage::paused();
+    press(&mut page, &mut bindings, Key::ArrowUp);
+    assert_eq!(page.selected(), Row::Back);
+    assert!(press(&mut page, &mut bindings, Key::Enter));
 }
 
 #[test]
@@ -209,9 +270,9 @@ fn enter_on_an_action_waits_for_the_next_key_and_binds_it() {
     assert!(!press(&mut page, &mut bindings, Key::Enter));
     assert!(page.is_waiting());
     assert_eq!(bindings, KeyBindings::STANDARD);
-    assert!(!press(&mut page, &mut bindings, Key::P));
+    assert!(!press(&mut page, &mut bindings, Key::L));
     assert!(!page.is_waiting());
-    assert_eq!(bindings.punch_low, Key::P);
+    assert_eq!(bindings.punch_low, Key::L);
     assert_eq!(preset_name(&bindings), "Custom");
     assert_eq!(page.selected(), Row::Action(3));
 }
@@ -285,6 +346,26 @@ fn the_page_lists_every_action_with_its_key() {
         assert_eq!(key.text, keys[action].label());
         assert_eq!(key.x, COLUMN_X + 30.0);
     }
+    assert!(frame.labels.iter().all(|l| l.text.is_ascii()));
+}
+
+#[test]
+fn the_pause_menu_says_so() {
+    let frame = draw(&ControlsPage::paused(), &KeyBindings::STANDARD);
+    let text = frame.text();
+    assert!(text.contains("PAUSED"), "{text}");
+    assert!(!text.contains("CONTROLS"), "{text}");
+    assert!(text.contains("Esc / P: resume"), "{text}");
+    assert!(text.contains("Resume the fight"), "{text}");
+    assert!(!text.contains("Back to the title"), "{text}");
+    let title = frame.labels.iter().find(|l| l.text == "PAUSED").unwrap();
+    let plain = draw(&ControlsPage::new(), &KeyBindings::STANDARD);
+    let controls = plain.labels.iter().find(|l| l.text == "CONTROLS").unwrap();
+    assert_eq!(
+        (title.y, title.size, title.color),
+        (controls.y, controls.size, controls.color)
+    );
+    assert_eq!(frame.labels.len(), plain.labels.len(), "the same rows");
     assert!(frame.labels.iter().all(|l| l.text.is_ascii()));
 }
 

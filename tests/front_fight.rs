@@ -794,7 +794,7 @@ fn without_a_duel_the_hud_shows_the_banner_and_the_controls() {
     );
     assert_eq!(
         expected[1],
-        "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Enter: ready"
+        "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Enter: ready   P: pause"
     );
 
     let mut waiting = Client::online(cfg(), 0);
@@ -2176,6 +2176,211 @@ fn the_platform_can_set_the_layout() {
     for line in controls_lines(&KeyBindings::WASD) {
         assert!(text.contains(&line), "{text}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Game: pausing
+// ---------------------------------------------------------------------------------------------
+
+/// A practice game (with [`cfg`]: no countdown) fighting the dummy.
+fn practice_duel() -> Game {
+    let mut game = Game::new(Client::practice(cfg()));
+    practice_fight(&mut game);
+    game
+}
+
+fn session_tick(game: &Game) -> u32 {
+    game.active_client().session().unwrap().tick()
+}
+
+#[test]
+fn p_pauses_a_practice_fight_and_opens_the_pause_menu() {
+    let mut game = practice_duel();
+    game.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(session_tick(&game), 1);
+    assert!(!game.is_paused());
+
+    assert!(game.tick(&keys(&[Key::P])).is_empty());
+    assert_eq!(game.screen(), Screen::Controls);
+    assert!(game.is_paused());
+    assert!(game.controls().is_paused());
+    assert_eq!(game.controls().selected(), Row::Preset);
+    assert!(!game.is_offering_bot(), "the offer was answered");
+    assert_eq!(game.music().mood(), Mood::Breakdown, "not the intro theme");
+    assert_eq!(game.music().intensity(), 0.0);
+    let frame = game.frame();
+    assert_eq!(frame.background, intro::BACKGROUND);
+    assert!(find_label(&frame, "PAUSED").is_some());
+    assert!(find_label(&frame, "Resume the fight").is_some());
+
+    let frozen = game.shown_match().unwrap().clone();
+    for _ in 0..20 {
+        game.tick(&keys(&[Key::ArrowRight, Key::Numpad5]));
+        game.tick(&keys(&[]));
+    }
+    assert_eq!(session_tick(&game), 1, "a local match freezes");
+    assert_eq!(game.shown_match().unwrap(), &frozen);
+    assert_eq!(game.screen(), Screen::Controls, "held keys do not leave");
+
+    game.tick(&keys(&[Key::Escape]));
+    assert_eq!(
+        game.screen(),
+        Screen::Fight,
+        "back to the fight, not the title"
+    );
+    assert!(!game.is_paused());
+    assert_eq!(session_tick(&game), 1, "the leaving tick is not played");
+    assert_eq!(game.music().mood(), Mood::Fight);
+    game.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(session_tick(&game), 2);
+    assert_eq!(state(game.client(), 0), FighterState::Walking);
+}
+
+#[test]
+fn p_resumes_too_and_the_layout_changed_while_paused_drives_the_fight() {
+    let mut game = practice_duel();
+    game.tick(&keys(&[Key::P]));
+    game.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(game.bindings(), &KeyBindings::WASD);
+    // Remap the grab to K: down to "Grab", Enter, K.
+    for _ in 0..10 {
+        game.tick(&keys(&[Key::ArrowDown]));
+        game.tick(&keys(&[]));
+    }
+    game.tick(&keys(&[Key::Enter]));
+    assert!(game.controls().is_waiting());
+    game.tick(&keys(&[Key::P]));
+    assert!(
+        game.controls().is_waiting(),
+        "P cannot be bound, nor resumes then"
+    );
+    assert_eq!(game.screen(), Screen::Controls);
+    game.tick(&keys(&[Key::K]));
+    assert_eq!(game.bindings().grab, Key::K);
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[Key::P]));
+    assert_eq!(game.screen(), Screen::Fight);
+    assert!(!game.is_paused());
+    assert_eq!(session_tick(&game), 0);
+
+    game.tick(&keys(&[Key::ArrowDown]));
+    assert_eq!(
+        state(game.client(), 0),
+        FighterState::Idle,
+        "the arrows do nothing"
+    );
+    game.tick(&keys(&[Key::S]));
+    assert_eq!(state(game.client(), 0), FighterState::Crouching);
+    game.tick(&keys(&[Key::K]));
+    assert_eq!(
+        state(game.client(), 0),
+        FighterState::Grabbing(AttackPhase::Startup)
+    );
+    assert!(game.frame().text().contains("Grab: K"));
+
+    game.tick(&keys(&[Key::P]));
+    assert_eq!(game.screen(), Screen::Controls, "a fresh P pauses again");
+    assert_eq!(
+        game.controls().selected(),
+        Row::Preset,
+        "on the preset row again"
+    );
+}
+
+#[test]
+fn the_pause_menu_comes_back_to_the_bot_offer() {
+    let mut game = practice();
+    skip_intro(&mut game);
+    assert!(game.is_offering_bot());
+    game.tick(&keys(&[Key::P]));
+    assert!(game.is_paused());
+    assert!(!game.is_offering_bot(), "not while the menu is shown");
+    game.tick(&keys(&[Key::Y]));
+    assert_eq!(
+        game.client().rival(),
+        Some(Rival::Dummy),
+        "Y was for the menu"
+    );
+    game.tick(&keys(&[Key::Escape]));
+    assert_eq!(game.screen(), Screen::Fight);
+    assert!(game.is_offering_bot(), "the question is still open");
+    assert!(find_label(&game.frame(), BOT_PROMPT).is_some());
+}
+
+#[test]
+fn an_online_match_goes_on_while_paused_with_the_player_standing_still() {
+    let mut game = online_game(cfg(), 0);
+    skip_intro(&mut game);
+    fight_tick(&mut game, &[Key::ArrowRight], idle());
+    assert_eq!(state(game.client(), 0), FighterState::Walking);
+    assert_eq!(session_tick(&game), 1);
+
+    let frames = fight_tick(&mut game, &[Key::P, Key::ArrowRight], right());
+    assert!(game.is_paused());
+    assert_eq!(frames.len(), 1, "the pausing tick is still played");
+    assert_eq!(session_tick(&game), 2, "the lockstep cannot wait");
+    let x_of = |game: &Game, player: u8| {
+        current(game.client())
+            .fighter(PlayerId(player))
+            .unwrap()
+            .x()
+    };
+    let (mine, theirs) = (x_of(&game, 0), x_of(&game, 1));
+    for _ in 0..5 {
+        let frames = fight_tick(&mut game, &[Key::ArrowRight, Key::Numpad5], right());
+        assert_eq!(frames.len(), 1, "an idle input goes out every tick");
+        let Ok(ClientMessage::Input { input, .. }) = ClientMessage::decode(&frames[0]) else {
+            panic!("not an input");
+        };
+        assert_eq!(
+            input,
+            Input::NONE,
+            "the keys held drive the menu, not the fighter"
+        );
+    }
+    assert_eq!(session_tick(&game), 7);
+    assert_eq!(
+        state(game.client(), 0),
+        FighterState::Idle,
+        "standing still"
+    );
+    assert_eq!(x_of(&game, 0), mine);
+    assert!(x_of(&game, 1) > theirs, "the others go on");
+    assert_eq!(game.screen(), Screen::Controls);
+
+    let frames = fight_tick(&mut game, &[Key::Escape], idle());
+    assert_eq!(game.screen(), Screen::Fight);
+    assert_eq!(frames.len(), 1, "the resuming tick is played too");
+    assert_eq!(session_tick(&game), 8);
+    fight_tick(&mut game, &[Key::ArrowRight], idle());
+    assert_eq!(state(game.client(), 0), FighterState::Walking);
+}
+
+#[test]
+fn the_bot_played_online_freezes_while_paused() {
+    let mut game = alone_online(0);
+    game.tick(&keys(&[Key::Y]));
+    assert!(game.is_playing_bot_online());
+    game.tick(&keys(&[]));
+    assert_eq!(session_tick(&game), 1);
+    assert!(
+        game.tick(&keys(&[Key::P])).is_empty(),
+        "nothing to send: the room is idle"
+    );
+    assert!(game.is_paused());
+    for _ in 0..10 {
+        assert!(game.tick(&keys(&[Key::ArrowLeft])).is_empty());
+    }
+    assert_eq!(session_tick(&game), 1, "the bot match is local: it waits");
+    assert!(game.is_playing_bot_online());
+    game.tick(&keys(&[Key::Escape]));
+    assert_eq!(game.screen(), Screen::Fight);
+    assert!(
+        game.is_playing_bot_online(),
+        "Escape left the menu, not the bot"
+    );
+    game.tick(&keys(&[]));
+    assert_eq!(session_tick(&game), 2);
 }
 
 #[test]

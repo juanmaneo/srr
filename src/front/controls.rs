@@ -1,10 +1,12 @@
 //! The controls page: pick a keyboard preset ([`KeyBindings::PRESETS`]: the standard arrows +
 //! keypad layout, which stays the default, or WASD + letters + space), or remap any action.
 //!
-//! Reached from the intro with `C`. `Up` / `Down` choose a row; on the preset row `Left` /
-//! `Right` (or `Enter`) switch presets; on an action row `Enter` waits for the new key (`Esc`
-//! cancels), and a key already bound elsewhere swaps with the old one; `Esc` (or `Enter` on
-//! the last row) goes back to the title.
+//! Reached from the intro with `C`, or from the fight with `P`, which pauses it (the page is
+//! then the pause menu, see [`ControlsPage::paused`]). `Up` / `Down` choose a row; on the
+//! preset row `Left` / `Right` (or `Enter`) switch presets; on an action row `Enter` waits for
+//! the new key (`Esc` cancels), and a key already bound elsewhere swaps with the old one; `Esc`
+//! (or `Enter` on the last row, or `P` while paused) goes back to where the page was opened
+//! from.
 //!
 //! The page only edits a [`KeyBindings`]; the [`Game`](super::Game) keeps it and plays with it.
 
@@ -13,6 +15,9 @@ use crate::game::{Input, Key, KeyBindings, Technique};
 
 /// Rows of the page: the preset, one per action, then "back".
 pub const ROWS: usize = Input::BITS as usize + 2;
+
+/// The key pausing the fight (and resuming it from the pause menu); it cannot be bound.
+pub const PAUSE_KEY: Key = Key::P;
 
 /// Top of the first row.
 pub const FIRST_ROW_Y: f32 = 150.0;
@@ -37,7 +42,7 @@ pub enum Row {
     Preset,
     /// The action at this index of [`KeyBindings::ACTIONS`].
     Action(usize),
-    /// Back to the title.
+    /// Back to the title, or back to the fight when paused.
     Back,
 }
 
@@ -119,7 +124,7 @@ pub fn controls_lines(bindings: &KeyBindings) -> [String; 2] {
              Turn: {down}+{left} / {down}+{right}   Block: step back"
         ),
         format!(
-            "Punch: {}   Kick: {}   Grab: {}   Judo: {}, {}   Enter: ready",
+            "Punch: {}   Kick: {}   Grab: {}   Judo: {}, {}   Enter: ready   P: pause",
             punches.join(" "),
             kicks.join(" "),
             b.grab.label(),
@@ -129,17 +134,28 @@ pub fn controls_lines(bindings: &KeyBindings) -> [String; 2] {
     ]
 }
 
-/// The state of the controls page: the row chosen, and whether it waits for a new key.
+/// The state of the controls page: the row chosen, whether it waits for a new key, and
+/// whether it is the pause menu of a fight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ControlsPage {
     selected: usize,
     waiting: bool,
+    paused: bool,
 }
 
 impl ControlsPage {
-    /// The page with the preset row chosen.
+    /// The page with the preset row chosen, opened from the title.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The page as the pause menu: opened from the fight with [`PAUSE_KEY`], which also
+    /// leaves it, and going back to the fight.
+    pub fn paused() -> Self {
+        ControlsPage {
+            paused: true,
+            ..Self::default()
+        }
     }
 
     /// The row chosen.
@@ -150,6 +166,11 @@ impl ControlsPage {
     /// Whether the next key pressed will be bound to the chosen action.
     pub fn is_waiting(&self) -> bool {
         self.waiting
+    }
+
+    /// Whether the page is the pause menu of a fight (see [`ControlsPage::paused`]).
+    pub fn is_paused(&self) -> bool {
+        self.paused
     }
 
     /// One tick with the keys freshly pressed, in [`Key`] order; only the first one counts.
@@ -167,6 +188,7 @@ impl ControlsPage {
         let count = KeyBindings::PRESETS.len();
         match (key, self.selected()) {
             (Key::Escape, _) | (Key::Enter, Row::Back) => return true,
+            (PAUSE_KEY, _) if self.paused => return true,
             (Key::ArrowUp, _) => self.selected = (self.selected + ROWS - 1) % ROWS,
             (Key::ArrowDown, _) => self.selected = (self.selected + 1) % ROWS,
             (Key::ArrowRight | Key::Enter, Row::Preset) => {
@@ -187,15 +209,19 @@ impl ControlsPage {
     /// Draws the page for `bindings`.
     pub fn draw(&self, frame: &mut Frame, bindings: &KeyBindings) {
         let center = SCREEN_WIDTH / 2.0;
-        frame.label("CONTROLS", center, 50.0, 44.0, TITLE, Align::Center);
-        frame.label(
-            "Up / Down: choose   Left / Right: preset   Enter: change   Esc: back",
-            center,
-            108.0,
-            16.0,
-            HELP,
-            Align::Center,
-        );
+        let (title, help) = if self.paused {
+            (
+                "PAUSED",
+                "Up / Down: choose   Left / Right: preset   Enter: change   Esc / P: resume",
+            )
+        } else {
+            (
+                "CONTROLS",
+                "Up / Down: choose   Left / Right: preset   Enter: change   Esc: back",
+            )
+        };
+        frame.label(title, center, 50.0, 44.0, TITLE, Align::Center);
+        frame.label(help, center, 108.0, 16.0, HELP, Align::Center);
         let keys = bindings.keys();
         for index in 0..ROWS {
             let y = FIRST_ROW_Y + index as f32 * ROW_HEIGHT;
@@ -219,7 +245,14 @@ impl ControlsPage {
                     };
                     (KeyBindings::ACTIONS[action], value)
                 }
-                Row::Back => ("Back to the title", String::new()),
+                Row::Back => (
+                    if self.paused {
+                        "Resume the fight"
+                    } else {
+                        "Back to the title"
+                    },
+                    String::new(),
+                ),
             };
             let marker = if chosen { "> " } else { "" };
             frame.label(
