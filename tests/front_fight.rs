@@ -20,8 +20,9 @@ use srr::audio::Mood;
 use srr::front::arena::{self, ARENA_LEFT, ARENA_PIXELS, FLOOR_Y, LYING_TAG_Y, TAG_ABOVE};
 use srr::front::controls::{Practice, Row, controls_lines, technique_keys};
 use srr::front::hud::{
-    self, CONTROLS_LINE_HEIGHT, CONTROLS_Y, DANGER_PERCENT, NOTICE_Y, STALL_TEXT,
-    STALL_WARNING_TICKS, TRAIL_HOLD, TRAIL_SPEED, bar_slots, lobby_text, position_name, ready_text,
+    self, COMBO_LINGER, COMBO_MIN_HITS, CONTROLS_LINE_HEIGHT, CONTROLS_Y, DANGER_PERCENT, NOTICE_Y,
+    STALL_TEXT, STALL_WARNING_TICKS, TRAIL_HOLD, TRAIL_SPEED, bar_slots, lobby_text, position_name,
+    ready_text,
 };
 use srr::front::intro::{self, SKIP_AFTER};
 use srr::front::stick::{
@@ -86,6 +87,18 @@ fn cfg() -> MatchConfig {
 fn fragile() -> MatchConfig {
     MatchConfig {
         max_health: 10,
+        ..cfg()
+    }
+}
+
+/// [`cfg`] where a punch stuns for 6 ticks: long enough for a chained punch (which lands 3
+/// ticks after the chain) to combo.
+fn stunning() -> MatchConfig {
+    MatchConfig {
+        punches: [AttackData {
+            hitstun: 6,
+            ..STRIKE
+        }; 3],
         ..cfg()
     }
 }
@@ -299,6 +312,15 @@ fn bars_of(client: &Client) -> Vec<HealthBar> {
     })
 }
 
+/// The health bars as they are now, counting the combos of the fighters.
+fn counted_bars(client: &Client) -> Vec<HealthBar> {
+    let mut bars = bars_of(client);
+    for (bar, fighter) in bars.iter_mut().zip(current(client).fighters()) {
+        bar.count(fighter.combo_hits());
+    }
+    bars
+}
+
 fn hud_frame(client: &Client, bars: &[HealthBar], fight_ticks: u32) -> Frame {
     let mut frame = Frame::new(arena::BACKGROUND);
     hud::draw(
@@ -402,6 +424,25 @@ fn a_new_hit_restarts_the_hold() {
     assert_eq!(bar.trail(), 100, "the combo kept the whole trail");
     bar.update(80);
     assert_eq!(bar.trail(), 100 - TRAIL_SPEED);
+}
+
+#[test]
+fn the_combo_counter_follows_the_hits_and_lingers_once_the_fighter_recovers() {
+    let mut bar = HealthBar::new(PlayerId(0), 100);
+    assert_eq!(bar.hits(), 0);
+    bar.count(1);
+    bar.count(2);
+    assert_eq!(bar.hits(), 2);
+    for _ in 0..COMBO_LINGER {
+        bar.count(0);
+        assert_eq!(bar.hits(), 2, "lingering");
+    }
+    bar.count(0);
+    assert_eq!(bar.hits(), 0);
+    bar.count(3);
+    bar.count(0);
+    bar.count(1);
+    assert_eq!(bar.hits(), 1, "a new combo replaces the old count at once");
 }
 
 #[test]
@@ -951,6 +992,50 @@ fn three_pips_light_up_without_a_counter() {
     let frame = hud_frame(&client, &bars_of(&client), 0);
     assert!(!frame.labels.iter().any(|l| l.text.starts_with('x')));
     assert_eq!(rects_of(&frame, WIN_OFF).len(), 3);
+}
+
+#[test]
+fn the_combo_counter_shows_from_the_second_hit_under_the_bar_of_the_fighter_hit() {
+    assert_eq!(COMBO_MIN_HITS, 2);
+    let mut client = duel(stunning(), 0);
+    for _ in 0..3 {
+        play_as(&mut client, 0, punch()); // lands on the third tick
+    }
+    assert_eq!(health(&client, 1), 90);
+    let frame = hud_frame(&client, &counted_bars(&client), 0);
+    assert!(
+        frame
+            .labels
+            .iter()
+            .all(|label| !label.text.ends_with("HITS")),
+        "one hit is no combo"
+    );
+
+    let medium = hold(Input::pressing(Attack::punch(Strength::Medium)));
+    for _ in 0..3 {
+        play_as(&mut client, 0, medium); // chained at once, lands on the sixth tick
+    }
+    assert_eq!(health(&client, 1), 80);
+    let frame = hud_frame(&client, &counted_bars(&client), 0);
+    let counter = find_label(&frame, "2 HITS").unwrap();
+    assert_eq!(
+        (counter.align, counter.color),
+        (Align::Right, Rgba::hex(0xfff35c))
+    );
+    let slot = bar_slots(2)[1];
+    assert_eq!(counter.x, slot.x + slot.width, "under player 2's bar");
+    let name = find_label(&frame, "P2   80 HP").unwrap();
+    assert!(counter.y > name.y, "below the name");
+
+    let high = hold(Input::pressing(Attack::punch(Strength::High)));
+    for _ in 0..3 {
+        play_as(&mut client, 0, high);
+    }
+    assert_eq!(health(&client, 1), 70);
+    let frame = hud_frame(&client, &counted_bars(&client), 0);
+    let hotter = find_label(&frame, "3 HITS").unwrap();
+    assert_eq!(hotter.color, Rgba::hex(0xffc93a));
+    assert!(find_label(&frame, "2 HITS").is_none());
 }
 
 #[test]
@@ -1668,6 +1753,64 @@ fn a_jumping_figure_tucks_its_legs() {
     let jumper = figure(&client, 1, 0);
     assert!(jumper.legs.iter().all(|leg| leg.end.y < FLOOR_Y - 24.0));
     assert_local(&client, 1, jumper.legs[0].end, 14.0, 24.0);
+}
+
+#[test]
+fn a_flying_kick_shoots_the_front_leg_out_and_down() {
+    let mut client = duel(cfg(), 0);
+    play_as(&mut client, 0, jump());
+    play_as(&mut client, 0, kick()); // in the air: the first start-up tick
+    assert!(current(&client).fighter(PlayerId(0)).unwrap().is_airborne());
+    assert_eq!(
+        state(&client, 0),
+        FighterState::Attacking(AttackPhase::Startup)
+    );
+    let wind_up = figure(&client, 0, 0);
+    assert_eq!(
+        wind_up.legs[0].ink,
+        Some(arena::strength_color(Strength::High))
+    );
+    assert_local(&client, 0, wind_up.legs[0].end, 16.0, 36.0);
+
+    idle_for(&mut client, 2); // the third tick of the kick is active
+    assert_eq!(
+        state(&client, 0),
+        FighterState::Attacking(AttackPhase::Active)
+    );
+    let flying = figure(&client, 0, 0);
+    assert_local(&client, 0, flying.legs[0].end, MAX_REACH, 20.0);
+    assert_local(&client, 0, flying.legs[1].end, -12.0, 30.0);
+    assert!(
+        flying
+            .legs
+            .iter()
+            .all(|leg| leg.end.y < FLOOR_Y - 20.0 + 1e-3),
+        "both feet off the floor"
+    );
+    assert!(
+        flying
+            .arms
+            .iter()
+            .all(|arm| (arm.end.x - flying.hip.x) * flying.facing < 0.0),
+        "the arms trail behind"
+    );
+    assert!(
+        (flying.neck.x - flying.hip.x) * flying.facing < 0.0,
+        "leaning back"
+    );
+
+    idle_for(&mut client, 2); // recovery
+    assert_eq!(
+        state(&client, 0),
+        FighterState::Attacking(AttackPhase::Recovery)
+    );
+    assert_local(
+        &client,
+        0,
+        figure(&client, 0, 0).legs[0].end,
+        MAX_REACH * 0.4,
+        30.0,
+    );
 }
 
 /// Plays `attack` for player 0 (pressed on the first tick) and returns its figure on each of
@@ -2656,6 +2799,23 @@ fn health_bars_follow_the_fighters() {
         fight_tick(&mut game, &[], idle());
     }
     assert_eq!(game.health_bars()[0].trail(), 90, "drained");
+}
+
+#[test]
+fn health_bars_count_the_combos() {
+    let mut game = online_game(stunning(), 0);
+    skip_intro(&mut game);
+    for _ in 0..3 {
+        fight_tick(&mut game, &[], punch()); // the jab lands on the third tick
+    }
+    assert_eq!(game.health_bars()[0].hits(), 1);
+    let medium = hold(Input::pressing(Attack::punch(Strength::Medium)));
+    for _ in 0..3 {
+        fight_tick(&mut game, &[], medium); // chained at once, lands on the sixth tick
+    }
+    assert_eq!(game.health_bars()[0].health(), 80);
+    assert_eq!(game.health_bars()[0].hits(), 2);
+    assert_eq!(game.health_bars()[1].hits(), 0);
 }
 
 #[test]

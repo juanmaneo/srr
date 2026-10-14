@@ -238,6 +238,24 @@ impl Input {
             .find(|attack| self.is_pressed(*attack))
     }
 
+    /// The kick requested by this input, if any kick button is held: the strongest one. Only
+    /// kicks work in the air, so this is the attack requested there.
+    ///
+    /// ```
+    /// use srr::game::{Attack, Input, Strength};
+    ///
+    /// let mash = Input::pressing(Attack::punch(Strength::High)).with(Attack::kick(Strength::Low));
+    /// assert_eq!(mash.kick(), Some(Attack::kick(Strength::Low)));
+    /// assert_eq!(Input::pressing(Attack::punch(Strength::Low)).kick(), None);
+    /// ```
+    pub fn kick(&self) -> Option<Attack> {
+        Strength::ALL
+            .into_iter()
+            .rev()
+            .map(Attack::kick)
+            .find(|kick| self.is_pressed(*kick))
+    }
+
     /// The buttons held in this input but not in `previous`: the fresh presses (rising edges)
     /// when `previous` is the input of the tick before.
     ///

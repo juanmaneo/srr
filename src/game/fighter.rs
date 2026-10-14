@@ -121,17 +121,45 @@ impl HitTargets {
     }
 }
 
+/// A strike in progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Strike {
+    attack: Attack,
+    /// The step of the attack just completed (1-based).
+    frame: u32,
+    /// The fighters the attack already struck.
+    hit: HitTargets,
+    /// Whether the attack hit a fighter that did not block it, which opens the chain: the rest
+    /// of the strike can be cancelled into a stronger one.
+    connected: bool,
+}
+
+impl Strike {
+    /// The first step of `attack`.
+    fn new(attack: Attack) -> Self {
+        Strike {
+            attack,
+            frame: 1,
+            hit: HitTargets::NONE,
+            connected: false,
+        }
+    }
+
+    /// The step after this one.
+    fn next(self) -> Self {
+        Strike {
+            frame: self.frame + 1,
+            ..self
+        }
+    }
+}
+
 /// What drives a fighter's next update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
     /// Reads its input.
     Free,
-    /// `frame` is the step of the attack just completed (1-based).
-    Attacking {
-        attack: Attack,
-        frame: u32,
-        hit: HitTargets,
-    },
+    Attacking(Strike),
     /// `frame` is the step of the grab attempt just completed (1-based).
     Grabbing {
         frame: u32,
@@ -188,6 +216,9 @@ pub struct Fighter {
     held: [u32; 6],
     /// The technique whose combination the buttons completed during the last update.
     combo: Option<Technique>,
+    /// Hits of the combo the fighter is caught in: unblocked hits taken in a row, each inside
+    /// the stun of the previous one; back to zero when the stun ends.
+    combo_hits: u32,
     action: Action,
     state: FighterState,
 }
@@ -215,6 +246,7 @@ impl Fighter {
             fresh: Input::NONE,
             held: [0; 6],
             combo: None,
+            combo_hits: 0,
             action: Action::Free,
             state: FighterState::Idle,
         }
@@ -260,14 +292,57 @@ impl Fighter {
     /// The attack in progress, if the fighter is attacking.
     pub fn attack(&self) -> Option<Attack> {
         match self.action {
-            Action::Attacking { attack, .. } => Some(attack),
+            Action::Attacking(strike) => Some(strike.attack),
             _ => None,
         }
+    }
+
+    /// Whether the attack in progress hit a fighter that did not block it: from the next tick
+    /// on, the rest of the strike can be cancelled into a stronger strike (a combo; see
+    /// [`Match::step`](super::Match::step)).
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert!(!m.fighter(PlayerId(0)).unwrap().attack_connected());
+    /// ```
+    pub fn attack_connected(&self) -> bool {
+        matches!(self.action, Action::Attacking(strike) if strike.connected)
     }
 
     /// Whether the fighter has run out of health. A knocked-out fighter stays knocked out.
     pub fn is_knocked_out(&self) -> bool {
         self.action == Action::KnockedOut
+    }
+
+    /// Whether the fighter is in the air (jumping or falling), whatever it does there:
+    /// [`FighterState::Airborne`] is only the free flight; an aerial kick or a hit taken in the
+    /// air keep the fighter airborne too.
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert!(!m.fighter(PlayerId(0)).unwrap().is_airborne());
+    /// ```
+    pub fn is_airborne(&self) -> bool {
+        self.airborne
+    }
+
+    /// The hits of the combo the fighter is caught in: a hit that lands while the fighter is
+    /// still stunned by the previous one adds to the count. A blocked hit does not count, and
+    /// the count drops back to zero once the stun ends (a knocked-out fighter keeps the count
+    /// of the combo that finished it).
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert_eq!(m.fighter(PlayerId(0)).unwrap().combo_hits(), 0);
+    /// ```
+    pub fn combo_hits(&self) -> u32 {
+        self.combo_hits
     }
 
     /// The grapple the fighter is locked in, if any, seen from its side.
@@ -304,9 +379,7 @@ impl Fighter {
                 self.fall(config);
             }
             Action::Stunned { remaining } => self.update_stunned(remaining, config),
-            Action::Attacking { attack, frame, hit } => {
-                self.update_attacking(attack, frame, hit, input, config)
-            }
+            Action::Attacking(strike) => self.update_attacking(strike, input, config),
             Action::Grabbing { frame } => self.update_grabbing(frame, input, config),
             Action::Technique { technique, frame } => {
                 self.update_technique(technique, frame, input, config)
@@ -343,46 +416,79 @@ impl Fighter {
         }
     }
 
-    /// An attack still winding up turns into the first technique whose combination, completed
-    /// now, includes the attack's own button (the first of the two presses started the
-    /// attack).
-    fn update_attacking(
-        &mut self,
-        attack: Attack,
-        frame: u32,
-        hit: HitTargets,
-        input: Input,
-        config: &MatchConfig,
-    ) {
-        let data = config.attack(attack);
+    /// On the floor, an attack still winding up turns into the first technique whose
+    /// combination, completed now, includes the attack's own button (the first of the two
+    /// presses started the attack), and an attack that connected is cancelled into a stronger
+    /// strike as soon as its button is held. In the air, see [`Fighter::update_flying_kick`].
+    fn update_attacking(&mut self, strike: Strike, input: Input, config: &MatchConfig) {
+        if self.airborne {
+            self.update_flying_kick(strike, input, config);
+            return;
+        }
+        let data = config.attack(strike.attack);
         let active_end = data.startup.saturating_add(data.active);
         let converted = Technique::ALL.into_iter().find(|&technique| {
-            frame <= data.startup
-                && technique.buttons().contains(&attack)
+            strike.frame <= data.startup
+                && technique.buttons().contains(&strike.attack)
                 && self.completes(technique, config)
         });
 
         if let Some(technique) = converted {
             self.start_technique(technique, 1, config);
-        } else if frame > active_end
+        } else if let Some(next) = self.chained(strike, input) {
+            self.set_strike(Strike::new(next), config);
+        } else if strike.frame > active_end
             && input.jump
             && config.glitches.contains(Glitch::AnimationCancel)
         {
             // Glitch: the jump throws away the remaining recovery frames.
             self.action = Action::Free;
             self.take_off(input, config);
-        } else if frame >= data.total() {
+        } else if strike.frame >= data.total() {
             self.action = Action::Free;
             self.update_free(input, config);
         } else {
-            let next = frame + 1;
-            self.action = Action::Attacking {
-                attack,
-                frame: next,
-                hit,
-            };
-            self.state = FighterState::Attacking(phase_at(next, data.startup, data.active));
+            self.set_strike(strike.next(), config);
         }
+    }
+
+    /// An aerial kick flies on with the jump: the fighter keeps steering, and the landing ends
+    /// the kick whatever its phase (a kick started too late never comes out). Like on the
+    /// floor, a kick that connected is cancelled into a stronger kick as soon as its button is
+    /// held.
+    fn update_flying_kick(&mut self, strike: Strike, input: Input, config: &MatchConfig) {
+        if self.glide(input, config) {
+            self.action = Action::Free;
+            self.state = self.moving_state(input);
+        } else if let Some(next) = self.chained(strike, input) {
+            self.set_strike(Strike::new(next), config);
+        } else if strike.frame >= config.attack(strike.attack).total() {
+            self.action = Action::Free;
+            self.fly(input, config);
+        } else {
+            self.set_strike(strike.next(), config);
+        }
+    }
+
+    /// The strike `strike` is cancelled into, if it connected and `input` requests a stronger
+    /// attack (a stronger kick, in the air).
+    fn chained(&self, strike: Strike, input: Input) -> Option<Attack> {
+        if !strike.connected {
+            return None;
+        }
+        let next = if self.airborne {
+            input.kick()
+        } else {
+            input.attack()
+        };
+        next.filter(|next| next.strength > strike.attack.strength)
+    }
+
+    /// Puts the fighter at the step of `strike`.
+    fn set_strike(&mut self, strike: Strike, config: &MatchConfig) {
+        let data = config.attack(strike.attack);
+        self.action = Action::Attacking(strike);
+        self.state = FighterState::Attacking(phase_at(strike.frame, data.startup, data.active));
     }
 
     /// Unlike an attack, a grab's recovery cannot be cancelled: a whiffed grab is punishable.
@@ -426,33 +532,23 @@ impl Fighter {
 
     /// Down + a direction turns the fighter first (on the floor and in the air). Then, on the
     /// floor, the priorities are: technique > attack > grab > jump > crouch > walk (forward,
-    /// or back with the guard up) and sidestep, which go together; only horizontal control
-    /// works in the air.
+    /// or back with the guard up) and sidestep, which go together. In the air the fighter
+    /// steers and falls, then a kick starts an aerial kick (punches, grabs and techniques need
+    /// the floor).
     fn update_free(&mut self, input: Input, config: &MatchConfig) {
         self.turn(input);
         if self.airborne {
-            self.walk(input.horizontal(), config);
-            let landed = self.fall(config);
-            if landed && input.jump && config.glitches.contains(Glitch::SuperJump) {
-                // Glitch: jumping on the landing step bounces higher than a normal jump.
-                self.launch(
-                    config.jump_velocity.saturating_add(config.super_jump_bonus),
-                    config,
-                );
+            if self.glide(input, config) {
+                self.state = self.moving_state(input);
+            } else {
+                self.fly(input, config);
             }
-            self.state = self.moving_state(input);
             return;
         }
         if let Some(technique) = self.combo {
             self.start_technique(technique, 1, config);
         } else if let Some(attack) = input.attack() {
-            self.action = Action::Attacking {
-                attack,
-                frame: 1,
-                hit: HitTargets::NONE,
-            };
-            let data = config.attack(attack);
-            self.state = FighterState::Attacking(phase_at(1, data.startup, data.active));
+            self.set_strike(Strike::new(attack), config);
         } else if input.grab {
             self.start_grab(1, config);
         } else if input.jump {
@@ -485,6 +581,31 @@ impl Fighter {
         self.walk(input.horizontal(), config);
         self.launch(config.jump_velocity, config);
         self.state = self.moving_state(input);
+    }
+
+    /// One airborne step: steering, the arc, and on the landing step the super jump glitch.
+    /// Returns true when the fighter lands in this step (even if the glitch relaunches it at
+    /// once).
+    fn glide(&mut self, input: Input, config: &MatchConfig) -> bool {
+        self.walk(input.horizontal(), config);
+        let landed = self.fall(config);
+        if landed && input.jump && config.glitches.contains(Glitch::SuperJump) {
+            // Glitch: jumping on the landing step bounces higher than a normal jump.
+            self.launch(
+                config.jump_velocity.saturating_add(config.super_jump_bonus),
+                config,
+            );
+        }
+        landed
+    }
+
+    /// Still in the air after the arc of the step: a kick button starts an aerial kick,
+    /// otherwise the fighter just flies.
+    fn fly(&mut self, input: Input, config: &MatchConfig) {
+        match input.kick() {
+            Some(kick) => self.set_strike(Strike::new(kick), config),
+            None => self.state = FighterState::Airborne,
+        }
     }
 
     /// The take-off step already moves the fighter up.
@@ -542,8 +663,9 @@ impl Fighter {
         }
     }
 
-    /// Back to reading input.
+    /// Back to reading input; the combo the fighter was caught in, if any, is over.
     fn release(&mut self) {
+        self.combo_hits = 0;
         self.action = Action::Free;
         self.state = self.moving_state(Input::NONE);
     }
@@ -620,12 +742,14 @@ impl Fighter {
 
     /// Whether `target` is inside the box of the current attack: in front (or on the same x),
     /// within the attack's range horizontally, within `attack_height` vertically and within
-    /// `attack_depth` across, all bounds inclusive; high attacks pass over a crouching target.
-    /// Always false when the fighter is not attacking.
+    /// `attack_depth` across, all bounds inclusive; high attacks pass over a crouching target,
+    /// unless they come down from the air. Always false when the fighter is not attacking.
     pub(crate) fn reaches(&self, target: &Fighter, config: &MatchConfig) -> bool {
         self.attack().is_some_and(|attack| {
-            !(attack.strength == Strength::High && target.state == FighterState::Crouching)
-                && self.in_box(target, config.attack(attack).range, config)
+            let over_the_head = attack.strength == Strength::High
+                && !self.airborne
+                && target.state == FighterState::Crouching;
+            !over_the_head && self.in_box(target, config.attack(attack).range, config)
         })
     }
 
@@ -644,13 +768,15 @@ impl Fighter {
 
     /// Whether the current attack already struck the fighter at position `target` in the match.
     pub(crate) fn has_hit(&self, target: usize) -> bool {
-        matches!(self.action, Action::Attacking { hit, .. } if hit.contains(target))
+        matches!(self.action, Action::Attacking(strike) if strike.hit.contains(target))
     }
 
-    /// Remembers that the current attack struck the fighter at position `target` in the match.
-    pub(crate) fn record_hit(&mut self, target: usize) {
-        if let Action::Attacking { hit, .. } = &mut self.action {
-            hit.insert(target);
+    /// Remembers that the current attack struck the fighter at position `target` in the match,
+    /// and whether that fighter blocked it (an unblocked hit opens the chain).
+    pub(crate) fn record_hit(&mut self, target: usize, blocked: bool) {
+        if let Action::Attacking(strike) = &mut self.action {
+            strike.hit.insert(target);
+            strike.connected |= !blocked;
         }
     }
 
@@ -676,6 +802,7 @@ impl Fighter {
                 .x
                 .saturating_add(direction.sign() * data.knockback)
                 .clamp(0, config.arena_width);
+            self.combo_hits = self.combo_hits.saturating_add(1);
         }
 
         if self.health == 0 {

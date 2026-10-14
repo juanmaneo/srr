@@ -22,11 +22,14 @@
 //!   the first tick of a clinch);
 //! * in a grapple, on top: it advances to the next position as soon as it may, and strikes
 //!   now and then meanwhile;
+//! * with a strike that connected, it chains the next tier (low → medium → high), punch or
+//!   kick at random (a kick in the air): the combo;
 //! * busy (attacking, stunned...), it presses nothing;
 //! * with its nearest living enemy behind it, it turns around (down + direction);
-//! * in the air, it drifts towards the enemy;
+//! * in the air, it drifts towards the enemy, and kicks (at random strength) once the enemy
+//!   is within a kick's reach;
 //! * when the enemy's strike is coming, it often guards: it steps back to block, or crouches
-//!   under a high attack;
+//!   under a high attack thrown from the floor;
 //! * out of reach, it walks in (jumping once in a while); out of the enemy's line, it
 //!   sidesteps back onto it;
 //! * in reach, every 8 to 14 ticks it picks something: a grab, a judo technique or a strike up
@@ -270,6 +273,9 @@ impl Brawler {
         if let Some(grapple) = me.grapple() {
             return self.grapple(&grapple, config);
         }
+        if let Some(chain) = self.chain(me) {
+            return chain;
+        }
         // Busy (attacking, stunned...) or, in theory, nobody left to fight: nothing to do.
         let target = match (is_free(me.state()), nearest_enemy(current, me)) {
             (true, Some(target)) => target,
@@ -297,11 +303,11 @@ impl Brawler {
             };
         }
         if me.state() == FighterState::Airborne {
-            return walking(toward);
+            return self.fly(dx, dz, toward, config);
         }
         match threat(target, me, config) {
             Some(attack) if self.guards() => {
-                return if attack.strength == Strength::High {
+                return if attack.strength == Strength::High && !target.is_airborne() {
                     Input {
                         down: true,
                         ..Input::NONE
@@ -341,6 +347,34 @@ impl Brawler {
         }
         self.wait = self.between(PAUSE.0, PAUSE.1);
         self.offense(distance, toward, config)
+    }
+
+    /// The strike that chains after the one in progress, once it connected: the next tier,
+    /// with the limb drawn at random (a kick in the air). Nothing after a high strike.
+    fn chain(&mut self, me: &Fighter) -> Option<Input> {
+        let attack = me.attack().filter(|_| me.attack_connected())?;
+        let strength = *Strength::ALL.get(attack.strength.index() + 1)?;
+        let limb = if me.is_airborne() || self.chance(50) {
+            Limb::Kick
+        } else {
+            Limb::Punch
+        };
+        Some(Input::pressing(Attack { limb, strength }))
+    }
+
+    /// In the air: drifting towards the enemy (`dx` along, `dz` across), with a kick of a random
+    /// strength once the enemy is within the reach of the kicks.
+    fn fly(&mut self, dx: i32, dz: i64, toward: Facing, config: &MatchConfig) -> Input {
+        let reach = Strength::ALL
+            .into_iter()
+            .map(|strength| config.attack(Attack::kick(strength)).range)
+            .fold(0, i32::max);
+        let steer = walking(toward);
+        if dx.abs() > reach || dz.abs() > i64::from(config.attack_depth) {
+            return steer;
+        }
+        let strength = Strength::ALL[self.between(0, 2) as usize];
+        steer.with(Attack::kick(strength))
     }
 
     /// Whether the bot guards against the strike in progress (decided once per strike).

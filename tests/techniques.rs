@@ -287,10 +287,28 @@ fn holding_both_buttons_triggers_once() {
 
 #[test]
 fn techniques_need_the_floor() {
+    // In the air the two keys only start the kick among them (an aerial high kick), and the
+    // second key arriving a step later does not turn it into the technique either.
+    for keys in [sweep_keys(), throw_keys()] {
+        let mut m = duel_at(cfg(), 560, 700);
+        m.step(&only(0, press_jump()));
+        m.step(&only(0, keys));
+        assert_eq!(
+            state_of(&m, 0),
+            FighterState::Attacking(AttackPhase::Startup)
+        );
+        assert_eq!(attack_of(&m, 0), Some(HIGH_KICK));
+        assert_eq!(fighter(&m, 0).grapple(), None);
+    }
     let mut m = duel_at(cfg(), 560, 700);
     m.step(&only(0, press_jump()));
+    m.step(&only(0, press(HIGH_KICK)));
     m.step(&only(0, sweep_keys()));
-    assert_eq!(state_of(&m, 0), FighterState::Airborne);
+    assert_eq!(
+        state_of(&m, 0),
+        FighterState::Attacking(AttackPhase::Startup)
+    );
+    assert_eq!(attack_of(&m, 0), Some(HIGH_KICK), "still the kick");
 }
 
 // ---------------------------------------------------------------------------------------------

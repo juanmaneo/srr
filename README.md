@@ -24,8 +24,8 @@ Osvaldo Cavandoli's **"La Linea"**: a hollow round head, one line for the body, 
 arms and legs, in chalk on the alley wall. Every player wears an XKCD-ish accessory in their
 colour (P1 Black Hat Guy's top hat, P2 Beret Guy's beret, P3 a ponytail, P4 a headband), so
 the figures stay apart with the same ink. The graphics will be reworked later; the stick
-figures already have a pose for every state (guard, walk, crouch, jump, each strike, grabs,
-the judo throws and every grapple position).
+figures already have a pose for every state (guard, walk, crouch, jump, each strike, the
+flying kick, grabs, the judo throws and every grapple position).
 
 ---
 
@@ -108,7 +108,25 @@ numeric keypad; the **WASD** preset is for keyboards without one.
   Sidestepping works on the floor only, together with walking (and stepping back still
   blocks); jumping, crouching and attacking take priority over it. The side view shows the
   depth like the belt scrollers: a fighter further back stands higher and is drawn behind.
-* Attacks only work from the ground; you can steer left/right in the air.
+* **Kick from the air.** A kick pressed while jumping is a flying kick (punches, grabs and the
+  judo techniques need the floor). It keeps the kick's numbers and flies on with the jump,
+  steering included; strikes reach 60 units up or down, so **press it near the top of the
+  jump to come down active** during the last steps of the fall. Landing ends the kick
+  whatever its phase: pressed too late, it never comes out (a key still held kicks again
+  from the floor). A flying kick comes from above, so even a high one hits a crouching
+  fighter; stepping back still blocks it.
+* **Combos: chain into a stronger strike.** Once a strike has landed (neither blocked nor
+  whiffed), holding a stronger attack key cancels the rest of it into that strike at once:
+  low → medium → high, punch or kick in any mix (keypad `1` → `5` → `9`), skipping a tier
+  if you like; in the air only a stronger kick chains. Nothing chains after a high strike,
+  and a blocked first hit leaves you in the full recovery: block the jab and punish. With the
+  default numbers every next-tier link lands inside the stun of the previous hit, so jab,
+  straight, high kick is a true 3-hit combo (5 + 9 + 17 damage) as long as the knockback has
+  not pushed the opponent out of reach (start close: the punch chain needs you within 58
+  units, the kick chain within 83), while skipping straight to the high kick lets the
+  opponent recover just in time. A flying kick that connects opens the combo: you land free
+  and jab at once. The hits a fighter takes without recovering are counted under its bar
+  (`3 HITS`), whoever lands them.
 * The figure turns white (with stars around the head) while stunned, and grey once knocked
   out; blocking raises the hands. The striking limb stretches to the attack's range in the
   colour of its strength (yellow, orange, red). The yellow marker shows which fighter is
@@ -178,7 +196,9 @@ thinner and stack, the first half of the players on the left and the rest on the
 to five a side in a brawl of ten, tinier beyond four players). Recent damage stays
 visible as a red trail that drains after half a second, so a combo reads at a glance; the
 bar blinks orange below 25 %. Under each bar: name and HP (`P1 (you)`, `P3`, or `CPU` for
-the computer), round wins as pips, and during a grapple either the position ladder
+the computer), round wins as pips, the combo counter (`2 HITS`, `3 HITS`..., hotter with every
+hit: the hits that fighter took without recovering, kept for three quarters of a second
+after it recovers), and during a grapple either the position ladder
 (`[CLINCH] > mount > submission`, or `[IPPON-SEOI-NAGE] > juji-gatame` for a judo technique)
 for the fighter on top, or for the one underneath the escape gauge (in the air: the counter
 to enter, e.g. `IPPON-SEOI-NAGE!  COUNTER 8+9`). Big graffiti words announce READY, FIGHT!,
@@ -273,6 +293,9 @@ Default frame data (60 ticks per second, arena 1200 units wide, 100 health):
 | Medium kick  | 7        | 3      | 13       | 115   | 11     | 26        | 16       |
 | High kick    | 11       | 4      | 20       | 125   | 17     | 40        | 22       |
 
+Kicks keep their numbers in the air (a flying kick is cut short by the landing). Every strike
+reaches 60 units up or down.
+
 A round lasts 99 seconds after a 2-second countdown. It ends when only one fighter is still
 standing, or at time-up (most health wins). Every player then presses `Enter` to get ready
 ("Waiting for P2, P3 to get ready..."); the next round starts when everybody in the room is
@@ -285,10 +308,12 @@ A practice fight is a 1v1 against a **rival** played by the game, as player 2:
 
 * **the training dummy** (`P2`), which never moves: try moves on it;
 * **the computer** (`CPU`), the bot. It walks in, sidesteps back onto your line when you
-  dodge, picks strikes, grabs and both judo techniques, steps back to block or crouches under
-  high attacks, turns around with `↓` + direction like you, mashes out of grapples, climbs to
-  the submission, and sometimes counters a judo throw with the same two keys. It is
-  deterministic (seeded, no real randomness), so it is fully tested.
+  dodge, picks strikes, grabs and both judo techniques, chains every strike that lands into
+  the next tier (a combo), kicks on the way down when it jumps in, steps back to block or
+  crouches under high attacks (never under a flying kick), turns around with `↓` + direction
+  like you, mashes out of grapples, climbs to the submission, and sometimes counters a judo
+  throw with the same two keys. It is deterministic (seeded, no real randomness), so it is
+  fully tested.
 
 Both are bots behind the same `Bot` trait (`src/game/bot.rs`), listed by `Rival`; switching
 the rival just swaps the bot, in the middle of the round if you like, and a new strategy is a
@@ -562,6 +587,7 @@ println!("{}", game.text_snapshot(160, 45)); // the same screen as text
 
 `cargo xtask screenshots` runs `examples/screenshots.rs`. It plays the intro, opens the
 controls page, shows the pause menu, plays a short fight against the dummy (crouch, strikes,
-ippon-seoi-nage, juji-gatame), a round against the computer, an online 1v1v1 and a brawl of
+a flying kick into a 3-hit combo, ippon-seoi-nage, juji-gatame), a round against the
+computer, an online 1v1v1 and a brawl of
 ten (the other players simulated, one of the ten lagging), headlessly, and writes PNGs to `target/screenshots/`. It is built with `--no-default-features`,
 so no engine, window or GPU is needed: it works in CI or over SSH.

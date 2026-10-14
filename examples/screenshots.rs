@@ -119,6 +119,19 @@ fn main() -> ExitCode {
     game.idle(40);
     shoot(&game, "08-fight-strikes-3d");
     game.tap(&[Key::Tab]);
+    // Step back, jump in, and kick near the top of the jump so that the kick comes down
+    // active on the dummy; land, then jab and chain the straight: a 3-hit combo.
+    game.hold(&[Key::ArrowLeft], 10);
+    game.hold(&[Key::ArrowUp, Key::ArrowRight], 1);
+    game.hold(&[Key::ArrowRight], 13);
+    game.hold(&[Key::ArrowRight, Key::Numpad4], 6);
+    shoot(&game, "08-fight-flying-kick");
+    game.hold(&[Key::ArrowRight], 3);
+    game.hold(&[Key::Numpad1], 1);
+    game.idle(3);
+    game.hold(&[Key::Numpad5], 1);
+    game.idle(5);
+    shoot(&game, "08-fight-combo");
     // The strikes pushed the dummy back: step in (collisions stop at body contact), then throw.
     game.hold(&[Key::ArrowRight], 20);
     game.hold(&[Key::Numpad8, Key::Numpad9], 1);

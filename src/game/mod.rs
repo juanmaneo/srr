@@ -8,14 +8,16 @@
 //!
 //! 1. every fighter is updated, in roster order, from its own input and its previous state
 //!    (nobody turns by itself: free fighters face the direction pressed with down, then act
-//!    with the priority technique > attack > grab > jump > crouch > walk and sidestep;
-//!    grappling fighters stay put);
+//!    with the priority technique > attack > grab > jump > crouch > walk and sidestep on the
+//!    floor, or steer and kick in the air; a strike that connected chains into a stronger
+//!    one; grappling fighters stay put);
 //! 2. overlapping push boxes are separated, so fighters cannot walk through each other (but
 //!    can jump over each other, or sidestep past each other);
 //! 3. every attack (strike) that is active after that resolves against the updated state, so
-//!    simultaneous attacks trade hits, high attacks pass over crouching fighters, a sidestep
-//!    out of the attacker's line dodges and stepping back on the hit tick blocks; a grappler
-//!    that is hit frees its partner;
+//!    simultaneous attacks trade hits, high attacks from the floor pass over crouching
+//!    fighters, a sidestep out of the attacker's line dodges and stepping back on the hit
+//!    tick blocks; hits taken inside the stun of the previous one count as a combo; a
+//!    grappler that is hit frees its partner;
 //! 4. every grapple plays one tick from the fresh presses of its two fighters (a projection
 //!    counters or lands; otherwise reversal glitch, escape, referee stand-up, then submission
 //!    drain, advance or strike);

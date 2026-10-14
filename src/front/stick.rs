@@ -5,7 +5,8 @@
 //!
 //! A [`Figure`] is a skeleton in screen coordinates, posed from the fighter's state: guard,
 //! walk cycle, crouch, tucked jump, strikes (the striking limb stretches to the attack's range, in the
-//! strength's colour), grabs, the judo techniques and every grapple position. The geometry is
+//! strength's colour; a flying kick shoots the leg out downwards), grabs, the judo techniques
+//! and every grapple position. The geometry is
 //! pure and tested; [`Figure::draw`] then inks it with the pen functions [`stroke`] and
 //! [`ring`], which only emit axis-aligned rectangles, so every engine (and the headless
 //! renderer) draws the lines without knowing about them.
@@ -456,6 +457,9 @@ fn pose(fighter: &Fighter, config: &MatchConfig, fight_ticks: u32, screen_x: f32
             [p(10.0, 0.0), p(-20.0, 0.0)],
         ),
         (FighterState::Knockout, _) => lying([p(-40.0, 2.0), p(-6.0, 26.0)]),
+        (FighterState::Attacking(phase), Some(attack)) if fighter.is_airborne() => {
+            flying_kick(attack, phase, reach(config.attack(attack).range))
+        }
         (FighterState::Attacking(phase), Some(attack)) => {
             strike(attack, phase, reach(config.attack(attack).range))
         }
@@ -543,6 +547,23 @@ fn strike(attack: Attack, phase: AttackPhase, reach: f32) -> Pose {
             .ink(FRONT_LEG, color)
         }
     }
+}
+
+/// A flying kick: the body leans back in the air, the arms trail behind, the back leg stays
+/// tucked and the front leg shoots out to `reach`, downwards, in the strength's colour.
+fn flying_kick(attack: Attack, phase: AttackPhase, reach: f32) -> Pose {
+    let foot = match phase {
+        AttackPhase::Startup => p(16.0, 36.0),
+        AttackPhase::Active => p(reach, 20.0),
+        AttackPhase::Recovery => p(reach * 0.4, 30.0),
+    };
+    Pose::new(
+        p(-4.0, 52.0),
+        p(-14.0, 84.0),
+        [p(-6.0, 90.0), p(-26.0, 78.0)],
+        [foot, p(-12.0, 30.0)],
+    )
+    .ink(FRONT_LEG, strength_color(attack.strength))
 }
 
 /// Both arms reaching out to `reach` (a grab, or the throw going for the collar and the

@@ -1,8 +1,8 @@
 //! The versus HUD: one health bar per fighter (two big ones facing each other in a 1v1, like in
 //! every versus game; thinner stacked ones in bigger matches, up to five a side in a brawl of
-//! ten), the red trail of recent damage, round wins, the timer, the grapple meter, the network
-//! state of each player (`LAG`, `LEFT`), the big centred banners (READY / FIGHT! / K.O. /
-//! results / lobby) and the practice notice.
+//! ten), the red trail of recent damage, the combo counter, round wins, the timer, the grapple
+//! meter, the network state of each player (`LAG`, `LEFT`), the big centred banners (READY /
+//! FIGHT! / K.O. / results / lobby) and the practice notice.
 
 use super::ascii::{Canvas, block_pixels};
 use super::controls::{controls_lines, technique_keys};
@@ -18,6 +18,10 @@ use crate::net::{Client, MAX_PLAYERS, PlayerSet, Session, Status};
 pub const TRAIL_HOLD: u32 = 30;
 /// Health the red trail loses per tick while draining.
 pub const TRAIL_SPEED: i32 = 1;
+/// Ticks the combo counter stays under the bar after the fighter recovered.
+pub const COMBO_LINGER: u32 = 45;
+/// Hits from which a combo is counted under the bar.
+pub const COMBO_MIN_HITS: u32 = 2;
 /// Below this share of the maximum health (in percent) the bar blinks.
 pub const DANGER_PERCENT: i32 = 25;
 /// Stalled ticks (a quarter of a second) before telling that the server is not heard from.
@@ -67,24 +71,28 @@ const BIG_HOT: [Rgba; 5] = [
     Rgba::hex(0xd81e1e),
 ];
 
-/// The state of one health bar: the health shown, and the trail of recent damage that drains
-/// after a short pause, so a combo is readable at a glance.
+/// The state of one health bar: the health shown, the trail of recent damage that drains
+/// after a short pause, so a combo is readable at a glance, and the combo counter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HealthBar {
     player: PlayerId,
     health: i32,
     trail: i32,
     hold: u32,
+    hits: u32,
+    linger: u32,
 }
 
 impl HealthBar {
-    /// A full bar (no trail) for `player` at `health`.
+    /// A full bar (no trail, no combo) for `player` at `health`.
     pub fn new(player: PlayerId, health: i32) -> Self {
         HealthBar {
             player,
             health,
             trail: health,
             hold: 0,
+            hits: 0,
+            linger: 0,
         }
     }
 
@@ -132,6 +140,39 @@ impl HealthBar {
             self.trail = (self.trail - TRAIL_SPEED).max(health);
         }
         self.health = health;
+    }
+
+    /// One tick with the hits of the combo the fighter is caught in
+    /// ([`Fighter::combo_hits`]): the count shows at once and, once the fighter recovers (zero
+    /// hits), lingers for [`COMBO_LINGER`] ticks.
+    ///
+    /// ```
+    /// use srr::front::HealthBar;
+    /// use srr::front::hud::COMBO_LINGER;
+    /// use srr::game::PlayerId;
+    ///
+    /// let mut bar = HealthBar::new(PlayerId(0), 100);
+    /// bar.count(3);
+    /// assert_eq!(bar.hits(), 3);
+    /// for _ in 0..COMBO_LINGER { bar.count(0); }
+    /// assert_eq!(bar.hits(), 3, "still lingering");
+    /// bar.count(0);
+    /// assert_eq!(bar.hits(), 0);
+    /// ```
+    pub fn count(&mut self, hits: u32) {
+        if hits > 0 {
+            self.hits = hits;
+            self.linger = COMBO_LINGER;
+        } else if self.linger > 0 {
+            self.linger -= 1;
+        } else {
+            self.hits = 0;
+        }
+    }
+
+    /// The hits of the combo shown under the bar (zero: none).
+    pub fn hits(&self) -> u32 {
+        self.hits
     }
 }
 
@@ -379,6 +420,17 @@ fn draw_bar(frame: &mut Frame, slot: &BarSlot, bar: &HealthBar, fighter: &Fighte
 
     if let Some(grapple) = fighter.grapple() {
         draw_grapple(frame, slot, &grapple, label_y + size + 4.0, size, bindings);
+    } else if bar.hits() >= COMBO_MIN_HITS {
+        // The combo counter, hotter with every hit, where the grapple meter would be.
+        let heat = (bar.hits() - COMBO_MIN_HITS) as usize;
+        frame.label(
+            format!("{} HITS", bar.hits()),
+            x,
+            label_y + size + 4.0,
+            size * 0.85,
+            BIG_HOT[heat.min(BIG_HOT.len() - 1)],
+            align,
+        );
     }
 }
 

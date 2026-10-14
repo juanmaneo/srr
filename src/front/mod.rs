@@ -15,7 +15,8 @@
 //!    practise against ([`controls`]); it is also the pause menu of the fight screen (`P`),
 //!    going back to the fight;
 //! 3. [`Screen::Fight`]: the arena ([`arena`]) under the versus HUD ([`hud`]): health bars with
-//!    the red "recoverable damage" trail, round wins, timer, grapple meter and banners. `Tab`
+//!    the red "recoverable damage" trail and the combo counter, round wins, timer, grapple
+//!    meter and banners. `Tab`
 //!    ([`VIEW_KEY`]) switches the arena between the side view and the third-person 3D view
 //!    ([`tps`]), even in the middle of a fight.
 //!
@@ -483,6 +484,7 @@ impl Game {
         }
         for (bar, fighter) in self.bars.iter_mut().zip(fighters) {
             bar.update(fighter.health());
+            bar.count(fighter.combo_hits());
         }
     }
 

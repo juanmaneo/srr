@@ -152,7 +152,8 @@ fn movement_input_is_ignored_during_an_attack() {
 }
 
 #[test]
-fn attack_is_ignored_while_airborne() {
+fn a_punch_is_ignored_while_airborne() {
+    // Kicks work in the air: see `jump_kicks.rs`.
     let mut m = duel_at(cfg(), 100, 1100);
     m.step(&only(0, press_jump()));
     m.step(&only(0, jab()));

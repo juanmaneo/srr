@@ -280,20 +280,27 @@ impl Match {
     /// 1. updates every fighter, in roster order, from its input and previous state; free
     ///    fighters turn to face the direction pressed together with down (nobody ever turns
     ///    by itself), then, on the floor, act with the priority technique > attack > grab >
-    ///    jump > crouch > walk and sidestep (both on the same tick); an attack
-    ///    still winding up turns into a technique whose combination includes its button;
-    ///    grappling fighters stay put. Every fighter remembers its fresh presses (held now, not
-    ///    on the previous tick) and the technique combination they completed;
+    ///    jump > crouch > walk and sidestep (both on the same tick); in the air they steer
+    ///    and fall, then a kick starts an aerial kick (punches, grabs and techniques need the
+    ///    floor), which the landing ends whatever its phase. An attack still winding up turns
+    ///    into a technique whose combination includes its button; an attack that connected
+    ///    (hit a fighter that did not block it) is cancelled into a stronger attack as soon as
+    ///    its button is held, on the floor any limb, in the air a kick: a combo chains low →
+    ///    medium → high at most. Grappling fighters stay put. Every fighter remembers its
+    ///    fresh presses (held now, not on the previous tick) and the technique combination they
+    ///    completed;
     /// 2. pushes apart along the arena, in roster order of the pairs, every two solid fighters
     ///    (neither knocked out nor grappling) that are less than `body_width` apart, less than
     ///    `body_height` apart vertically and less than `body_depth` apart across: both move by
     ///    half the overlap, the pair shifted back inside the arena at a wall (on the same x,
     ///    the first in roster order goes left);
     /// 3. resolves every attack (strike) that is active after that; high attacks pass over a
-    ///    crouching target, a target more than `attack_depth` across has sidestepped out of its
-    ///    line, and a target that walked in the direction the attack travels (stepped back)
-    ///    during the tick blocks it. A
-    ///    grappler that is hit or knocked out ends its grapple: its partner is free;
+    ///    crouching target (unless they come down from the air), a target more than
+    ///    `attack_depth` across has sidestepped out of its line, and a target that walked in
+    ///    the direction the attack travels (stepped back) during the tick blocks it. An
+    ///    unblocked hit on a fighter still stunned by the previous one adds to its combo count
+    ///    ([`Fighter::combo_hits`]). A grappler that is hit or knocked out ends its grapple:
+    ///    its partner is free;
     /// 4. plays one tick of every grapple that existed before this tick's grabs, in roster
     ///    order of the top fighter: a projection counters or lands (see
     ///    [`Technique`](super::Technique)); otherwise reversal glitch, escape, referee
@@ -387,7 +394,7 @@ impl Match {
     /// simultaneous attacks trade hits.
     fn resolve_attacks(&mut self) {
         for hit in self.collect_hits() {
-            self.fighters[hit.attacker].record_hit(hit.target);
+            self.fighters[hit.attacker].record_hit(hit.target, hit.blocked);
             // An earlier hit of this step may already have knocked the target out.
             let target = &mut self.fighters[hit.target];
             if !target.is_knocked_out() {

@@ -233,6 +233,23 @@ fn movement_buttons_request_no_attack() {
         ..Input::NONE
     };
     assert_eq!(input.attack(), None);
+    assert_eq!(input.kick(), None);
+}
+
+#[test]
+fn the_strongest_kick_held_is_the_kick_whatever_punches_are_held() {
+    assert_eq!(Input::NONE.kick(), None);
+    for punch in [Attack::punch(Strength::Low), Attack::punch(Strength::High)] {
+        assert_eq!(Input::pressing(punch).kick(), None, "{punch} is no kick");
+        for strength in Strength::ALL {
+            let kick = Attack::kick(strength);
+            let both = Input::pressing(punch).with(kick);
+            assert_eq!(both.kick(), Some(kick), "{punch} + {kick}");
+        }
+    }
+    let two_kicks =
+        Input::pressing(Attack::kick(Strength::Low)).with(Attack::kick(Strength::Medium));
+    assert_eq!(two_kicks.kick(), Some(Attack::kick(Strength::Medium)));
 }
 
 #[test]

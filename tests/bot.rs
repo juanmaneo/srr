@@ -8,10 +8,12 @@
 
 use std::collections::HashMap;
 
+use std::collections::HashSet;
+
 use srr::game::{
     Attack, AttackData, Bot, Brawler, Dummy, Facing, FighterState, GlitchSet, GrapplePosition,
-    GrappleRole, Input, Match, MatchConfig, Outcome, Phase, PlayerId, Rival, Roster, Strength,
-    TeamId, Technique,
+    GrappleRole, Input, Limb, Match, MatchConfig, Outcome, Phase, PlayerId, Rival, Roster,
+    Strength, TeamId, Technique,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -339,6 +341,99 @@ fn the_bot_drifts_towards_its_target_in_the_air() {
     assert_eq!(state(&game, CPU), FighterState::Airborne);
     let mut bot = Brawler::new(CPU, 0);
     assert_eq!(bot.think(&game), walking(true));
+}
+
+#[test]
+fn the_bot_kicks_when_it_flies_within_reach() {
+    let mut game = duel_at(config(), 600, 700);
+    step(
+        &mut game,
+        Input::NONE,
+        Input {
+            jump: true,
+            ..Input::NONE
+        },
+    );
+    assert_eq!(state(&game, CPU), FighterState::Airborne);
+    let mut strengths = HashSet::new();
+    for seed in 0..30 {
+        let input = Brawler::new(CPU, seed).think(&game);
+        let kick = input.kick().expect("a kick, in reach");
+        assert_eq!(input.attack(), Some(kick), "seed {seed}: never a punch");
+        assert!(
+            input.left && !input.right,
+            "still drifting towards the human"
+        );
+        strengths.insert(kick.strength);
+    }
+    assert_eq!(strengths.len(), 3, "every strength comes up");
+}
+
+#[test]
+fn the_bot_chains_a_strike_that_connected_up_to_the_high_tier() {
+    let mut limbs = HashSet::new();
+    for seed in 0..8 {
+        // 50 apart: even two punches of knockback leave the human in the high punch's reach.
+        let mut game = duel_at(config(), 600, 650);
+        let mut bot = Brawler::new(CPU, seed);
+        step(
+            &mut game,
+            Input::NONE,
+            Input::pressing(Attack::punch(Strength::Low)),
+        );
+        let mut pressed = Vec::new();
+        let mut longest = 0;
+        for _ in 0..36 {
+            let input = bot.think(&game);
+            if let Some(attack) = input.attack() {
+                assert_eq!(input, Input::pressing(attack), "one button");
+                pressed.push(attack);
+                limbs.insert(attack.limb);
+            }
+            step(&mut game, Input::NONE, input);
+            longest = longest.max(game.fighter(HUMAN).unwrap().combo_hits());
+        }
+        let tiers: Vec<Strength> = pressed.iter().map(|attack| attack.strength).collect();
+        assert_eq!(
+            tiers,
+            [Strength::Medium, Strength::High],
+            "seed {seed}: {pressed:?}"
+        );
+        assert_eq!(longest, 3, "seed {seed}: a three-hit combo");
+    }
+    assert_eq!(limbs, HashSet::from([Limb::Punch, Limb::Kick]));
+}
+
+#[test]
+fn the_bot_steps_back_rather_than_crouching_under_a_jump_kick() {
+    let mut guards = 0;
+    for seed in 0..40 {
+        let mut game = duel_at(config(), 600, 660);
+        step(
+            &mut game,
+            Input {
+                jump: true,
+                ..Input::NONE
+            },
+            Input::NONE,
+        );
+        step(
+            &mut game,
+            Input::pressing(Attack::kick(Strength::High)),
+            Input::NONE,
+        );
+        let human = game.fighter(HUMAN).unwrap();
+        assert!(human.is_airborne() && human.attack().is_some());
+        let first = Brawler::new(CPU, seed).think(&game);
+        assert!(
+            !first.down,
+            "seed {seed}: a kick from above cannot be crouched under"
+        );
+        if first == walking(false) {
+            guards += 1;
+        }
+    }
+    assert!(guards > 5, "{guards} guards");
 }
 
 #[test]

@@ -27,9 +27,11 @@
 //! 1. every living fighter reads its input, in roster order, against the state left by the
 //!    previous step; a free fighter faces the direction pressed together with down (never by
 //!    itself), then, on the floor, acts with the priority technique > attack > grab > jump >
-//!    crouch > walk and sidestep. Attacking,
-//!    grabbing and jumping need the ground, horizontal control also works in the air, and
-//!    walking never turns the fighter: walking away from the facing direction is stepping back;
+//!    crouch > walk and sidestep. Punching, grabbing and jumping need the ground; in the air
+//!    the fighter steers, and a kick is an aerial kick that the landing ends (`jump_kicks.rs`).
+//!    Walking never turns the fighter: walking away from the facing direction is stepping back.
+//!    A strike that connected (hit without being blocked) can be cancelled into a stronger
+//!    strike: the combos of `combos.rs`;
 //! 2. overlapping push boxes are separated;
 //! 3. every attack that is active after that resolves against the state produced by the
 //!    update, so simultaneous attacks trade hits, high attacks pass over a crouching target,
