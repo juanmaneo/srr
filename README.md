@@ -354,6 +354,14 @@ docker build -t srr .
 docker run --rm -p 8080:8080 srr
 ```
 
+With Podman instead of Docker (Linux, or FreeBSD without a Linux VM), see
+[Podman (Buildah) instead of Docker](#podman-buildah-instead-of-docker):
+
+```sh
+podman build -t srr .
+podman run --rm -p 0.0.0.0:8080:8080 srr
+```
+
 This builds the web version into `dist/` and starts the server on port 8080. It prints the
 address to use, for example:
 
@@ -382,8 +390,8 @@ Notes:
 
 * Allow incoming TCP connections on port 8080 in the host's firewall
   (e.g. `sudo ufw allow 8080/tcp`).
-* With `cargo xtask docker serve` or `docker run`, the address printed is the container's;
-  use the host machine's LAN address instead (`ip addr` / `ipconfig`).
+* With `cargo xtask docker serve`, `docker run` or `podman run`, the address printed may be
+  the container's; use the host machine's LAN address instead (`ip addr` / `ipconfig`).
 * With the default layout, keep Num Lock on to be safe. Without a numeric keypad (laptops),
   pick the WASD preset on the controls page (`C` on the title screen).
 * Keep the game tab in the foreground: a hidden tab stops sending inputs, so its fighter
@@ -549,6 +557,73 @@ docker run --rm -p 8080:8080 srr      # same as `cargo xtask serve`
 `dist/` must be served over HTTP (WASM cannot be loaded from `file://`); `srr-server` does it,
 and only it provides the `/ws` endpoint needed to play online. Any other static server is fine
 for `?practice`.
+
+### Podman (Buildah) instead of Docker
+
+The `Dockerfile` builds with Podman (which uses Buildah) as well as with Docker; it needs
+Buildah 1.33 / Podman 4.8 or newer, because the toolchain stage uses a heredoc. The base
+images are fully qualified (`docker.io/library/...`), so no `registries.conf` short-name setup
+is needed. Rootless Podman works: the project is owned by root inside the container, which is
+you on the host, so `target/` and `dist/` still belong to you.
+
+The playable image:
+
+```sh
+podman build -t srr .                       # or: buildah build -t srr .
+podman run --rm -p 0.0.0.0:8080:8080 srr    # then open http://localhost:8080
+```
+
+With rootless Podman, publish the port on IPv4 (`0.0.0.0:`), as above. `srr-server` only
+listens on IPv4. With a plain `-p 8080:8080`, Podman also accepts connections on IPv6
+(`::1`) and forwards them to the container, where nobody is listening. `localhost` then
+fails with "connection reset", while `http://127.0.0.1:8080` and the LAN address keep working.
+
+`cargo xtask docker <task>` runs the `docker` command. Make `docker` run Podman (the
+`podman-docker` package, or a `docker` symlink to `podman` on your `PATH`) and it works as
+is. Or run the same commands yourself:
+
+```sh
+podman build --target toolchain -t srr-builder .
+podman run --rm -v "$PWD":/work:z -v srr-cargo-registry:/usr/local/cargo/registry \
+    -w /work srr-builder cargo xtask dist        # or build, test, coverage
+podman run --rm --init -p 0.0.0.0:8080:8080 \
+    -v "$PWD":/work:z -v srr-cargo-registry:/usr/local/cargo/registry \
+    -w /work srr-builder cargo xtask serve
+```
+
+The `:z` suffix relabels the mount for SELinux (Fedora, RHEL); without SELinux, Podman
+ignores it. `cargo xtask docker` does not add it, so on an SELinux host use the commands above.
+
+#### FreeBSD
+
+On FreeBSD, Podman runs the image's Linux binaries directly through the Linuxulator (Linux
+binary compatibility). You don't need a Linux VM under bhyve. Podman on FreeBSD runs as root.
+One-time setup:
+
+```sh
+pkg install podman-suite
+mount -t fdescfs fdesc /dev/fd                # and add it to /etc/fstab:
+                                              # fdesc  /dev/fd  fdescfs  rw  0  0
+sysrc linux_enable=YES && service linux start
+cp /usr/local/etc/containers/pf.conf.sample /etc/pf.conf   # set your network interface in it
+sysrc pf_enable=YES && service pf start
+# Storage: on ZFS,
+zfs create -o mountpoint=/var/db/containers zroot/containers
+# otherwise set driver = "vfs" in /usr/local/etc/containers/storage.conf
+```
+
+Then build and run the Linux image with `--os=linux`:
+
+```sh
+podman build --os=linux -t srr .
+podman run --rm --os=linux -p 8080:8080 srr
+```
+
+Published ports go through `pf`'s redirections, so other machines on the LAN reach
+`http://<host-ip>:8080`. To reach them from the FreeBSD host itself, read the comments in
+`pf.conf.sample` (`net.pf.filter_local`). The image builds and runs with Docker and with
+rootless Podman on Linux. The FreeBSD steps follow the FreeBSD Podman documentation but have
+not been tested with this project.
 
 The engine backends (`src/engine/`), the platform glue (`src/platform/`) and the thin
 `main.rs` files (game and server) are excluded from the coverage gate: they only draw, read

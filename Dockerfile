@@ -15,6 +15,9 @@
 #   at /work and runs `cargo xtask <task>` inside it, so build outputs (dist/) land on the host.
 #   The container runs the command as the owner of /work, so those outputs belong to the host
 #   user rather than to root.
+#
+# Podman (Buildah) builds and runs it as well: replace `docker` with `podman` in the commands
+# above. Heredocs need Podman 4.8 / Buildah 1.33 or newer.
 ARG DEBIAN_RELEASE=bookworm
 
 # ---------------------------------------------------------------------------------------------
@@ -22,7 +25,9 @@ ARG DEBIAN_RELEASE=bookworm
 # ---------------------------------------------------------------------------------------------
 # Any `rust` image does: only its rustup is used. The compiler, components and targets come
 # from the project's rust-toolchain.toml, so the version is written in one place only.
-FROM rust:${DEBIAN_RELEASE} AS toolchain
+# The registry is spelled out: Docker assumes docker.io for a short name, Podman only if its
+# registries.conf says so (otherwise it fails, or asks which registry to use).
+FROM docker.io/library/rust:${DEBIAN_RELEASE} AS toolchain
 
 # The native build of the game (run by `cargo test --workspace`) plays the music through ALSA.
 RUN apt-get update \
@@ -92,7 +97,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # ---------------------------------------------------------------------------------------------
 # Runtime: the game and its server, nothing else
 # ---------------------------------------------------------------------------------------------
-FROM debian:${DEBIAN_RELEASE}-slim
+FROM docker.io/library/debian:${DEBIAN_RELEASE}-slim
 
 # As PID 1 the server would ignore Ctrl+C (no signal handler); `tini` forwards it properly.
 RUN apt-get update \
