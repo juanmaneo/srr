@@ -695,6 +695,32 @@ fn the_mannequins_follow_the_fight_into_the_air_the_stun_and_the_floor() {
     assert_ne!(airborne.rects, down.rects);
 }
 
+#[test]
+fn the_mannequins_and_the_camera_follow_the_sidesteps() {
+    let mut game = practice(100);
+    game.game_mut().set_view(View::ThirdPerson);
+    game.hold(&[Key::Numpad7], 9);
+    let current = game.game().shown_match().unwrap();
+    let me = current.fighter(PlayerId(0)).unwrap();
+    assert_eq!(me.z(), 45);
+    let depth = tps::depth(me, current.config());
+    assert_eq!(
+        depth,
+        (45.0 * arena::scale(current.config())).round() as i32
+    );
+    assert!(depth > 0 && depth < tps::WALL_Z, "on the pavement");
+    let aim = tps::aim(game.game().active_client());
+    assert_eq!(aim.eye.z, Fx::int(depth - SIDE), "the camera follows");
+    within_screen(&game.frame().rects);
+
+    // As far as the street goes: still on the pavement.
+    game.hold(&[Key::Numpad2], 60);
+    let current = game.game().shown_match().unwrap();
+    let me = current.fighter(PlayerId(0)).unwrap();
+    assert_eq!(me.z(), -current.config().arena_depth, "at the kerb");
+    assert!(-tps::depth(me, current.config()) < -tps::KERB_Z);
+}
+
 // ---------------------------------------------------------------------------------------------
 // The game: Tab
 // ---------------------------------------------------------------------------------------------

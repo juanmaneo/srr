@@ -84,8 +84,8 @@ fn the_controls_lines_follow_the_layout() {
     assert_eq!(
         controls_lines(&KeyBindings::STANDARD),
         [
-            "Move: Left / Right   Jump: Up   Crouch: Down   Turn: Down+Left / Down+Right   \
-             Block: step back",
+            "Move: Left / Right   Sidestep: 7 / 2   Jump: Up   Crouch: Down   \
+             Turn: Down+Left / Down+Right   Block: step back",
             "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Enter: ready   P: pause   \
              Tab: view",
         ]
@@ -93,7 +93,8 @@ fn the_controls_lines_follow_the_layout() {
     assert_eq!(
         controls_lines(&KeyBindings::WASD),
         [
-            "Move: A / D   Jump: W   Crouch: S   Turn: S+A / S+D   Block: step back",
+            "Move: A / D   Sidestep: Q / E   Jump: W   Crouch: S   Turn: S+A / S+D   \
+             Block: step back",
             "Punch: B H J   Kick: G Y U   Grab: Space   Judo: H+U, Y+U   Enter: ready   \
              P: pause   Tab: view",
         ]

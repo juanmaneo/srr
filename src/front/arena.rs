@@ -4,7 +4,11 @@
 //! projections, the pin and the armbar).
 //!
 //! Arena coordinates (x right, y up from the floor, in the rules' units) are mapped to the
-//! virtual screen by [`feet`].
+//! virtual screen by [`feet`]. The depth (`z`, how far a fighter sidestepped towards the wall
+//! or the street) is shown like in the belt scrollers: further back stands higher on the
+//! screen ([`rise`]), and is drawn first.
+
+use std::cmp::Reverse;
 
 use super::ascii::{block_pixels, hash};
 use super::hud::tag;
@@ -27,6 +31,9 @@ pub const ARENA_PIXELS: f32 = 1100.0;
 pub const LYING_TAG_Y: f32 = FLOOR_Y + 12.0;
 /// How far above the top of a standing figure its name tag floats.
 pub const TAG_ABOVE: f32 = 30.0;
+/// Screen pixels a fighter rises per pixel it stands towards the wall: the depth of the alley,
+/// squashed.
+pub const DEPTH_RISE: f32 = 0.25;
 
 const MARKER_WIDTH: f32 = 18.0;
 const MARKER_HEIGHT: f32 = 10.0;
@@ -94,6 +101,20 @@ pub fn feet(fighter: &Fighter, config: &MatchConfig) -> (f32, f32) {
     )
 }
 
+/// How much higher than [`feet`] the side view draws `fighter`: its depth, squashed by
+/// [`DEPTH_RISE`] (negative towards the street).
+///
+/// ```
+/// use srr::front::arena::rise;
+/// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+///
+/// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+/// assert_eq!(rise(m.fighter(PlayerId(0)).unwrap(), m.config()), 0.0, "on the middle line");
+/// ```
+pub fn rise(fighter: &Fighter, config: &MatchConfig) -> f32 {
+    fighter.z() as f32 * scale(config) * DEPTH_RISE
+}
+
 /// The ink of a figure in `state`: grey when knocked out, a white flash when stunned, `base`
 /// otherwise (the guard is shown by the pose).
 pub fn body_color(base: Rgba, state: FighterState) -> Rgba {
@@ -121,28 +142,36 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
     };
     let current = session.current();
     let config = current.config();
+    let figure =
+        |fighter: &Fighter| Figure::of(fighter, config, fight_ticks).raised(rise(fighter, config));
     for fighter in current.fighters() {
         let (x, _) = feet(fighter, config);
         let width = if fighter.y() > 0 { 36.0 } else { 64.0 };
-        frame.rect(x - width / 2.0, FLOOR_Y - 4.0, width, 8.0, SHADOW);
+        let y = FLOOR_Y - rise(fighter, config) - 4.0;
+        frame.rect(x - width / 2.0, y, width, 8.0, SHADOW);
     }
-    // Fighters underneath a grapple first, so the one on top covers them, and the ones
-    // reaching out last, so their limbs are never hidden.
+    // The furthest back first. On the same line, fighters underneath a grapple first, so the
+    // one on top covers them, and the ones reaching out last, so their limbs are never hidden.
     let mut order: Vec<&Fighter> = current.fighters().iter().collect();
-    order.sort_by_key(|f| match f.state() {
-        FighterState::Knockout => 0,
-        // Thrown over the shoulder: in front of the thrower.
-        FighterState::Grappling(GrappleRole::Bottom, GrapplePosition::Throw) => 3,
-        FighterState::Grappling(GrappleRole::Bottom, _) => 1,
-        FighterState::Attacking(_) | FighterState::Grabbing(_) | FighterState::Technique(..) => 3,
-        _ => 2,
+    order.sort_by_key(|f| {
+        let layer = match f.state() {
+            FighterState::Knockout => 0,
+            // Thrown over the shoulder: in front of the thrower.
+            FighterState::Grappling(GrappleRole::Bottom, GrapplePosition::Throw) => 3,
+            FighterState::Grappling(GrappleRole::Bottom, _) => 1,
+            FighterState::Attacking(_)
+            | FighterState::Grabbing(_)
+            | FighterState::Technique(..) => 3,
+            _ => 2,
+        };
+        (Reverse(f.z()), layer)
     });
     for fighter in order {
-        Figure::of(fighter, config, fight_ticks).draw(frame);
+        figure(fighter).draw(frame);
     }
     if let Some(local) = current.fighter(session.local_player()) {
         let (x, _) = feet(local, config);
-        let top = Figure::of(local, config, fight_ticks).top();
+        let top = figure(local).top();
         frame.rect(
             x - MARKER_WIDTH / 2.0,
             top - 8.0 - MARKER_HEIGHT,
@@ -153,10 +182,10 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
     }
     for fighter in current.fighters() {
         let (x, _) = feet(fighter, config);
-        let figure = Figure::of(fighter, config, fight_ticks);
+        let figure = figure(fighter);
         // Name tags float over the head, or lie on the street under a grounded fighter.
         let tag_y = if figure.lying {
-            LYING_TAG_Y
+            LYING_TAG_Y - rise(fighter, config)
         } else {
             figure.top() - TAG_ABOVE
         };

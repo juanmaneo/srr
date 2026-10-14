@@ -280,17 +280,19 @@ impl Match {
     /// 1. updates every fighter, in roster order, from its input and previous state; free
     ///    fighters turn to face the direction pressed together with down (nobody ever turns
     ///    by itself), then, on the floor, act with the priority technique > attack > grab >
-    ///    jump > crouch > walk; an attack
+    ///    jump > crouch > walk and sidestep (both on the same tick); an attack
     ///    still winding up turns into a technique whose combination includes its button;
     ///    grappling fighters stay put. Every fighter remembers its fresh presses (held now, not
     ///    on the previous tick) and the technique combination they completed;
-    /// 2. pushes apart, in roster order of the pairs, every two solid fighters (neither knocked
-    ///    out nor grappling) that are less than `body_width` apart and less than `body_height`
-    ///    apart vertically: both move by half the overlap, the pair shifted back inside the
-    ///    arena at a wall (on the same x, the first in roster order goes left);
+    /// 2. pushes apart along the arena, in roster order of the pairs, every two solid fighters
+    ///    (neither knocked out nor grappling) that are less than `body_width` apart, less than
+    ///    `body_height` apart vertically and less than `body_depth` apart across: both move by
+    ///    half the overlap, the pair shifted back inside the arena at a wall (on the same x,
+    ///    the first in roster order goes left);
     /// 3. resolves every attack (strike) that is active after that; high attacks pass over a
-    ///    crouching target, and a target that walked in the direction the attack travels
-    ///    (stepped back) during the tick blocks it. A
+    ///    crouching target, a target more than `attack_depth` across has sidestepped out of its
+    ///    line, and a target that walked in the direction the attack travels (stepped back)
+    ///    during the tick blocks it. A
     ///    grappler that is hit or knocked out ends its grapple: its partner is free;
     /// 4. plays one tick of every grapple that existed before this tick's grabs, in roster
     ///    order of the top fighter: a projection counters or lands (see
@@ -300,9 +302,9 @@ impl Match {
     /// 5. resolves every technique that is active, in roster order, then every active grab:
     ///    each catches the first fighter in roster order that is in reach, on the floor,
     ///    neither knocked out, stunned nor grappling, and that it may hurt; neither can be
-    ///    blocked. Both fighters are snapped `grapple_distance` apart, facing each other, in a
-    ///    clinch for a grab (its first grapple tick is the next one) or in the projection for
-    ///    a technique. A technique that catches a fighter winding up the same technique is
+    ///    blocked. Both fighters are snapped `grapple_distance` apart on the catcher's line,
+    ///    facing each other, in a clinch for a grab (its first grapple tick is the next one)
+    ///    or in the projection for a technique. A technique that catches a fighter winding up the same technique is
     ///    countered (the roles are reversed, for good); two fighters whose same technique is
     ///    active at once clash and are pushed `break_distance` apart;
     /// 6. runs the round timer and evaluates the outcome.
@@ -354,10 +356,12 @@ impl Match {
                 let (first, second) = (&self.fighters[a], &self.fighters[b]);
                 let gap = (i64::from(second.x()) - i64::from(first.x())).abs();
                 let level = (i64::from(second.y()) - i64::from(first.y())).abs();
+                let across = (i64::from(second.z()) - i64::from(first.z())).abs();
                 if !first.is_solid()
                     || !second.is_solid()
                     || gap >= i64::from(width)
                     || level >= i64::from(height)
+                    || across >= i64::from(self.config.body_depth)
                 {
                     continue;
                 }
@@ -567,8 +571,8 @@ impl Match {
     }
 
     /// Locks the fighter at `catcher` and the one it caught in the grapple `hold`, the catcher
-    /// on `role`: the caught fighter is snapped `grapple_distance` in front of the catcher and
-    /// both face each other.
+    /// on `role`: the caught fighter is snapped `grapple_distance` in front of the catcher, on
+    /// its line, and both face each other.
     fn lock(&mut self, catcher: usize, caught: usize, hold: Hold, role: GrappleRole) {
         let facing = self.fighters[catcher].facing();
         let (catcher_x, caught_x) = snap(
@@ -588,6 +592,8 @@ impl Match {
             caught_x,
             facing.opposite(),
         );
+        let line = self.fighters[catcher].z();
+        self.fighters[caught].pull_to(line);
     }
 
     /// The last team standing wins; nobody standing is a draw; at time-up the highest total

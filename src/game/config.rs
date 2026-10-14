@@ -310,6 +310,18 @@ pub struct MatchConfig {
     pub combo_window: u32,
     /// The two judo techniques, indexed by [`Technique::index`].
     pub techniques: [TechniqueData; 2],
+    /// How far fighters can sidestep: they stay within `-arena_depth..=arena_depth` across the
+    /// arena (positive towards the wall), and spawn on the middle line, `0`. Zero keeps every
+    /// fighter on that line. Must not be negative.
+    pub arena_depth: i32,
+    /// Sideways distance per tick of a sidestep (on the floor only).
+    pub sidestep_speed: i32,
+    /// Sideways reach of every attack, grab and technique, on both sides of the attacker: a
+    /// target further across has sidestepped out of the line. Must not be negative.
+    pub attack_depth: i32,
+    /// Depth of a fighter's push box: fighters at least this far apart across the arena walk
+    /// past each other. Must not be negative.
+    pub body_depth: i32,
 }
 
 /// Shorthand for the default frame data table.
@@ -354,15 +366,16 @@ const fn technique(
 }
 
 impl Default for MatchConfig {
-    /// The standard balance: a 1200-wide arena, 100 health, 99-second rounds after a
+    /// The standard balance: a 1200-wide arena, 300 deep, 100 health, 99-second rounds after a
     /// 2-second countdown, no friendly fire, every glitch enabled, the default
-    /// [`GrappleData`], 50 × 90 push boxes and a 3-tick window for the techniques'
+    /// [`GrappleData`], 50 × 90 × 40 push boxes and a 3-tick window for the techniques'
     /// combinations.
     ///
     /// Stronger attacks deal more damage but start and recover more slowly; kicks reach
     /// further and hit a bit harder than punches of the same strength, but are slower. The
     /// sweep is the faster technique, the throw hurts more; both are very punishable when they
-    /// whiff.
+    /// whiff. A sidestep leaves the line of an attack in nine ticks: too slow to dodge a jab on
+    /// reaction, fast enough for a high kick seen coming.
     fn default() -> Self {
         MatchConfig {
             arena_width: 1200,
@@ -397,6 +410,10 @@ impl Default for MatchConfig {
                 technique((6, 3, 24), 75, (24, 12), 10, 9),
                 technique((8, 2, 28), 65, (30, 12), 14, 11),
             ],
+            arena_depth: 150,
+            sidestep_speed: 5,
+            attack_depth: 40,
+            body_depth: 40,
         }
     }
 }
@@ -473,7 +490,8 @@ impl MatchConfig {
     /// gravity, round time, block reduction, the frame data of every attack in
     /// [`Attack::ALL`] order (active frames, then `range`, `damage`, `knockback`), the fields
     /// that must not be negative (`walk_speed`, `attack_height`, `super_jump_bonus`,
-    /// `body_width`, `body_height`), then the grappling rules: the grab's active frames, the
+    /// `body_width`, `body_height`, `arena_depth`, `sidestep_speed`, `attack_depth`,
+    /// `body_depth`), then the grappling rules: the grab's active frames, the
     /// submission interval, the escape presses in [`GrapplePosition::LADDER`] order, and the
     /// grappling values that must not be negative (reported as `NegativeValue` with the field
     /// names `grapple.range`, `grapple.grapple_distance`, `grapple.break_distance`,
@@ -526,6 +544,10 @@ impl MatchConfig {
             ("super_jump_bonus", self.super_jump_bonus),
             ("body_width", self.body_width),
             ("body_height", self.body_height),
+            ("arena_depth", self.arena_depth),
+            ("sidestep_speed", self.sidestep_speed),
+            ("attack_depth", self.attack_depth),
+            ("body_depth", self.body_depth),
         ])?;
         validate_grapple(&self.grapple)?;
         for technique in Technique::ALL {

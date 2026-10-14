@@ -789,8 +789,8 @@ fn without_a_duel_the_hud_shows_the_banner_and_the_controls() {
     }
     assert_eq!(
         expected[0],
-        "Move: Left / Right   Jump: Up   Crouch: Down   Turn: Down+Left / Down+Right   \
-         Block: step back"
+        "Move: Left / Right   Sidestep: 7 / 2   Jump: Up   Crouch: Down   \
+         Turn: Down+Left / Down+Right   Block: step back"
     );
     assert_eq!(
         expected[1],
@@ -1209,6 +1209,53 @@ fn an_airborne_fighter_casts_a_smaller_shadow() {
     );
 }
 
+#[test]
+fn a_fighter_further_back_stands_higher_and_is_drawn_first() {
+    let mut client = duel(cfg(), 0);
+    let sidestep_in = Input {
+        sidestep_in: true,
+        ..Input::NONE
+    };
+    for _ in 0..9 {
+        play_as(&mut client, 1, hold(sidestep_in));
+    }
+    play(&mut client, idle(), idle());
+    let m = current(&client);
+    let back = m.fighter(PlayerId(1)).unwrap();
+    assert_eq!(back.z(), 45);
+    let rise = arena::rise(back, m.config());
+    assert_eq!(rise, 45.0 * arena::scale(m.config()) * arena::DEPTH_RISE);
+    assert_eq!(
+        arena::rise(m.fighter(PlayerId(0)).unwrap(), m.config()),
+        0.0
+    );
+
+    let figure = Figure::of(back, m.config(), 0);
+    let raised = figure.raised(rise);
+    for (moved, still) in [
+        (raised.head, figure.head),
+        (raised.neck, figure.neck),
+        (raised.shoulder, figure.shoulder),
+        (raised.hip, figure.hip),
+        (raised.arms[1].joint, figure.arms[1].joint),
+        (raised.legs[0].end, figure.legs[0].end),
+    ] {
+        assert_eq!((moved.x, moved.y), (still.x, still.y - rise));
+    }
+
+    let frame = arena_frame(&client, 0);
+    let shadows = rects_of(&frame, SHADOW);
+    assert_eq!(shadows[1].y, shadows[0].y - rise, "the shadow rises too");
+    assert!(find_label(&frame, "P2").unwrap().y < find_label(&frame, "P1").unwrap().y);
+    // After the shadows, the accessory of the one further back comes first.
+    let fighters = &frame.rects[frame.rects.iter().rposition(|r| r.color == SHADOW).unwrap()..];
+    let first = |player: u8| {
+        let color = arena::player_color(PlayerId(player));
+        fighters.iter().position(|r| r.color == color).unwrap()
+    };
+    assert!(first(1) < first(0));
+}
+
 // ---------------------------------------------------------------------------------------------
 // Judo techniques
 // ---------------------------------------------------------------------------------------------
@@ -1284,7 +1331,10 @@ fn the_hud_names_the_local_keys() {
     assert!(find_label(&frame, "IPPON-SEOI-NAGE!  COUNTER Y+U").is_some());
     let text = frame.text();
     assert!(
-        text.contains("Move: A / D   Jump: W   Crouch: S   Turn: S+A / S+D   Block: step back"),
+        text.contains(
+            "Move: A / D   Sidestep: Q / E   Jump: W   Crouch: S   Turn: S+A / S+D   \
+             Block: step back"
+        ),
         "{text}"
     );
     assert!(text.contains("Punch: B H J   Kick: G Y U   Grab: Space   Judo: H+U, Y+U"));

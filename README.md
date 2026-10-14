@@ -51,6 +51,7 @@ numeric keypad; the **WASD** preset is for keyboards without one.
 | Action                | Standard (default) | WASD preset |
 | --------------------- | ------------------ | ----------- |
 | Walk left / right     | `←` / `→`          | `A` / `D`   |
+| Sidestep to the wall / the street | keypad `7` / `2` | `Q` / `E` |
 | Jump                  | `↑`                | `W`         |
 | Crouch                | `↓` (hold)         | `S` (hold)  |
 | Turn around           | `↓` + `←` / `↓` + `→` | `S` + `A` / `S` + `D` |
@@ -95,6 +96,15 @@ numeric keypad; the **WASD** preset is for keyboards without one.
   **jump over** it: a fighter high enough above the other passes over its body (push box
   50 × 90 units by default), and lands on the other side if it got past the middle.
   Knocked-out and grappling fighters have no push box.
+* **Sidestep to dodge**, Tekken style: keypad `7` steps into the alley, towards the wall,
+  keypad `2` out, towards the street (`Q` / `E` in WASD). Everybody starts on the middle line;
+  the alley is 150 units deep on each side. Strikes, grabs and judo techniques only reach 40
+  units across, so **9 ticks of sidestep (150 ms) take you out of their line**: too slow to
+  dodge a jab on reaction, enough for a high kick seen coming. Fighters 40 units apart across
+  walk past each other. A grab or a technique pulls its catch onto the catcher's line.
+  Sidestepping works on the floor only, together with walking (and stepping back still
+  blocks); jumping, crouching and attacking take priority over it. The side view shows the
+  depth like the belt scrollers: a fighter further back stands higher and is drawn behind.
 * Attacks only work from the ground; you can steer left/right in the air.
 * The figure turns white (with stars around the head) while stunned, and grey once knocked
   out; blocking raises the hands. The striking limb stretches to the attack's range in the
@@ -152,8 +162,8 @@ and everything snapped to a 2-pixel grain, for the look of a 90s console. The fi
 wooden mannequins (every bone a tube, every joint a ball) in a comic-book style: flat two-tone
 shading and dark ink outlines, in the Streets of Rage colours of the title. Like every screen,
 the result is only rectangles and labels, so both engines draw it unchanged. The rules are
-the same in both views: fighters still move along one line (sidestepping is not in the rules
-yet).
+the same in both views; this is where sidesteps read best: the mannequins stand on the line
+they stepped to, and the camera follows yours.
 
 ### HUD
 
@@ -267,8 +277,9 @@ When you are alone (practice mode, or nobody else in the online room), the fight
 **"Nobody else is here. Fight the bot?  Y: yes  N: no"**, and nothing happens until you
 answer: the computer never starts a fight without your confirmation.
 
-* `Y`: the computer (`CPU`) plays player 2. It walks in, picks strikes, grabs and both judo
-  techniques, steps back to block or crouches under high attacks, turns around with
+* `Y`: the computer (`CPU`) plays player 2. It walks in, sidesteps back onto your line when
+  you dodge, picks strikes, grabs and both judo techniques, steps back to block or crouches
+  under high attacks, turns around with
   `↓` + direction like you, mashes out of grapples, climbs to the submission, and sometimes
   counters a judo throw with the same two keys. It is deterministic (seeded, no real
   randomness), so it is fully tested.

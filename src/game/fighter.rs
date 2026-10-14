@@ -73,7 +73,7 @@ pub enum AttackPhase {
 pub enum FighterState {
     /// Standing on the floor, doing nothing.
     Idle,
-    /// Moving horizontally on the floor.
+    /// Moving on the floor: walking forward, or sidestepping (in any direction but back).
     Walking,
     /// In the air (jumping or falling).
     Airborne,
@@ -150,7 +150,8 @@ enum Action {
     KnockedOut,
 }
 
-/// One fighter of a match: position, health, facing and current state.
+/// One fighter of a match: position (along the arena, across it and above the floor), health,
+/// facing and current state.
 ///
 /// Fighters cannot be constructed or mutated from outside the game module; obtain them with
 /// [`Match::fighters`](super::Match::fighter) and read them through the accessors. All
@@ -170,6 +171,7 @@ pub struct Fighter {
     player: PlayerId,
     x: i32,
     y: i32,
+    z: i32,
     vertical_velocity: i32,
     airborne: bool,
     health: i32,
@@ -191,14 +193,15 @@ pub struct Fighter {
 }
 
 impl Fighter {
-    /// A fighter on the floor at full health, facing right unless it stands strictly right of
-    /// the arena centre.
+    /// A fighter on the floor, on the middle line, at full health, facing right unless it
+    /// stands strictly right of the arena centre.
     pub(crate) fn spawn(player: PlayerId, x: i32, config: &MatchConfig) -> Self {
         let right_half = 2 * i64::from(x) > i64::from(config.arena_width);
         Fighter {
             player,
             x,
             y: 0,
+            z: 0,
             vertical_velocity: 0,
             airborne: false,
             health: config.max_health,
@@ -230,6 +233,13 @@ impl Fighter {
     /// Height above the floor.
     pub fn y(&self) -> i32 {
         self.y
+    }
+
+    /// Position across the arena, within `-arena_depth..=arena_depth`: `0` is the middle line
+    /// everybody spawns on, positive towards the wall, negative towards the street. Only
+    /// sidesteps change it (and a grab or a technique, which pulls its target onto its line).
+    pub fn z(&self) -> i32 {
+        self.z
     }
 
     /// Remaining health, within `0..=max_health`.
@@ -416,7 +426,8 @@ impl Fighter {
 
     /// Down + a direction turns the fighter first (on the floor and in the air). Then, on the
     /// floor, the priorities are: technique > attack > grab > jump > crouch > walk (forward,
-    /// or back with the guard up); only horizontal control works in the air.
+    /// or back with the guard up) and sidestep, which go together; only horizontal control
+    /// works in the air.
     fn update_free(&mut self, input: Input, config: &MatchConfig) {
         self.turn(input);
         if self.airborne {
@@ -451,6 +462,7 @@ impl Fighter {
         } else {
             self.stride = input.horizontal();
             self.walk(self.stride, config);
+            self.sidestep(input.sideways(), config);
             self.state = self.moving_state(input);
         }
     }
@@ -506,6 +518,14 @@ impl Fighter {
             .clamp(0, config.arena_width);
     }
 
+    /// Moves across the arena, towards the wall for a positive `direction`.
+    fn sidestep(&mut self, direction: i32, config: &MatchConfig) {
+        self.z = self
+            .z
+            .saturating_add(direction * config.sidestep_speed)
+            .clamp(-config.arena_depth, config.arena_depth);
+    }
+
     fn moving_state(&self, input: Input) -> FighterState {
         let direction = input.horizontal();
         if self.airborne {
@@ -513,7 +533,7 @@ impl Fighter {
         } else if input.down {
             // Landing with down held.
             FighterState::Crouching
-        } else if direction == 0 {
+        } else if direction == 0 && input.sideways() == 0 {
             FighterState::Idle
         } else if direction == -self.facing.sign() {
             FighterState::Blocking
@@ -541,8 +561,8 @@ impl Fighter {
     }
 
     /// Whether `target` is inside the box of an active grab: in front (or on the same x),
-    /// within the grab's range horizontally and within `attack_height` vertically, all bounds
-    /// inclusive.
+    /// within the grab's range horizontally, within `attack_height` vertically and within
+    /// `attack_depth` across, all bounds inclusive.
     pub(crate) fn grab_reaches(&self, target: &Fighter, config: &MatchConfig) -> bool {
         self.is_grab_active() && self.in_box(target, config.grapple.range, config)
     }
@@ -592,10 +612,16 @@ impl Fighter {
         self.x = x;
     }
 
+    /// Moves the fighter onto the line `z` (already inside the arena): a grab or a technique
+    /// pulls its target onto its own line.
+    pub(crate) fn pull_to(&mut self, z: i32) {
+        self.z = z;
+    }
+
     /// Whether `target` is inside the box of the current attack: in front (or on the same x),
-    /// within the attack's range horizontally and within `attack_height` vertically, all bounds
-    /// inclusive; high attacks pass over a crouching target. Always false when the fighter is
-    /// not attacking.
+    /// within the attack's range horizontally, within `attack_height` vertically and within
+    /// `attack_depth` across, all bounds inclusive; high attacks pass over a crouching target.
+    /// Always false when the fighter is not attacking.
     pub(crate) fn reaches(&self, target: &Fighter, config: &MatchConfig) -> bool {
         self.attack().is_some_and(|attack| {
             !(attack.strength == Strength::High && target.state == FighterState::Crouching)
@@ -605,7 +631,9 @@ impl Fighter {
 
     fn in_box(&self, target: &Fighter, range: i32, config: &MatchConfig) -> bool {
         let ahead = (target.x - self.x) * self.facing.sign();
-        (0..=range).contains(&ahead) && (target.y - self.y).abs() <= config.attack_height
+        (0..=range).contains(&ahead)
+            && (target.y - self.y).abs() <= config.attack_height
+            && (i64::from(target.z) - i64::from(self.z)).abs() <= i64::from(config.attack_depth)
     }
 
     /// Whether a hit travelling in `direction` is blocked: the fighter is free, on the floor,

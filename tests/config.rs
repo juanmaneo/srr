@@ -272,6 +272,10 @@ fn validation_reports_the_first_problem_in_the_documented_order() {
         super_jump_bonus: -1,
         body_width: -1,
         body_height: -1,
+        arena_depth: -1,
+        sidestep_speed: -1,
+        attack_depth: -1,
+        body_depth: -1,
         techniques: [Technique::Sweep, Technique::Throw].map(|technique| TechniqueData {
             active: 0,
             escape_presses: 0,
@@ -327,6 +331,10 @@ fn validation_reports_the_first_problem_in_the_documented_order() {
         "super_jump_bonus",
         "body_width",
         "body_height",
+        "arena_depth",
+        "sidestep_speed",
+        "attack_depth",
+        "body_depth",
     ] {
         expected.push(ConfigError::NegativeValue { field, value: -1 });
     }
@@ -420,6 +428,10 @@ fn non_negative_mut<'a>(config: &'a mut MatchConfig, field: &str) -> &'a mut i32
         "super_jump_bonus" => &mut config.super_jump_bonus,
         "body_width" => &mut config.body_width,
         "body_height" => &mut config.body_height,
+        "arena_depth" => &mut config.arena_depth,
+        "sidestep_speed" => &mut config.sidestep_speed,
+        "attack_depth" => &mut config.attack_depth,
+        "body_depth" => &mut config.body_depth,
         "sweep.range" => &mut config.techniques[0].range,
         "sweep.damage" => &mut config.techniques[0].damage,
         "throw.range" => &mut config.techniques[1].range,
@@ -724,6 +736,37 @@ fn push_boxes_must_not_be_negative_and_may_be_off() {
         }),
         Ok(())
     );
+}
+
+#[test]
+fn the_depth_rules_must_not_be_negative_and_may_be_off() {
+    for field in [
+        "arena_depth",
+        "sidestep_speed",
+        "attack_depth",
+        "body_depth",
+    ] {
+        assert_eq!(
+            validate_changed(|c| *non_negative_mut(c, field) = -1),
+            Err(ConfigError::NegativeValue { field, value: -1 })
+        );
+        assert_eq!(
+            validate_changed(|c| *non_negative_mut(c, field) = 0),
+            Ok(())
+        );
+    }
+}
+
+#[test]
+fn by_default_a_sidestep_leaves_the_line_of_an_attack_in_nine_ticks() {
+    let config = MatchConfig::default();
+    assert_eq!(
+        (config.attack_depth / config.sidestep_speed) + 1,
+        9,
+        "first tick past attack_depth"
+    );
+    assert!(config.arena_depth > config.attack_depth, "room to dodge");
+    assert_eq!(config.body_depth, config.attack_depth);
 }
 
 #[test]

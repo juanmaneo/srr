@@ -19,13 +19,15 @@
 //! * the techniques ([`SWEEP`], [`THROW`]) accept their two presses up to 2 steps apart
 //! * push boxes are off (`body_width` 0, `body_height` 100) so fighters may share an x; the
 //!   collision tests switch them on
+//! * everybody spawns on the middle line (`z` 0); a sidestep moves 5 across per step, within
+//!   -150..=150; strikes, grabs and techniques reach 40 across, push boxes are 40 deep
 //!
 //! Simulation contract the tests rely on (one `Match::step` per tick, fixed timestep):
 //!
 //! 1. every living fighter reads its input, in roster order, against the state left by the
 //!    previous step; a free fighter faces the direction pressed together with down (never by
 //!    itself), then, on the floor, acts with the priority technique > attack > grab > jump >
-//!    crouch > walk. Attacking,
+//!    crouch > walk and sidestep. Attacking,
 //!    grabbing and jumping need the ground, horizontal control also works in the air, and
 //!    walking never turns the fighter: walking away from the facing direction is stepping back;
 //! 2. overlapping push boxes are separated;
@@ -128,6 +130,10 @@ pub fn cfg() -> MatchConfig {
         body_height: 100,
         combo_window: 2,
         techniques: [SWEEP, THROW],
+        arena_depth: 150,
+        sidestep_speed: 5,
+        attack_depth: 40,
+        body_depth: 40,
     }
 }
 

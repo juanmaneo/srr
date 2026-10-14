@@ -348,6 +348,83 @@ fn a_guard_holds_until_the_strike_is_over() {
     }
 }
 
+/// A duel with the fighters at `human` and `cpu`, the human `steps` sidesteps towards the wall.
+fn human_off_the_line(human: i32, cpu: i32, steps: usize) -> Match {
+    let mut game = duel_at(config(), human, cpu);
+    let sidestep = Input {
+        sidestep_in: true,
+        ..Input::NONE
+    };
+    for _ in 0..steps {
+        step(&mut game, sidestep, Input::NONE);
+    }
+    game
+}
+
+#[test]
+fn the_bot_sidesteps_back_onto_the_line_of_its_target() {
+    let towards_the_wall = |input: Input| Input {
+        sidestep_in: true,
+        ..input
+    };
+    // 25 across, far away: it walks in and sidesteps at once.
+    let far = human_off_the_line(100, 1100, 5);
+    let inputs = answers(&mut Bot::new(CPU, 9), &far, 200);
+    assert!(
+        inputs
+            .iter()
+            .all(|i| *i == towards_the_wall(walking(true)) || i.jump),
+        "{inputs:?}"
+    );
+    // 45 across, in reach: nothing would connect, it only sidesteps.
+    let close = human_off_the_line(600, 650, 9);
+    let inputs = answers(&mut Bot::new(CPU, 9), &close, 50);
+    assert!(inputs.iter().all(|&i| i == towards_the_wall(Input::NONE)));
+    // 20 across, half the attack depth: close enough, no sidestep.
+    let near = human_off_the_line(100, 1100, 4);
+    let inputs = answers(&mut Bot::new(CPU, 9), &near, 200);
+    assert!(inputs.iter().all(|i| !i.sidestep_in && !i.sidestep_out));
+}
+
+#[test]
+fn the_bot_does_not_guard_against_a_strike_off_its_line() {
+    for seed in 0..20 {
+        let mut game = human_off_the_line(600, 660, 9);
+        step(
+            &mut game,
+            Input::pressing(Attack::kick(Strength::High)),
+            Input::NONE,
+        );
+        assert!(matches!(state(&game, HUMAN), FighterState::Attacking(_)));
+        let input = Bot::new(CPU, seed).think(&game);
+        assert_eq!(
+            input,
+            Input {
+                sidestep_in: true,
+                ..Input::NONE
+            },
+            "seed {seed}: no guard, back onto the line"
+        );
+    }
+}
+
+#[test]
+fn the_bot_goes_for_the_nearest_enemy_across_the_arena_too() {
+    let roster = Roster::free_for_all(3).unwrap();
+    let mut game = Match::with_spawns(roster, config(), &[400, 500, 650]).unwrap();
+    // Player 0 is 100 along but 150 across: player 2, 150 along, is nearer.
+    let sidestep = Input {
+        sidestep_in: true,
+        ..Input::NONE
+    };
+    for _ in 0..30 {
+        game.step(&HashMap::from([(HUMAN, sidestep)]));
+    }
+    assert_eq!(game.fighter(HUMAN).unwrap().z(), 150);
+    let input = Bot::new(CPU, 0).think(&game);
+    assert!(!input.down, "no turn towards player 0: {input:?}");
+}
+
 #[test]
 fn up_close_the_bot_uses_every_move() {
     let game = duel_at(config(), 600, 650);

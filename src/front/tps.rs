@@ -15,17 +15,19 @@
 //! headless renderer draw it unchanged.
 //!
 //! World units are the pixels of the side view: `x` along the arena (`0` at the left bound),
-//! `y` up from the pavement, `z` towards the wall. The rules have no lateral movement, so every
-//! fighter stands on `z = 0`; the axis is there for the day the brawl goes sideways.
+//! `y` up from the pavement, `z` towards the wall. Fighters stand on the line they sidestepped to
+//! ([`depth`]), `z = 0` being the middle line where everybody starts; the camera follows the
+//! local fighter's line.
 
 use std::cmp::Reverse;
 
-use super::arena::{ARENA_LEFT, ARENA_PIXELS, FLOOR_Y, feet, player_color};
+use super::arena::{ARENA_LEFT, ARENA_PIXELS, FLOOR_Y, feet, player_color, scale};
 use super::ascii::{block_pixels, hash};
 use super::hud::tag;
 use super::scene::{Align, Frame, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH};
 use super::space::{Camera, Fx, NEAR, Vec3, div_round, perspective, screen_point};
 use super::stick::{self, Accessory, Figure, HEAD_RADIUS, Mark, Point};
+use crate::game::{Fighter, MatchConfig};
 use crate::net::Client;
 
 /// Pixels per grain: the rows of every fill and the runs of every ink line are this thick and
@@ -53,12 +55,12 @@ pub const AHEAD: i32 = 180;
 /// ...at this height.
 pub const TARGET_HEIGHT: i32 = 80;
 
-/// `z` of the back wall.
-pub const WALL_Z: i32 = 60;
+/// `z` of the back wall: past the deepest sidestep towards it.
+pub const WALL_Z: i32 = 180;
 /// Height of the back wall (the side view's wall reaches the top of its screen).
 pub const WALL_HEIGHT: i32 = 504;
-/// `z` of the kerb: the pavement ends there, the street is beyond.
-pub const KERB_Z: i32 = -140;
+/// `z` of the kerb: the pavement ends there, past the deepest sidestep towards the street.
+pub const KERB_Z: i32 = -180;
 /// How far below the pavement the street is.
 pub const STREET_DROP: i32 = 10;
 /// `z` of the far edge of the street.
@@ -68,7 +70,7 @@ pub const ALLEY_LEFT: i32 = -1600;
 /// `x` of the right cross wall closing the alley.
 pub const ALLEY_RIGHT: i32 = 2700;
 
-const LANE_Z: i32 = -200;
+const LANE_Z: i32 = -240;
 const COURSE: i32 = 42;
 const BLOCK: i32 = 96;
 const TAG_CELL: i32 = 30;
@@ -188,6 +190,7 @@ pub fn aim(client: &Client) -> Camera {
         .fighter(session.local_player())
         .unwrap_or(&fighters[0]);
     let (x, _) = feet(local, config);
+    let z = depth(local, config);
     let others: Vec<f32> = fighters
         .iter()
         .filter(|f| f.player() != local.player())
@@ -203,9 +206,23 @@ pub fn aim(client: &Client) -> Camera {
     };
     let x = (x - ARENA_LEFT) as i32;
     Camera::look_at(
-        Vec3::int(x - ahead * BACK, HEIGHT, -SIDE),
-        Vec3::int(x + ahead * AHEAD, TARGET_HEIGHT, 0),
+        Vec3::int(x - ahead * BACK, HEIGHT, z - SIDE),
+        Vec3::int(x + ahead * AHEAD, TARGET_HEIGHT, z),
     )
+}
+
+/// The world `z` of `fighter`: how far it sidestepped, in world units (towards the wall when
+/// positive).
+///
+/// ```
+/// use srr::front::tps::depth;
+/// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+///
+/// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+/// assert_eq!(depth(m.fighter(PlayerId(0)).unwrap(), m.config()), 0, "on the middle line");
+/// ```
+pub fn depth(fighter: &Fighter, config: &MatchConfig) -> i32 {
+    (fighter.z() as f32 * scale(config)).round() as i32
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -559,7 +576,8 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
     for fighter in current.fighters() {
         let (x, _) = feet(fighter, config);
         let (rx, rz) = if fighter.y() > 0 { (18, 7) } else { (32, 12) };
-        let centre = Vec3::new(Fx::from_f32(x - ARENA_LEFT), Fx::int(1), Fx::ZERO);
+        let z = Fx::int(depth(fighter, config));
+        let centre = Vec3::new(Fx::from_f32(x - ARENA_LEFT), Fx::int(1), z);
         let ellipse: Vec<Vec3> = (0..12)
             .map(|k| centre + Vec3::new(Fx(cos(k) as i32 * rx), Fx::ZERO, Fx(sin(k) as i32 * rz)))
             .collect();
@@ -570,7 +588,10 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
     let mut parts: Vec<Part> = current
         .fighters()
         .iter()
-        .flat_map(|fighter| mannequin(&Figure::of(fighter, config, fight_ticks), camera))
+        .flat_map(|fighter| {
+            let figure = Figure::of(fighter, config, fight_ticks);
+            mannequin(&figure, depth(fighter, config), camera)
+        })
         .collect();
     parts.sort_by_key(|part| Reverse(part.depth));
     for part in parts {
@@ -592,16 +613,17 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
     for fighter in current.fighters() {
         let (x, y) = feet(fighter, config);
         let figure = Figure::of(fighter, config, fight_ticks);
+        let z = depth(fighter, config);
         // Name tags float over the head, or lie on the pavement in front of a grounded fighter.
         let anchor = if figure.lying {
-            lift(Point { x, y }, -40)
+            lift(Point { x, y }, z - 40)
         } else {
             lift(
                 Point {
                     x,
                     y: figure.top() - 8.0,
                 },
-                0,
+                z,
             )
         };
         if let Some(p) = camera.project(anchor) {
@@ -848,8 +870,9 @@ fn head_axes(figure: &Figure) -> (Point, Point) {
 }
 
 /// The wooden mannequin of `figure`: a tube per bone, a ball per joint, the head a sphere, the
-/// accessory and the marks in relief.
-fn mannequin(figure: &Figure, camera: &Camera) -> Vec<Part> {
+/// accessory and the marks in relief, standing on the line `depth`.
+fn mannequin(figure: &Figure, depth: i32, camera: &Camera) -> Vec<Part> {
+    let lift = |point: Point, z: i32| self::lift(point, depth + z);
     let mut s = Sculpt {
         camera,
         parts: Vec::new(),

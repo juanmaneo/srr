@@ -110,18 +110,19 @@ pub fn technique_keys(technique: Technique, bindings: &KeyBindings) -> String {
 /// use srr::game::KeyBindings;
 ///
 /// let [moves, attacks] = controls_lines(&KeyBindings::WASD);
-/// assert!(moves.starts_with("Move: A / D   Jump: W   Crouch: S   Turn: S+A / S+D"));
+/// assert!(moves.starts_with("Move: A / D   Sidestep: Q / E   Jump: W   Crouch: S"));
 /// assert!(attacks.contains("Grab: Space   Judo: H+U, Y+U"));
 /// ```
 pub fn controls_lines(bindings: &KeyBindings) -> [String; 2] {
     let b = bindings;
     let [left, right, jump, down] = [b.left, b.right, b.jump, b.down].map(Key::label);
+    let [wall, street] = [b.sidestep_in, b.sidestep_out].map(Key::label);
     let punches = [b.punch_low, b.punch_medium, b.punch_high].map(Key::label);
     let kicks = [b.kick_low, b.kick_medium, b.kick_high].map(Key::label);
     [
         format!(
-            "Move: {left} / {right}   Jump: {jump}   Crouch: {down}   \
-             Turn: {down}+{left} / {down}+{right}   Block: step back"
+            "Move: {left} / {right}   Sidestep: {wall} / {street}   Jump: {jump}   \
+             Crouch: {down}   Turn: {down}+{left} / {down}+{right}   Block: step back"
         ),
         format!(
             "Punch: {}   Kick: {}   Grab: {}   Judo: {}, {}   Enter: ready   P: pause   \

@@ -238,7 +238,9 @@ impl Figure {
     pub fn of(fighter: &Fighter, config: &MatchConfig, fight_ticks: u32) -> Figure {
         let (x, y) = feet(fighter, config);
         let facing = fighter.facing().sign() as f32;
-        let pose = pose(fighter, config, fight_ticks, x);
+        // A sidestep moves the legs too.
+        let stride = x + fighter.z() as f32 * scale(config);
+        let pose = pose(fighter, config, fight_ticks, stride);
         let place = |q: Point| p(x + facing * q.x, y - q.y);
 
         let head = pose
@@ -280,6 +282,24 @@ impl Figure {
             },
             lying: pose.lying,
         }
+    }
+
+    /// The figure moved `rise` pixels up the screen (down when negative): how the side view
+    /// shows a fighter standing deeper in the alley.
+    pub fn raised(mut self, rise: f32) -> Figure {
+        for point in [
+            &mut self.head,
+            &mut self.neck,
+            &mut self.shoulder,
+            &mut self.hip,
+        ] {
+            point.y -= rise;
+        }
+        for bone in self.arms.iter_mut().chain(&mut self.legs) {
+            bone.joint.y -= rise;
+            bone.end.y -= rise;
+        }
+        self
     }
 
     /// The highest screen y the figure reaches, accessory included.

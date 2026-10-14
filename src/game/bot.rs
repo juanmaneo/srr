@@ -21,10 +21,14 @@
 //! * in the air, it drifts towards the enemy;
 //! * when the enemy's strike is coming, it often guards: it steps back to block, or crouches
 //!   under a high attack;
-//! * out of reach, it walks in (jumping once in a while);
+//! * out of reach, it walks in (jumping once in a while); out of the enemy's line, it
+//!   sidesteps back onto it;
 //! * in reach, every 8 to 14 ticks it picks something: a grab, a judo technique or a strike up
 //!   close, a strike or a step in further away; between two decisions it holds its ground,
 //!   walks in or backs off.
+//!
+//! Whatever it does on the floor, the bot sidesteps towards the enemy's line while it is more
+//! than half the `attack_depth` away from it, so a sidestep only shakes it off for a moment.
 //!
 //! ```
 //! use srr::game::{Bot, Match, MatchConfig, PlayerId, Roster};
@@ -141,6 +145,12 @@ impl Bot {
             _ => return Input::NONE,
         };
         let dx = target.x() - me.x();
+        let dz = i64::from(target.z()) - i64::from(me.z());
+        let lane = if dz.abs() > i64::from(config.attack_depth / 2) {
+            dz.signum() as i32
+        } else {
+            0
+        };
         // Straight above or below the target: keep facing the same way.
         let toward = [Facing::Left, me.facing(), Facing::Right][(dx.signum() + 1) as usize];
         if me.facing() != toward {
@@ -182,16 +192,21 @@ impl Bot {
             let jump = self.chance(JUMP_PERCENT);
             return Input {
                 jump,
-                ..walking(toward)
+                ..sidestepping(walking(toward), lane)
             };
+        }
+        if dz.abs() > i64::from(config.attack_depth) {
+            // In reach but out of the line: nothing would connect.
+            return sidestepping(Input::NONE, lane);
         }
         if self.wait > 0 {
             self.wait -= 1;
-            return match self.plan {
+            let walk = match self.plan {
                 Plan::Hold => Input::NONE,
                 Plan::Approach => walking(toward),
                 Plan::Retreat => walking(toward.opposite()),
             };
+            return sidestepping(walk, lane);
         }
         self.wait = self.between(PAUSE.0, PAUSE.1);
         self.offense(distance, toward, config)
@@ -316,25 +331,33 @@ fn is_free(state: FighterState) -> bool {
     )
 }
 
-/// The closest enemy still standing (the lowest player id among equals).
+/// The closest enemy still standing, along and across the arena (the lowest player id among
+/// equals).
 fn nearest_enemy<'a>(current: &'a Match, me: &Fighter) -> Option<&'a Fighter> {
     current
         .fighters()
         .iter()
         .filter(|f| !f.is_knocked_out() && current.roster().are_enemies(me.player(), f.player()))
-        .min_by_key(|f| ((f.x() - me.x()).abs(), f.player()))
+        .min_by_key(|f| {
+            let along = (i64::from(f.x()) - i64::from(me.x())).abs();
+            let across = (i64::from(f.z()) - i64::from(me.z())).abs();
+            (along + across, f.player())
+        })
 }
 
 /// The strike of `target` that is about to reach `me`, if any.
 fn threat(target: &Fighter, me: &Fighter, config: &MatchConfig) -> Option<Attack> {
     let attack = target.attack()?;
     let ahead = (me.x() - target.x()) * target.facing().sign();
+    let across = (i64::from(me.z()) - i64::from(target.z())).abs();
     let coming = matches!(
         target.state(),
         FighterState::Attacking(AttackPhase::Startup | AttackPhase::Active)
     );
-    (coming && (0..=config.attack(attack).range + config.walk_speed).contains(&ahead))
-        .then_some(attack)
+    (coming
+        && across <= i64::from(config.attack_depth)
+        && (0..=config.attack(attack).range + config.walk_speed).contains(&ahead))
+    .then_some(attack)
 }
 
 fn walking(toward: Facing) -> Input {
@@ -342,6 +365,15 @@ fn walking(toward: Facing) -> Input {
         left: toward == Facing::Left,
         right: toward == Facing::Right,
         ..Input::NONE
+    }
+}
+
+/// `input` with a sidestep towards the wall (`lane` 1) or the street (`lane` -1).
+fn sidestepping(input: Input, lane: i32) -> Input {
+    Input {
+        sidestep_in: lane > 0,
+        sidestep_out: lane < 0,
+        ..input
     }
 }
 
