@@ -1,19 +1,19 @@
 //! The binary messages exchanged between the browsers and the relay server.
 //!
-//! Every message is one WebSocket binary frame: a tag byte followed by fixed-size fields,
-//! integers in little-endian order. A set of players ([`PlayerSet`]) is one byte, bit `i` for
-//! player `i`.
+//! Every message is one WebSocket binary frame: a tag byte followed by its fields, integers in
+//! little-endian order. A set of players ([`PlayerSet`]) is two bytes, bit `i` for player `i`.
 //!
-//! | tag | message                           | direction | fields                                       |
-//! | --- | --------------------------------- | --------- | -------------------------------------------- |
-//! | 1   | [`ServerMessage::Welcome`]        | to client | player `u8`                                  |
-//! | 2   | [`ServerMessage::Start`]          | to client | session `u8`, players `u8`                   |
-//! | 3   | [`ClientMessage::Input`]          | to server | session `u8`, tick `u32`, input `u16`        |
-//! | 3   | [`ServerMessage::Input`]          | to client | session `u8`, player `u8`, tick `u32`, input `u16` |
-//! | 4   | [`ServerMessage::PlayerLeft`]     | to client | player `u8`                                  |
-//! | 5   | [`ServerMessage::RoomFull`]       | to client | —                                            |
-//! | 6   | [`ServerMessage::Lobby`]          | to client | seated `u8`, ready `u8`                      |
-//! | 7   | [`ClientMessage::Ready`]          | to server | —                                            |
+//! | tag | message                       | direction | fields                                                   |
+//! | --- | ----------------------------- | --------- | -------------------------------------------------------- |
+//! | 1   | [`ServerMessage::Welcome`]    | to client | player `u8`                                              |
+//! | 2   | [`ServerMessage::Start`]      | to client | session `u8`, players `u16`                              |
+//! | 3   | [`ClientMessage::Input`]      | to server | session `u8`, tick `u32`, input `u16`                    |
+//! | 4   | [`ServerMessage::PlayerLeft`] | to client | player `u8`                                              |
+//! | 5   | [`ServerMessage::RoomFull`]   | to client | —                                                        |
+//! | 6   | [`ServerMessage::Lobby`]      | to client | seated `u16`, ready `u16`                                |
+//! | 7   | [`ClientMessage::Ready`]      | to server | —                                                        |
+//! | 8   | [`ServerMessage::Frame`]      | to client | session `u8`, tick `u32`, players `u16`, late `u16`, then one input `u16` per player, by increasing id |
+//! | 9   | [`ServerMessage::Timing`]     | to client | tick `u32`, lead `i8`                                    |
 
 use std::fmt;
 
@@ -27,11 +27,16 @@ const TAG_PLAYER_LEFT: u8 = 4;
 const TAG_ROOM_FULL: u8 = 5;
 const TAG_LOBBY: u8 = 6;
 const TAG_READY: u8 = 7;
+const TAG_FRAME: u8 = 8;
+const TAG_TIMING: u8 = 9;
 
 /// Length of an input sent by a client: tag, session, tick and input bits.
-const CLIENT_INPUT_LENGTH: usize = 1 + 1 + 4 + 2;
-/// Length of an input relayed by the server: the client's fields plus the player.
-const SERVER_INPUT_LENGTH: usize = CLIENT_INPUT_LENGTH + 1;
+const INPUT_LENGTH: usize = 1 + 1 + 4 + 2;
+/// Length of a frame before its inputs: tag, session, tick, players and late players.
+const FRAME_HEADER_LENGTH: usize = 1 + 1 + 4 + 2 + 2;
+
+/// The inputs of one tick, indexed by player id (see [`ServerMessage::Frame`]).
+pub type FrameInputs = [Input; PlayerSet::CAPACITY];
 
 /// Why bytes could not be decoded into a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +111,8 @@ impl ClientMessage {
                 input,
             } => {
                 let mut bytes = vec![TAG_INPUT, session];
-                push_tick_input(&mut bytes, tick, input);
+                bytes.extend_from_slice(&tick.to_le_bytes());
+                bytes.extend_from_slice(&input.to_bits().to_le_bytes());
                 bytes
             }
             ClientMessage::Ready => vec![TAG_READY],
@@ -121,12 +127,11 @@ impl ClientMessage {
     pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         match tag_of(bytes)? {
             TAG_INPUT => {
-                let [_, session, t0, t1, t2, t3, i0, i1] = fixed::<CLIENT_INPUT_LENGTH>(bytes)?;
-                let (tick, input) = tick_input([t0, t1, t2, t3], [i0, i1]);
+                let [_, session, t0, t1, t2, t3, i0, i1] = fixed::<INPUT_LENGTH>(bytes)?;
                 Ok(ClientMessage::Input {
                     session,
-                    tick,
-                    input,
+                    tick: u32::from_le_bytes([t0, t1, t2, t3]),
+                    input: Input::from_bits(u16::from_le_bytes([i0, i1])),
                 })
             }
             TAG_READY => fixed::<1>(bytes).map(|_| ClientMessage::Ready),
@@ -136,6 +141,10 @@ impl ClientMessage {
 }
 
 /// What the server sends to a browser.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a frame of inputs is a few hundred bytes, decoded and handled at once: boxing it would allocate 60 times per second and lose `Copy`"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerMessage {
     /// Sent once on connection: the receiver sits in seat `player` and controls that fighter.
@@ -145,23 +154,27 @@ pub enum ServerMessage {
     },
     /// Every seated player is ready: start a new match, numbered `session`, between `players`.
     Start {
-        /// Identifies the match; inputs of other sessions must be ignored.
+        /// Identifies the match; frames of other sessions must be ignored.
         session: u8,
         /// Who fights, everybody for themselves.
         players: PlayerSet,
     },
-    /// The input of `player` for `tick` of session `session`.
-    Input {
-        /// The session the input belongs to.
+    /// The inputs of every player of session `session` for `tick`, as decided by the server:
+    /// sent, in tick order, as soon as every input arrived, or once the server gave up waiting.
+    Frame {
+        /// The session the frame belongs to.
         session: u8,
-        /// Whose input it is.
-        player: PlayerId,
-        /// The tick the input is for.
+        /// The tick the inputs are for.
         tick: u32,
-        /// What the player holds on that tick.
-        input: Input,
+        /// The players of the session: whose inputs the frame carries.
+        players: PlayerSet,
+        /// The players whose input was late: the server repeated their previous one instead.
+        late: PlayerSet,
+        /// The input of each player of `players`, by id; the others are not sent (and decode
+        /// as [`Input::NONE`]).
+        inputs: FrameInputs,
     },
-    /// `player` disconnected; a match they played in cannot go on.
+    /// `player` disconnected; their fighter stands still for the rest of the match.
     PlayerLeft {
         /// The player who left.
         player: PlayerId,
@@ -174,6 +187,16 @@ pub enum ServerMessage {
         seated: PlayerSet,
         /// The seated players waiting for the next match.
         ready: PlayerSet,
+    },
+    /// How early the receiver's inputs reached the server lately, at worst: the input for
+    /// `tick` arrived `lead` ticks before the server would have given up on it (negative: too
+    /// late, it was replaced). The client speeds up or slows down to keep a small margin; the
+    /// tick tells it which of its corrections the report already reflects.
+    Timing {
+        /// The tick of the input with the smallest margin since the previous report.
+        tick: u32,
+        /// Its margin, in ticks.
+        lead: i8,
     },
 }
 
@@ -192,21 +215,42 @@ impl ServerMessage {
         match *self {
             ServerMessage::Welcome { player } => vec![TAG_WELCOME, player.0],
             ServerMessage::Start { session, players } => {
-                vec![TAG_START, session, players.bits()]
+                let mut bytes = vec![TAG_START, session];
+                push_set(&mut bytes, players);
+                bytes
             }
-            ServerMessage::Input {
+            ServerMessage::Frame {
                 session,
-                player,
                 tick,
-                input,
+                players,
+                late,
+                inputs,
             } => {
-                let mut bytes = vec![TAG_INPUT, session, player.0];
-                push_tick_input(&mut bytes, tick, input);
+                let mut bytes = Vec::with_capacity(FRAME_HEADER_LENGTH + 2 * players.len());
+                bytes.extend_from_slice(&[TAG_FRAME, session]);
+                bytes.extend_from_slice(&tick.to_le_bytes());
+                push_set(&mut bytes, players);
+                push_set(&mut bytes, late);
+                for player in players.iter() {
+                    let input = inputs[usize::from(player.0)];
+                    bytes.extend_from_slice(&input.to_bits().to_le_bytes());
+                }
                 bytes
             }
             ServerMessage::PlayerLeft { player } => vec![TAG_PLAYER_LEFT, player.0],
             ServerMessage::RoomFull => vec![TAG_ROOM_FULL],
-            ServerMessage::Lobby { seated, ready } => vec![TAG_LOBBY, seated.bits(), ready.bits()],
+            ServerMessage::Lobby { seated, ready } => {
+                let mut bytes = vec![TAG_LOBBY];
+                push_set(&mut bytes, seated);
+                push_set(&mut bytes, ready);
+                bytes
+            }
+            ServerMessage::Timing { tick, lead } => {
+                let mut bytes = vec![TAG_TIMING];
+                bytes.extend_from_slice(&tick.to_le_bytes());
+                bytes.push(lead.to_le_bytes()[0]);
+                bytes
+            }
         }
     }
 
@@ -224,23 +268,13 @@ impl ServerMessage {
                 })
             }
             TAG_START => {
-                let [_, session, players] = fixed::<3>(bytes)?;
+                let [_, session, p0, p1] = fixed::<4>(bytes)?;
                 Ok(ServerMessage::Start {
                     session,
-                    players: PlayerSet::from_bits(players),
+                    players: set([p0, p1]),
                 })
             }
-            TAG_INPUT => {
-                let [_, session, player, t0, t1, t2, t3, i0, i1] =
-                    fixed::<SERVER_INPUT_LENGTH>(bytes)?;
-                let (tick, input) = tick_input([t0, t1, t2, t3], [i0, i1]);
-                Ok(ServerMessage::Input {
-                    session,
-                    player: PlayerId(player),
-                    tick,
-                    input,
-                })
-            }
+            TAG_FRAME => decode_frame(bytes),
             TAG_PLAYER_LEFT => {
                 let [_, player] = fixed::<2>(bytes)?;
                 Ok(ServerMessage::PlayerLeft {
@@ -249,15 +283,51 @@ impl ServerMessage {
             }
             TAG_ROOM_FULL => fixed::<1>(bytes).map(|_| ServerMessage::RoomFull),
             TAG_LOBBY => {
-                let [_, seated, ready] = fixed::<3>(bytes)?;
+                let [_, s0, s1, r0, r1] = fixed::<5>(bytes)?;
                 Ok(ServerMessage::Lobby {
-                    seated: PlayerSet::from_bits(seated),
-                    ready: PlayerSet::from_bits(ready),
+                    seated: set([s0, s1]),
+                    ready: set([r0, r1]),
+                })
+            }
+            TAG_TIMING => {
+                let [_, t0, t1, t2, t3, lead] = fixed::<6>(bytes)?;
+                Ok(ServerMessage::Timing {
+                    tick: u32::from_le_bytes([t0, t1, t2, t3]),
+                    lead: i8::from_le_bytes([lead]),
                 })
             }
             tag => Err(DecodeError::UnknownTag(tag)),
         }
     }
+}
+
+/// A frame: the fixed header, then as many inputs as the header has players.
+fn decode_frame(bytes: &[u8]) -> Result<ServerMessage, DecodeError> {
+    let wrong_length = |expected| DecodeError::WrongLength {
+        tag: TAG_FRAME,
+        expected,
+        actual: bytes.len(),
+    };
+    let Some((header, rest)) = bytes.split_first_chunk::<FRAME_HEADER_LENGTH>() else {
+        return Err(wrong_length(FRAME_HEADER_LENGTH));
+    };
+    let [_, session, t0, t1, t2, t3, p0, p1, l0, l1] = *header;
+    let players = set([p0, p1]);
+    if rest.len() != 2 * players.len() {
+        return Err(wrong_length(FRAME_HEADER_LENGTH + 2 * players.len()));
+    }
+    let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
+    let (pairs, _) = rest.as_chunks::<2>();
+    for (player, &bits) in players.iter().zip(pairs) {
+        inputs[usize::from(player.0)] = Input::from_bits(u16::from_le_bytes(bits));
+    }
+    Ok(ServerMessage::Frame {
+        session,
+        tick: u32::from_le_bytes([t0, t1, t2, t3]),
+        players,
+        late: set([l0, l1]),
+        inputs,
+    })
 }
 
 fn tag_of(bytes: &[u8]) -> Result<u8, DecodeError> {
@@ -273,14 +343,10 @@ fn fixed<const N: usize>(bytes: &[u8]) -> Result<[u8; N], DecodeError> {
     })
 }
 
-fn push_tick_input(bytes: &mut Vec<u8>, tick: u32, input: Input) {
-    bytes.extend_from_slice(&tick.to_le_bytes());
-    bytes.extend_from_slice(&input.to_bits().to_le_bytes());
+fn push_set(bytes: &mut Vec<u8>, players: PlayerSet) {
+    bytes.extend_from_slice(&players.bits().to_le_bytes());
 }
 
-fn tick_input(tick: [u8; 4], input: [u8; 2]) -> (u32, Input) {
-    (
-        u32::from_le_bytes(tick),
-        Input::from_bits(u16::from_le_bytes(input)),
-    )
+fn set(bytes: [u8; 2]) -> PlayerSet {
+    PlayerSet::from_bits(u16::from_le_bytes(bytes))
 }

@@ -1,8 +1,9 @@
 //! Plays scripted games headlessly and saves screenshots: no window, no GPU, no sound. This is
 //! the game's "server-side rendering" (see `srr::front::render`). The games: practice against
-//! the training dummy, a round against the computer, and an online 1v1v1 whose other two
-//! players are simulated by handing the client their inputs, as the relay server would. The
-//! strikes and the free-for-all are shot in both views (`Tab`: the third-person 3D view).
+//! the training dummy, a round against the computer, an online 1v1v1 and an online brawl of
+//! ten whose other players are simulated by handing the client the frames of inputs the server
+//! would send (one of the ten lagging). The strikes and the free-for-all are shot in both views
+//! (`Tab`: the third-person 3D view).
 //!
 //! ```sh
 //! cargo xtask screenshots                       # or:
@@ -12,6 +13,7 @@
 //! PNG files go to `OUT_DIR` (default `target/screenshots`), at `WIDTH` x `HEIGHT` (default
 //! 1280 x 720). The fight screen is also printed as text on the standard output.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -21,9 +23,10 @@ use srr::front::{Game, Headless};
 use srr::game::{Attack, Input, Key, MatchConfig, PlayerId, Strength};
 use srr::net::{Client, PlayerSet, ServerMessage};
 
-/// An online game seated as player 1 in a 1v1v1 that has just started, on the intro.
-fn free_for_all(width: usize, height: usize) -> Headless {
-    let players = PlayerSet::first(3);
+/// An online game seated as player 1 in a free-for-all of `count` players that has just
+/// started, on the intro.
+fn free_for_all(count: usize, width: usize, height: usize) -> Headless {
+    let players = PlayerSet::first(count);
     let mut client = Client::online(MatchConfig::default(), 0);
     client.handle(ServerMessage::Welcome {
         player: PlayerId(0),
@@ -39,16 +42,24 @@ fn free_for_all(width: usize, height: usize) -> Headless {
     Headless::new(Game::new(client)).with_size(width, height)
 }
 
-/// One tick of the 1v1v1: players 2 and 3 hold `others`, the local player `keys`.
-fn brawl_tick(game: &mut Headless, keys: &[Key], others: [Input; 2]) {
+/// One tick of the free-for-all: the local player holds `keys`, players 2, 3... hold `others`,
+/// and the inputs of the `late` players are marked late. The server's frames confirm every tick
+/// up to the one about to be played, so the client never has to guess.
+fn brawl_tick(game: &mut Headless, keys: &[Key], others: &[Input], late: PlayerSet) {
+    let pressed: HashSet<Key> = keys.iter().copied().collect();
+    let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
+    inputs[0] = game.game().bindings().to_input(&pressed);
+    inputs[1..=others.len()].copy_from_slice(others);
     let client = game.game_mut().client_mut();
-    let tick = client.session().map_or(0, |session| session.tick());
-    for (player, input) in (1..).zip(others) {
-        client.handle(ServerMessage::Input {
-            session: 1,
-            player: PlayerId(player),
+    let session = client.session().expect("the match runs");
+    let (id, players) = (session.id(), session.players());
+    for tick in session.confirmed_tick()..=session.tick() {
+        client.handle(ServerMessage::Frame {
+            session: id,
             tick,
-            input,
+            players,
+            late,
+            inputs,
         });
     }
     game.press(keys);
@@ -122,23 +133,49 @@ fn main() -> ExitCode {
     cpu.idle(MatchConfig::default().countdown_ticks + 75);
     shoot(&cpu, "11-versus-cpu");
 
-    let mut brawl = free_for_all(width, height);
+    let mut brawl = free_for_all(3, width, height);
     brawl.skip_intro();
     let walk_left = Input {
         left: true,
         ..Input::NONE
     };
+    let walk_right = Input {
+        right: true,
+        ..Input::NONE
+    };
     let kick = Input::pressing(Attack::kick(Strength::Medium));
+    let nobody = PlayerSet::EMPTY;
     for tick in 0..MatchConfig::default().countdown_ticks + 70 {
         let p3 = if tick % 25 == 0 { kick } else { walk_left };
-        brawl_tick(&mut brawl, &[Key::ArrowRight], [Input::NONE, p3]);
+        brawl_tick(&mut brawl, &[Key::ArrowRight], &[Input::NONE, p3], nobody);
     }
     shoot(&brawl, "12-free-for-all");
     brawl.tap(&[Key::Tab]);
     for _ in 0..40 {
-        brawl_tick(&mut brawl, &[], [Input::NONE, Input::NONE]);
+        brawl_tick(&mut brawl, &[], &[Input::NONE, Input::NONE], nobody);
     }
     shoot(&brawl, "12-free-for-all-3d");
+
+    // Ten players: everybody walks towards a neighbour and kicks now and then; P7 lags.
+    let mut ten = free_for_all(10, width, height);
+    ten.skip_intro();
+    let lagging = PlayerSet::EMPTY.with(PlayerId(6));
+    for tick in 0..MatchConfig::default().countdown_ticks + 60 {
+        let others: Vec<Input> = (1..10u32)
+            .map(|player| match (tick + player * 7) % 30 {
+                0 => kick,
+                _ if player % 2 == 0 => walk_left,
+                _ => walk_right,
+            })
+            .collect();
+        brawl_tick(&mut ten, &[Key::ArrowRight], &others, lagging);
+    }
+    shoot(&ten, "13-brawl-of-ten");
+    ten.tap(&[Key::Tab]);
+    for _ in 0..30 {
+        brawl_tick(&mut ten, &[], &[Input::NONE; 9], lagging);
+    }
+    shoot(&ten, "13-brawl-of-ten-3d");
 
     for (name, image) in &shots {
         let path = out.join(format!("{name}.png"));

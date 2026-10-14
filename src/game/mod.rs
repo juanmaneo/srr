@@ -2,7 +2,7 @@
 //!
 //! Nothing in here knows about rendering, wall-clock time, threads or randomness: a [`Match`]
 //! is a pure function of its previous state and the inputs of one tick. That keeps the rules
-//! unit-testable, identical in the browser, and ready for lock-step / rollback online play.
+//! unit-testable, identical in the browser, and ready for rollback online play.
 //!
 //! One [`Match::step`] is one tick of a fixed timestep ([`TICKS_PER_SECOND`]):
 //!

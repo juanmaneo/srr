@@ -3,10 +3,10 @@
 //! cues.
 //!
 //! Duels are driven through an online [`Client`] with no input delay: every tick the test hands
-//! it the opponent's input as if the server had relayed it, then ticks it with the local input.
+//! it the server's frame (both fighters' inputs), then ticks it with the local input.
 //! That way a test controls both fighters and can reach any state: strikes, grabs, every
 //! grapple position, knockouts, time-ups, next rounds, stalls and every connection status.
-//! Matches of three or four players, the lobby and the bot offer are covered too.
+//! Bigger matches (up to ten players), the lobby and the bot offer are covered too.
 //!
 //! Numbers of [`cfg`]: the arena is 300 wide, so the fighters spawn at 100 and 200, inside the
 //! reach (150) of every strike and of the grab. Strikes: 2 start-up, 2 active, 2 recovery ticks,
@@ -19,7 +19,7 @@ use srr::audio::Mood;
 use srr::front::arena::{self, ARENA_LEFT, ARENA_PIXELS, FLOOR_Y, LYING_TAG_Y, TAG_ABOVE};
 use srr::front::controls::{Row, controls_lines, technique_keys};
 use srr::front::hud::{
-    self, CONTROLS_LINE_HEIGHT, CONTROLS_Y, DANGER_PERCENT, NOTICE_Y, PROMPT_Y,
+    self, CONTROLS_LINE_HEIGHT, CONTROLS_Y, DANGER_PERCENT, NOTICE_Y, PROMPT_Y, STALL_TEXT,
     STALL_WARNING_TICKS, TRAIL_HOLD, TRAIL_SPEED, bar_slots, lobby_text, position_name, ready_text,
 };
 use srr::front::intro::{self, SKIP_AFTER};
@@ -36,7 +36,10 @@ use srr::game::{
     GrappleRole, Input, Key, KeyBindings, Match, MatchConfig, Outcome, Phase, PlayerId, Roster,
     Strength, TICKS_PER_SECOND, Technique,
 };
-use srr::net::{Client, ClientError, ClientMessage, PlayerSet, Rival, ServerMessage, Status};
+use srr::net::{
+    Client, ClientError, ClientMessage, MAX_PLAYERS, MAX_ROLLBACK, PlayerSet, Rival, ServerMessage,
+    Status,
+};
 
 // ---------------------------------------------------------------------------------------------
 // Helpers: configuration and inputs
@@ -177,33 +180,33 @@ fn duel(config: MatchConfig, local: u8) -> Client {
     brawl(config, local, PlayerSet::first(2))
 }
 
-/// Hands the client the input of `player` for the next tick, as relayed by the server.
-fn relay_from(client: &mut Client, player: PlayerId, input: Input) {
+/// Hands the client the server's next frame: what each player of `held` holds (the others
+/// hold nothing), with the players of `late` replaced by the server.
+fn relay_frame(client: &mut Client, held: &[(PlayerId, Input)], late: PlayerSet) {
     let session = client.session().expect("a match runs");
-    let (id, tick) = (session.id(), session.tick());
-    client.handle(ServerMessage::Input {
-        session: id,
-        player,
-        tick,
-        input,
+    let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
+    for &(player, input) in held {
+        inputs[usize::from(player.0)] = input;
+    }
+    client.handle(ServerMessage::Frame {
+        session: session.id(),
+        tick: session.confirmed_tick(),
+        players: session.players(),
+        late,
+        inputs,
     });
 }
 
-/// Hands the client the opponent's input for the next tick of a duel.
-fn relay(client: &mut Client, remote: Input) {
-    let local = client.session().expect("a duel runs").local_player();
-    relay_from(client, PlayerId(1 - local.0), remote);
-}
-
-/// One tick of the duel with what players 0 and 1 hold.
+/// One tick of the duel with what players 0 and 1 hold. The server's frame comes first, so
+/// the round shown is exact (nothing is guessed, and the local input is not sent again).
 fn play(client: &mut Client, p0: Input, p1: Input) {
     let local = client.session().expect("a duel runs").local_player();
-    let (mine, theirs) = if local == PlayerId(0) {
-        (p0, p1)
-    } else {
-        (p1, p0)
-    };
-    relay(client, theirs);
+    let mine = if local == PlayerId(0) { p0 } else { p1 };
+    relay_frame(
+        client,
+        &[(PlayerId(0), p0), (PlayerId(1), p1)],
+        PlayerSet::EMPTY,
+    );
     let before = client.session().unwrap().tick();
     client.tick(mine);
     assert_eq!(client.session().unwrap().tick(), before + 1, "the tick ran");
@@ -466,10 +469,16 @@ fn bigger_matches_stack_thinner_bars_on_both_sides() {
     let sides: Vec<bool> = five.iter().map(|s| s.left_side).collect();
     assert_eq!(sides, vec![true, true, true, false, false]);
     assert_eq!(five[4].y, five[1].y);
-    assert!(five.iter().all(|s| s.height == three[0].height));
+    assert!(five[0].height < three[0].height, "tinier beyond four");
 
     let four = bar_slots(4);
     assert_eq!(four.iter().filter(|s| s.left_side).count(), 2);
+    assert!(four.iter().all(|s| s.height == three[0].height));
+
+    let ten = bar_slots(10);
+    assert_eq!(ten.iter().filter(|s| s.left_side).count(), 5);
+    assert!(ten.iter().all(|s| s.height == five[0].height));
+    assert_eq!(ten[9].y, ten[4].y, "five rows a side");
 }
 
 #[test]
@@ -532,7 +541,7 @@ fn the_banner_tells_where_the_connection_is() {
         hud::banner(&client),
         (
             None,
-            "Nobody else is here yet\nOpen this page on other machines (up to 4 players)".into()
+            "Nobody else is here yet\nOpen this page on other machines (up to 10 players)".into()
         )
     );
 
@@ -551,7 +560,7 @@ fn the_banner_tells_where_the_connection_is() {
         hud::banner(&client),
         (
             None,
-            "P2 left\nNobody else is here yet\nOpen this page on other machines (up to 4 players)"
+            "P2 left\nNobody else is here yet\nOpen this page on other machines (up to 10 players)"
                 .into()
         )
     );
@@ -559,7 +568,10 @@ fn the_banner_tells_where_the_connection_is() {
     client.handle(ServerMessage::RoomFull);
     assert_eq!(
         hud::banner(&client),
-        (None, "The room is full (4 players)\nTry again later".into())
+        (
+            None,
+            "The room is full (10 players)\nTry again later".into()
+        )
     );
 
     client.disconnected();
@@ -617,24 +629,37 @@ fn the_first_second_of_the_fight_shows_fight_then_nothing() {
 }
 
 #[test]
-fn a_stalled_session_tells_that_the_opponent_is_late() {
+fn a_stalled_session_tells_that_the_server_is_not_heard_from() {
     let mut client = duel(cfg(), 0);
     idle_for(&mut client, TICKS_PER_SECOND);
-    for _ in 0..STALL_WARNING_TICKS {
+    // The match goes on, guessed, as far as it may; then it waits.
+    for _ in 0..MAX_ROLLBACK + STALL_WARNING_TICKS {
         client.tick(idle());
     }
     assert_eq!(client.stalled_ticks(), STALL_WARNING_TICKS);
     assert_eq!(hud::banner(&client), (None, String::new()), "not yet");
     client.tick(idle());
-    assert_eq!(hud::banner(&client), (None, "Waiting for P2...".into()));
+    assert_eq!(hud::banner(&client), (None, STALL_TEXT.into()));
+}
 
-    // In a bigger match, the banner names whoever is late.
+#[test]
+fn the_bars_mark_who_lags_and_who_left() {
     let mut client = brawl(cfg(), 1, PlayerSet::first(4));
-    for _ in 0..=STALL_WARNING_TICKS + 1 {
-        relay_from(&mut client, PlayerId(2), idle());
-        client.tick(idle());
-    }
-    assert_eq!(hud::banner(&client), (None, "Waiting for P1, P4...".into()));
+    relay_frame(&mut client, &[], set(&[2]));
+    client.tick(idle());
+    client.handle(ServerMessage::PlayerLeft {
+        player: PlayerId(3),
+    });
+    assert_eq!(client.status(), Status::Playing, "three still fight");
+    let session = client.session().unwrap();
+    let marks: Vec<&str> = (0..4)
+        .map(|player| hud::network_mark(&client, session, PlayerId(player)))
+        .collect();
+    assert_eq!(marks, ["", "", "  LAG", "  LEFT"]);
+
+    let frame = hud_frame(&client, &bars_of(&client), TICKS_PER_SECOND);
+    assert!(find_label(&frame, "P3  100 HP  LAG").is_some());
+    assert!(find_label(&frame, "P4  100 HP  LEFT").is_some());
 }
 
 #[test]
@@ -698,9 +723,7 @@ fn set(players: &[u8]) -> PlayerSet {
 #[test]
 fn the_ready_text_follows_who_is_ready_and_who_joins() {
     let mut client = brawl(short_rounds(1), 0, PlayerSet::first(3));
-    for player in 1..3 {
-        relay_from(&mut client, PlayerId(player), idle());
-    }
+    relay_frame(&mut client, &[], PlayerSet::EMPTY);
     client.tick(idle());
     let session = client.session().unwrap().clone();
     assert!(session.current().outcome().is_some());
@@ -756,7 +779,7 @@ fn the_lobby_text_counts_who_is_here_and_ready() {
     lobby(&mut client, set(&[1]), PlayerSet::EMPTY);
     assert_eq!(
         lobby_text(&client),
-        "Nobody else is here yet\nOpen this page on other machines (up to 4 players)"
+        "Nobody else is here yet\nOpen this page on other machines (up to 10 players)"
     );
     lobby(&mut client, PlayerSet::first(3), set(&[0]));
     assert_eq!(
@@ -804,7 +827,13 @@ fn without_a_duel_the_hud_shows_the_banner_and_the_controls() {
     });
     let frame = hud_frame(&waiting, &[], 0);
     assert!(find_label(&frame, "Nobody else is here yet").is_some());
-    assert!(find_label(&frame, "Open this page on other machines (up to 4 players)").is_some());
+    assert!(
+        find_label(
+            &frame,
+            "Open this page on other machines (up to 10 players)"
+        )
+        .is_some()
+    );
 }
 
 #[test]
@@ -1051,14 +1080,16 @@ fn small_bars_get_small_labels() {
 
 #[test]
 fn every_player_has_a_colour_and_they_cycle() {
-    let colors: Vec<Rgba> = (0..4).map(|p| arena::player_color(PlayerId(p))).collect();
+    let colors: Vec<Rgba> = (0..MAX_PLAYERS as u8)
+        .map(|p| arena::player_color(PlayerId(p)))
+        .collect();
     for (i, a) in colors.iter().enumerate() {
         for b in &colors[i + 1..] {
             assert_ne!(a, b);
         }
     }
-    assert_eq!(arena::player_color(PlayerId(4)), colors[0]);
-    assert_eq!(arena::player_color(PlayerId(7)), colors[3]);
+    assert_eq!(arena::player_color(PlayerId(10)), colors[0]);
+    assert_eq!(arena::player_color(PlayerId(13)), colors[3]);
 }
 
 #[test]
@@ -2063,10 +2094,24 @@ fn practice_fight(game: &mut Game) {
     assert!(!game.is_offering_bot());
 }
 
-/// One fight tick of an online game: the opponent's input is relayed, then the keys held.
+/// One fight tick of an online game with the keys held, then the server's frame of that tick:
+/// the input the game sent, and the opponent's `remote` one. As on a perfect network, the round
+/// shown guesses the opponent's newest input (their previous one, again) until the next tick.
 fn fight_tick(game: &mut Game, pressed: &[Key], remote: Input) -> Vec<Vec<u8>> {
-    relay(game.client_mut(), remote);
-    game.tick(&keys(pressed))
+    let outgoing = game.tick(&keys(pressed));
+    let sent = outgoing
+        .iter()
+        .find_map(|frame| match ClientMessage::decode(frame) {
+            Ok(ClientMessage::Input { input, .. }) => Some(input),
+            _ => None,
+        });
+    if let Some(mine) = sent {
+        let client = game.client_mut();
+        let local = client.session().expect("a duel runs").local_player();
+        let theirs = PlayerId(1 - local.0);
+        relay_frame(client, &[(local, mine), (theirs, remote)], PlayerSet::EMPTY);
+    }
+    outgoing
 }
 
 #[test]
@@ -2369,7 +2414,7 @@ fn an_online_match_goes_on_while_paused_with_the_player_standing_still() {
     let frames = fight_tick(&mut game, &[Key::P, Key::ArrowRight], right());
     assert!(game.is_paused());
     assert_eq!(frames.len(), 1, "the pausing tick is still played");
-    assert_eq!(session_tick(&game), 2, "the lockstep cannot wait");
+    assert_eq!(session_tick(&game), 2, "an online match cannot wait");
     let x_of = |game: &Game, player: u8| {
         current(game.client())
             .fighter(PlayerId(player))
@@ -2661,7 +2706,7 @@ fn the_status_line_describes_practice_and_every_connection_state() {
     game.client_mut().handle(ServerMessage::RoomFull);
     assert_eq!(
         game.status_line(),
-        "the room is full (4 players) - try again later"
+        "the room is full (10 players) - try again later"
     );
 
     let mut lost = Game::new(Client::online(cfg(), 0));
@@ -2987,11 +3032,8 @@ fn the_offer_is_only_for_a_lone_player() {
 /// One tick of a match where player `i` holds `inputs[i]`.
 fn play_all(client: &mut Client, inputs: &[Input]) {
     let local = client.session().expect("a match runs").local_player();
-    for (player, &input) in inputs.iter().enumerate() {
-        if player != usize::from(local.0) {
-            relay_from(client, PlayerId(player as u8), input);
-        }
-    }
+    let held: Vec<(PlayerId, Input)> = (0..).map(PlayerId).zip(inputs.iter().copied()).collect();
+    relay_frame(client, &held, PlayerSet::EMPTY);
     let before = client.session().unwrap().tick();
     client.tick(inputs[usize::from(local.0)]);
     assert_eq!(client.session().unwrap().tick(), before + 1, "the tick ran");

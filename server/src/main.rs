@@ -2,6 +2,7 @@ use std::net::{IpAddr, Ipv4Addr, TcpListener, UdpSocket};
 use std::path::Path;
 use std::process::ExitCode;
 
+use srr::net::MAX_PLAYERS;
 use srr_server::{Command, parse_args, serve, usage};
 
 fn main() -> ExitCode {
@@ -42,7 +43,7 @@ fn print_addresses(port: u16, root: &Path) {
         None => println!("  local network: http://<this machine's IP>:{port}"),
     }
     println!(
-        "Up to 4 browsers sit in the room; a match starts when everybody pressed Enter. Ctrl+C to stop."
+        "Up to {MAX_PLAYERS} browsers sit in the room; a match starts when everybody pressed Enter. Ctrl+C to stop."
     );
 }
 

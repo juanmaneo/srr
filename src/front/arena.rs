@@ -44,11 +44,18 @@ const BRICK_HEIGHT: f32 = 24.0;
 const MORTAR: f32 = 3.0;
 const STREET_HEIGHT: f32 = 56.0;
 
-const PALETTE: [Rgba; 4] = [
+/// One colour per seat of a full room of ten: neon hues far enough apart to tell a brawl apart.
+const PALETTE: [Rgba; 10] = [
     Rgba::hex(0xe84a4a),
     Rgba::hex(0x4a8cf2),
     Rgba::hex(0x4ad88a),
     Rgba::hex(0xe8b84a),
+    Rgba::hex(0xc25af2),
+    Rgba::hex(0x3fd8e0),
+    Rgba::hex(0xf2783a),
+    Rgba::hex(0xb8f24a),
+    Rgba::hex(0xf24ad8),
+    Rgba::hex(0xffb0c8),
 ];
 const KNOCKED_OUT: Rgba = Rgba::hex(0x595959);
 const STUNNED: Rgba = Rgba::hex(0xffffff);
@@ -72,7 +79,8 @@ const TAG: [Rgba; 3] = [
 ];
 const NEON: Rgba = Rgba::hex(0xff3ab4);
 
-/// The colour of `player`: name tag, accessory, HUD.
+/// The colour of `player`: name tag, accessory, HUD. Every seat of the room has its own; they
+/// would only cycle beyond [`MAX_PLAYERS`](crate::net::MAX_PLAYERS).
 pub fn player_color(player: PlayerId) -> Rgba {
     PALETTE[usize::from(player.0) % PALETTE.len()]
 }

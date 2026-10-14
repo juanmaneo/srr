@@ -2,7 +2,7 @@
 name = "srr-server"
 version = "0.1.0"
 edition = "2024"
-description = "Local network server for Shattered Realm: Rampage: serves the web build and relays 1v1 inputs"
+description = "Local network server for Shattered Realm: Rampage: serves the web build and runs the room of up to ten players"
 publish = false
 
 [dependencies]

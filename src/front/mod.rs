@@ -18,8 +18,8 @@
 //!    ([`VIEW_KEY`]) switches the arena between the side view and the third-person 3D view
 //!    ([`tps`]), even in the middle of a fight.
 //!
-//! On the fight screen, Enter means "ready": online, the server starts the next match (1v1,
-//! 1v1v1 or 1v1v1v1) once every seated player is ready; alone, it starts the next round.
+//! On the fight screen, Enter means "ready": online, the server starts the next match (from a
+//! 1v1 to a brawl of ten) once every seated player is ready; alone, it starts the next round.
 //! `P` pauses: a local match (the dummy or the bot) freezes until the pause menu is left; an
 //! online match cannot wait for one player, so it goes on with the paused player standing
 //! still.
@@ -448,7 +448,7 @@ impl Game {
     }
 
     /// One paused tick. A local match (the dummy, or the bot, online too) is simply not
-    /// ticked, so it freezes; an online match cannot wait for one player, so its lockstep goes
+    /// ticked, so it freezes; an online match cannot wait for one player, so it goes
     /// on with the paused player standing still.
     fn stand_still(&mut self, outgoing: &mut Vec<Vec<u8>>) {
         if !self.client.is_local() {

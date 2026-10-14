@@ -7,15 +7,32 @@
 //! A local client plays without any server, as player 1 against player 2: the idle training
 //! dummy ([`Client::practice`]) or the computer ([`Client::versus_bot`]).
 
+use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::fmt;
 
-use super::lockstep::{Session, SessionError};
 use super::players::PlayerSet;
 use super::protocol::{ClientMessage, DecodeError, ServerMessage};
-use crate::game::{Bot, Input, MatchConfig, PlayerId};
+use super::rollback::{MAX_ROLLBACK, Session, SessionError};
+use crate::game::{Bot, Input, MatchConfig, PlayerId, TICKS_PER_SECOND};
 
 /// The fighter played by the dummy or the bot of a local client.
 const RIVAL: PlayerId = PlayerId(1);
+
+/// The margin, in ticks, an online client keeps between its inputs reaching the server and
+/// the server giving up on them (see [`ServerMessage::Timing`]). The server reports the worst
+/// margin of a while, so jitter is already accounted for.
+pub const TARGET_LEAD: i32 = 2;
+/// Extra margin tolerated above [`TARGET_LEAD`] before slowing down: more margin is harmless,
+/// it only makes the predictions longer.
+const LEAD_SLACK: i32 = 4;
+/// The most ticks an online client delays its inputs (half a second), on the worst
+/// connections.
+pub const MAX_INPUT_DELAY: u32 = TICKS_PER_SECOND / 2;
+/// How many ticks the round shown may run ahead of the server's frames before a client that
+/// has to send its inputs earlier delays them instead of running further ahead: past that the
+/// others' moves would be guessed for too long, and corrected too visibly.
+const PREDICTION_BUDGET: u32 = MAX_ROLLBACK / 2;
 
 /// Where the connection is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +109,8 @@ enum Mode {
 /// client.receive(&ServerMessage::Start { session: 1, players: PlayerSet::first(3) }.encode());
 /// assert_eq!(client.status(), Status::Playing);
 /// let to_send = client.tick(Input::NONE);
-/// assert!(to_send.is_some(), "the local input goes to the other players");
+/// assert_eq!(to_send.len(), 1 + INPUT_DELAY as usize, "the first inputs go to the server");
+/// assert_eq!(client.session().unwrap().tick(), 1, "played ahead, without waiting");
 /// ```
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -103,9 +121,18 @@ pub struct Client {
     session: Option<Session>,
     status: Status,
     stalled: u32,
+    /// Ticks to run twice (positive) or to skip (negative) to keep in time with the server.
+    pace: i32,
+    /// Ticks of margin gained (or given back) towards the server since the match started, by
+    /// running ticks twice, skipping them, or changing the input delay.
+    gained: i32,
+    /// When `gained` changed: the first input tick sent with each value, oldest first. A
+    /// timing report about an older input does not reflect the later changes yet.
+    gains: VecDeque<(u32, i32)>,
     seated: PlayerSet,
     ready: PlayerSet,
     left: Option<PlayerId>,
+    departed: PlayerSet,
 }
 
 impl Client {
@@ -119,9 +146,13 @@ impl Client {
             session: None,
             status: Status::Connecting,
             stalled: 0,
+            pace: 0,
+            gained: 0,
+            gains: VecDeque::new(),
             seated: PlayerSet::EMPTY,
             ready: PlayerSet::EMPTY,
             left: None,
+            departed: PlayerSet::EMPTY,
         }
     }
 
@@ -208,10 +239,22 @@ impl Client {
         self.left
     }
 
-    /// Consecutive [`Client::tick`] calls, while playing, that could not simulate anything
-    /// because the input of another player was missing.
+    /// The players of the current match who left it; their fighters stand still.
+    pub fn departed(&self) -> PlayerSet {
+        self.departed
+    }
+
+    /// Consecutive [`Client::tick`] calls, while playing, that could not move the match on
+    /// because nothing came from the server for too long (see
+    /// [`MAX_ROLLBACK`](super::MAX_ROLLBACK)).
     pub fn stalled_ticks(&self) -> u32 {
         self.stalled
+    }
+
+    /// The ticks still to run twice (positive) or to skip (negative) to keep in time with the
+    /// server, as asked by its last [`ServerMessage::Timing`].
+    pub fn pace(&self) -> i32 {
+        self.pace
     }
 
     /// Handles one binary frame from the server. Nothing changes once the client failed or
@@ -235,32 +278,58 @@ impl Client {
                 self.status = Status::Lobby;
             }
             ServerMessage::Start { session, players } => self.start(session, players),
-            ServerMessage::Input {
+            ServerMessage::Frame {
                 session,
-                player,
                 tick,
-                input,
+                players,
+                late,
+                inputs,
             } => {
-                if let Some(current) = self.session.as_mut() {
-                    current.receive_remote(session, player, tick, input);
+                if let Some(current) = self.session.as_mut().filter(|s| s.players() == players) {
+                    current.receive_frame(session, tick, &inputs, late);
                 }
             }
-            ServerMessage::PlayerLeft { player } => {
-                let in_match = self
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.players().contains(player));
-                if self.status == Status::Playing && in_match {
-                    self.status = Status::Lobby;
-                    self.left = Some(player);
-                }
-            }
+            ServerMessage::PlayerLeft { player } => self.player_left(player),
             ServerMessage::RoomFull => self.status = Status::RoomFull,
             ServerMessage::Lobby { seated, ready } => {
                 self.seated = seated;
                 self.ready = ready;
             }
+            ServerMessage::Timing { tick, lead } => {
+                if self.status == Status::Playing {
+                    self.pace = pace_for(i32::from(lead) + self.gained_since(tick));
+                }
+            }
         }
+    }
+
+    /// A player of the match left: their fighter stands still from now on, and the match goes
+    /// on unless fewer than two players remain.
+    fn player_left(&mut self, player: PlayerId) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        if self.status != Status::Playing || !session.players().contains(player) {
+            return;
+        }
+        self.departed = self.departed.with(player);
+        if session.players().len() - self.departed.len() < 2 {
+            self.status = Status::Lobby;
+            self.left = Some(player);
+        }
+    }
+
+    /// The margin gained since the input for `tick` was sent; forgets the changes no later
+    /// report can be about (the reports come in tick order).
+    fn gained_since(&mut self, tick: u32) -> i32 {
+        while self.gains.get(1).is_some_and(|&(start, _)| start <= tick) {
+            self.gains.pop_front();
+        }
+        let then = match self.gains.front() {
+            Some(&(start, gained)) if start <= tick => gained,
+            _ => 0,
+        };
+        self.gained - then
     }
 
     /// The connection was closed or broke.
@@ -270,44 +339,81 @@ impl Client {
         }
     }
 
-    /// One fixed tick: schedules the local `input` and simulates what can be simulated.
-    /// Returns the frame to send to the server, if any. Does nothing unless playing.
-    pub fn tick(&mut self, input: Input) -> Option<Vec<u8>> {
-        if self.status != Status::Playing {
-            return None;
+    /// One fixed tick: schedules the local `input` and moves the match one tick on (see
+    /// [`Session::advance`]). Returns the frames to send to the server, in order. Does nothing
+    /// unless playing.
+    ///
+    /// To keep in time with the server ([`Client::pace`]), an online client sometimes plays two
+    /// ticks at once (with the same input), or none. Far from the server, where running ahead
+    /// would mean guessing the others for too long, it delays its inputs one more tick instead
+    /// (up to [`MAX_INPUT_DELAY`]); once the connection gets better, it gives that delay back
+    /// before skipping ticks.
+    pub fn tick(&mut self, input: Input) -> Vec<Vec<u8>> {
+        let (Status::Playing, Some(session)) = (self.status, self.session.as_mut()) else {
+            return Vec::new();
+        };
+        let ahead = session.tick().saturating_sub(session.confirmed_tick());
+        let delay = session.delay();
+        let runs = match self.pace.cmp(&0) {
+            Ordering::Greater if ahead >= PREDICTION_BUDGET && delay < MAX_INPUT_DELAY => {
+                session.set_delay(delay + 1);
+                1
+            }
+            Ordering::Greater => 2,
+            Ordering::Less if delay > self.delay => {
+                session.set_delay(delay - 1);
+                1
+            }
+            Ordering::Less => 0,
+            Ordering::Equal => 1,
+        };
+        self.gained += self.pace.signum();
+        self.pace -= self.pace.signum();
+        let id = session.id();
+        let mut outgoing = Vec::new();
+        for _ in 0..runs {
+            let ticks = session.submit_local(input);
+            let recorded = self.gains.back().map_or(0, |&(_, gained)| gained);
+            if !ticks.is_empty() && recorded != self.gained {
+                self.gains.push_back((ticks.start, self.gained));
+            }
+            match &mut self.mode {
+                Mode::Online => outgoing.extend(ticks.map(|tick| {
+                    ClientMessage::Input {
+                        session: id,
+                        tick,
+                        input,
+                    }
+                    .encode()
+                })),
+                Mode::Local { bot } => {
+                    // Everybody's input is known at once: the client is its own server.
+                    for tick in ticks {
+                        let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
+                        inputs[usize::from(session.local_player().0)] = input;
+                        inputs[usize::from(RIVAL.0)] = bot
+                            .as_mut()
+                            .map_or(Input::NONE, |bot| bot.think(session.current()));
+                        session.receive_frame(id, tick, &inputs, PlayerSet::EMPTY);
+                    }
+                }
+            }
+            if session.advance() {
+                self.stalled = 0;
+            } else {
+                // Nothing is sent while waiting: the inputs lose a tick of margin.
+                self.stalled = self.stalled.saturating_add(1);
+                self.gained -= 1;
+            }
         }
-        let session = self.session.as_mut()?;
-        let message = session.submit_local(input);
-        if let (
-            Mode::Local { bot },
-            Some(ClientMessage::Input {
-                session: id, tick, ..
-            }),
-        ) = (&mut self.mode, message)
-        {
-            let rival = bot
-                .as_mut()
-                .map_or(Input::NONE, |bot| bot.think(session.current()));
-            session.receive_remote(id, RIVAL, tick, rival);
-        }
-        if session.advance() == 0 {
-            self.stalled = self.stalled.saturating_add(1);
-        } else {
-            self.stalled = 0;
-        }
-        message
-            .filter(|_| !self.is_local())
-            .map(|message| message.encode())
+        outgoing
     }
 
     /// The player wants to fight (Enter). Online, in the lobby or once the round is over, this
     /// returns the frame telling the server; the server starts the next match when everybody
     /// seated is ready. A local client starts its next round at once, once the round is over.
     pub fn ready(&mut self) -> Option<Vec<u8>> {
-        let finished = self
-            .session
-            .as_ref()
-            .is_some_and(|session| session.current().outcome().is_some());
+        let finished = self.session.as_ref().is_some_and(Session::is_finished);
         match &mut self.mode {
             Mode::Local { bot } => {
                 if let Some(session) = self.session.as_mut().filter(|_| finished) {
@@ -345,7 +451,11 @@ impl Client {
                 self.session = Some(session);
                 self.status = Status::Playing;
                 self.stalled = 0;
+                self.pace = 0;
+                self.gained = 0;
+                self.gains.clear();
                 self.left = None;
+                self.departed = PlayerSet::EMPTY;
                 // Starting a match uses up everybody's readiness, on the server too.
                 self.ready = PlayerSet::EMPTY;
             }
@@ -363,5 +473,19 @@ impl Client {
         if !self.is_over() {
             self.status = Status::Failed(error);
         }
+    }
+}
+
+/// The ticks to run twice (positive) or to skip (negative) when the inputs sent now should
+/// arrive `lead` ticks before the server gives up on them: half the distance to
+/// [`TARGET_LEAD`] (the network may have changed since the report), nothing within the
+/// tolerated margin.
+fn pace_for(lead: i32) -> i32 {
+    if lead < TARGET_LEAD {
+        (TARGET_LEAD - lead + 1) / 2
+    } else if lead > TARGET_LEAD + LEAD_SLACK {
+        -((lead - TARGET_LEAD) / 2)
+    } else {
+        0
     }
 }

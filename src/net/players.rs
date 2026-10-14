@@ -2,12 +2,12 @@
 
 use crate::game::PlayerId;
 
-/// The most players an online room seats (and an online match holds): 1v1, 1v1v1 or 1v1v1v1,
-/// everybody for themselves.
-pub const MAX_PLAYERS: usize = 4;
+/// The most players an online room seats (and an online match holds): from a 1v1 up to a
+/// brawl of ten, everybody for themselves.
+pub const MAX_PLAYERS: usize = 10;
 
-/// A set of players, as the single byte that carries it on the wire: bit `i` is player `i`.
-/// Only players 0 to 7 fit; larger ids are never members.
+/// A set of players, as the two bytes that carry it on the wire: bit `i` is player `i`.
+/// Only players 0 to 15 fit; larger ids are never members.
 ///
 /// ```
 /// use srr::game::PlayerId;
@@ -20,21 +20,21 @@ pub const MAX_PLAYERS: usize = 4;
 /// assert_eq!(PlayerSet::from_bits(trio.bits()), trio);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct PlayerSet(u8);
+pub struct PlayerSet(u16);
 
 impl PlayerSet {
     /// Nobody.
     pub const EMPTY: PlayerSet = PlayerSet(0);
     /// The number of distinct players a set can hold.
-    pub const CAPACITY: usize = u8::BITS as usize;
+    pub const CAPACITY: usize = u16::BITS as usize;
 
     /// The set encoded by `bits`.
-    pub const fn from_bits(bits: u8) -> Self {
+    pub const fn from_bits(bits: u16) -> Self {
         PlayerSet(bits)
     }
 
-    /// The byte sent on the wire.
-    pub const fn bits(self) -> u8 {
+    /// The bits sent on the wire.
+    pub const fn bits(self) -> u16 {
         self.0
     }
 
@@ -76,8 +76,8 @@ impl PlayerSet {
             .filter(move |&player| self.contains(player))
     }
 
-    fn bit(player: PlayerId) -> u8 {
-        1u8.checked_shl(u32::from(player.0)).unwrap_or(0)
+    fn bit(player: PlayerId) -> u16 {
+        1u16.checked_shl(u32::from(player.0)).unwrap_or(0)
     }
 }
 

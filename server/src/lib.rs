@@ -1,14 +1,17 @@
 //! Local network server for Shattered Realm: Rampage.
 //!
-//! One process does everything 2 to 4 players on the same network need:
+//! One process does everything 2 to [`MAX_PLAYERS`] players on the same network need:
 //!
 //! * serves the web build (`dist/`) over HTTP, so every browser loads the game from it;
-//! * accepts WebSocket connections on `/ws` and seats the first four in the [`room`], which
-//!   starts a free-for-all (1v1, 1v1v1 or 1v1v1v1) once everybody seated is ready;
-//! * relays every input of a player to the others (the browsers run the match in lock-step,
-//!   see `srr::net`).
+//! * accepts WebSocket connections on `/ws` and seats the first [`MAX_PLAYERS`] in the
+//!   [`room`], which starts a free-for-all once everybody seated is ready;
+//! * gathers the inputs of the players into one frame per tick for everybody, without waiting
+//!   long for a late one (the browsers run the match with rollback, see `srr::net`).
 //!
-//! Only the standard library is used: one thread per connection, a mutex around the room.
+//! Only the standard library is used: one thread reading each connection and one writing to
+//! it, a clock thread, and a mutex around the room. Nothing ever writes to a socket while
+//! holding the mutex, so a connection that stops reading cannot hold up the others: once its
+//! queue of [`QUEUE_LENGTH`] messages is full, it is closed.
 
 pub mod http;
 pub mod room;
@@ -19,10 +22,14 @@ use std::fs;
 use std::io::{self, BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use room::{Action, ClientId, Room};
+use srr::game::TICKS_PER_SECOND;
+use srr::net::MAX_PLAYERS;
 use websocket::{OP_BINARY, OP_CLOSE, OP_PING, OP_PONG, OP_TEXT};
 
 /// The port used when none is given.
@@ -31,6 +38,11 @@ pub const DEFAULT_PORT: u16 = 8080;
 pub const DEFAULT_ROOT: &str = "dist";
 /// The path of the WebSocket endpoint.
 pub const WEBSOCKET_PATH: &str = "/ws";
+/// The period of the room's clock: the game's fixed tick.
+pub const TICK: Duration = Duration::from_nanos(1_000_000_000 / TICKS_PER_SECOND as u64);
+/// Messages waiting to be written to one client (about four seconds of frames) before the
+/// server gives up on it and closes the connection.
+pub const QUEUE_LENGTH: usize = 256;
 
 /// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,8 +64,8 @@ pub fn usage() -> String {
         "\
 Usage: srr-server [--port PORT] [--dir DIR]
 
-Serves the web build of Shattered Realm: Rampage on the local network and relays the inputs
-of up to 4 players (1v1, 1v1v1 or 1v1v1v1).
+Serves the web build of Shattered Realm: Rampage on the local network and runs the online
+matches of up to {MAX_PLAYERS} players, everybody for themselves.
 
 Options:
   --port PORT   TCP port to listen on (default {DEFAULT_PORT})
@@ -105,9 +117,18 @@ pub fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Com
     Ok(Command::Serve { port, root })
 }
 
-/// Accepts connections forever, one thread each, serving files from `root`.
+/// Accepts connections forever, one thread each, serving files from `root`; the room's clock
+/// ticks every [`TICK`].
 pub fn serve(listener: TcpListener, root: PathBuf) {
+    serve_with_tick(listener, root, TICK);
+}
+
+/// [`serve`] with the room's clock ticking every `tick` (tests slow it down to control when
+/// the room gives up on late inputs).
+pub fn serve_with_tick(listener: TcpListener, root: PathBuf, tick: Duration) {
     let hub = Arc::new(Mutex::new(Hub::default()));
+    let clock = Arc::clone(&hub);
+    thread::spawn(move || run_clock(&clock, tick));
     for stream in listener.incoming().flatten() {
         let hub = Arc::clone(&hub);
         let root = root.clone();
@@ -118,11 +139,68 @@ pub fn serve(listener: TcpListener, root: PathBuf) {
     }
 }
 
+/// The ticks of a clock of period `period` that are due at `now`, the next one having been
+/// due at `next`: how many to run now, and when the next one is due. After a hiccup (a
+/// suspended machine) the clock catches up, but by a second of ticks at most; then it starts
+/// afresh from `now`.
+///
+/// ```
+/// use std::time::{Duration, Instant};
+/// use srr_server::ticks_due;
+///
+/// let start = Instant::now();
+/// let period = Duration::from_millis(10);
+/// assert_eq!(ticks_due(start + period, start, period), (0, start + period));
+/// // Due at `start`, two periods ago: that tick and the two since.
+/// assert_eq!(ticks_due(start, start + period * 2, period), (3, start + period * 3));
+/// ```
+pub fn ticks_due(next: Instant, now: Instant, period: Duration) -> (u32, Instant) {
+    let Some(late) = now.checked_duration_since(next) else {
+        return (0, next);
+    };
+    let due = late.as_nanos() / period.as_nanos().max(1) + 1;
+    match u32::try_from(due) {
+        Ok(due) if due <= TICKS_PER_SECOND => (due, next + period * due),
+        _ => (TICKS_PER_SECOND, now + period),
+    }
+}
+
+/// Ticks the room every `period`, on a fixed schedule (see [`ticks_due`]).
+fn run_clock(hub: &Mutex<Hub>, period: Duration) {
+    let mut next = Instant::now() + period;
+    loop {
+        thread::sleep(next.saturating_duration_since(Instant::now()));
+        let (ticks, after) = ticks_due(next, Instant::now(), period);
+        next = after;
+        let mut hub = lock(hub);
+        for _ in 0..ticks {
+            let actions = hub.room.tick();
+            hub.apply(actions);
+        }
+    }
+}
+
+/// What the writing thread of a connection has to do.
+#[derive(Debug)]
+enum Outgoing {
+    /// Write one WebSocket frame.
+    Frame(u8, Vec<u8>),
+    /// Write a close frame, then end the connection.
+    Close,
+}
+
+/// The way to one client: the queue of its writing thread, and the socket, to cut it off.
+#[derive(Debug)]
+struct Writer {
+    queue: SyncSender<Outgoing>,
+    stream: TcpStream,
+}
+
 /// The room plus a way to write to every seated (or just connected) client.
 #[derive(Debug, Default)]
 struct Hub {
     room: Room,
-    writers: HashMap<ClientId, TcpStream>,
+    writers: HashMap<ClientId, Writer>,
     next_id: ClientId,
 }
 
@@ -131,20 +209,38 @@ impl Hub {
         for action in actions {
             match action {
                 Action::Send(client, message) => self.send(client, OP_BINARY, &message.encode()),
-                Action::Close(client) => {
-                    self.send(client, OP_CLOSE, &[]);
-                    if let Some(writer) = self.writers.get(&client) {
-                        let _ = writer.shutdown(Shutdown::Both);
-                    }
-                }
+                Action::Close(client) => self.queue(client, Outgoing::Close),
             }
         }
     }
 
-    /// Best effort: a broken connection is noticed, and cleaned up, by its reading thread.
     fn send(&mut self, client: ClientId, opcode: u8, payload: &[u8]) {
-        if let Some(writer) = self.writers.get_mut(&client) {
-            let _ = websocket::write_frame(writer, opcode, payload);
+        self.queue(client, Outgoing::Frame(opcode, payload.to_vec()));
+    }
+
+    /// Best effort: a broken connection is noticed, and cleaned up, by its reading thread. A
+    /// client that does not keep up (its queue is full) is cut off, which ends its reading
+    /// thread too.
+    fn queue(&mut self, client: ClientId, outgoing: Outgoing) {
+        if let Some(writer) = self.writers.get(&client)
+            && let Err(TrySendError::Full(_)) = writer.queue.try_send(outgoing)
+        {
+            let _ = writer.stream.shutdown(Shutdown::Both);
+        }
+    }
+}
+
+/// Writes the queued frames of one client until the queue closes (the client left) or the
+/// connection breaks.
+fn write_queue(mut stream: TcpStream, queue: Receiver<Outgoing>) {
+    for outgoing in queue {
+        let (opcode, payload, last) = match outgoing {
+            Outgoing::Frame(opcode, payload) => (opcode, payload, false),
+            Outgoing::Close => (OP_CLOSE, Vec::new(), true),
+        };
+        if websocket::write_frame(&mut stream, opcode, &payload).is_err() || last {
+            let _ = stream.shutdown(Shutdown::Both);
+            return;
         }
     }
 }
@@ -194,11 +290,14 @@ fn run_websocket(
     writer: TcpStream,
     hub: &Mutex<Hub>,
 ) -> io::Result<()> {
+    let (queue, queued) = mpsc::sync_channel(QUEUE_LENGTH);
+    let stream = writer.try_clone()?;
+    thread::spawn(move || write_queue(writer, queued));
     let client = {
         let mut hub = lock(hub);
         let client = hub.next_id;
         hub.next_id += 1;
-        hub.writers.insert(client, writer);
+        hub.writers.insert(client, Writer { queue, stream });
         let actions = hub.room.join(client);
         hub.apply(actions);
         client

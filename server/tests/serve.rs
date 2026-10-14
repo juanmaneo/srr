@@ -1,4 +1,4 @@
-//! The server over real localhost sockets: static files, the WebSocket handshake and the relay.
+//! The server over real localhost sockets: static files, the WebSocket handshake and the room.
 
 use std::fs;
 use std::io::{BufReader, ErrorKind, Read, Write};
@@ -8,11 +8,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use srr::game::{Input, PlayerId};
-use srr::net::{ClientMessage, PlayerSet, ServerMessage};
+use srr::game::{Input, PlayerId, TICKS_PER_SECOND};
+use srr::net::{ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
 use srr_server::http::read_head;
-use srr_server::serve;
 use srr_server::websocket::{OP_BINARY, OP_CLOSE, OP_CONTINUATION, OP_PING, OP_PONG, OP_TEXT};
+use srr_server::{serve, serve_with_tick, ticks_due};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
@@ -36,7 +36,13 @@ struct Server {
 }
 
 impl Server {
+    /// A server whose clock does not tick during a test: frames go out only once complete.
     fn start() -> Server {
+        Server::with_clock(Some(Duration::from_secs(3600)))
+    }
+
+    /// A server ticking every `tick`, or at the game's pace when `None`.
+    fn with_clock(tick: Option<Duration>) -> Server {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "srr-server-test-{}-{}",
@@ -54,7 +60,10 @@ impl Server {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        thread::spawn(move || serve(listener, root));
+        thread::spawn(move || match tick {
+            Some(tick) => serve_with_tick(listener, root, tick),
+            None => serve(listener, root),
+        });
         Server { addr, dir }
     }
 
@@ -235,17 +244,36 @@ impl Ws {
         self.wait_for(&format!("{expected:?}"), |message| *message == expected);
     }
 
-    /// Expects the input of `player` for `tick` of session `session` as the very next message.
-    fn expect_input(&mut self, session: u8, player: u8, tick: u32, input: Input) {
+    /// Expects the frame of `tick` of session `session` between `players`, nobody late, as the
+    /// very next message; `held` lists the inputs that are not [`Input::NONE`].
+    fn expect_frame(&mut self, session: u8, tick: u32, players: PlayerSet, held: &[(u8, Input)]) {
+        let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
+        for &(player, input) in held {
+            inputs[usize::from(player)] = input;
+        }
         assert_eq!(
             self.message(),
-            ServerMessage::Input {
+            ServerMessage::Frame {
                 session,
-                player: PlayerId(player),
                 tick,
-                input,
+                players,
+                late: PlayerSet::EMPTY,
+                inputs,
             }
         );
+    }
+
+    /// Reads messages until `expected`, skipping frames and timing reports.
+    fn expect_after_frames(&mut self, expected: ServerMessage) {
+        loop {
+            match self.message() {
+                ServerMessage::Frame { .. } | ServerMessage::Timing { .. } => {}
+                message => {
+                    assert_eq!(message, expected);
+                    return;
+                }
+            }
+        }
     }
 
     /// Expects `player` to have left, followed by the lobby without them.
@@ -282,7 +310,8 @@ impl Ws {
 
 #[test]
 fn serves_files_with_their_content_type() {
-    let server = Server::start();
+    // At the game's pace: the clock does nothing without a match.
+    let server = Server::with_clock(None);
 
     let (status, head, body) = server.get("/");
     assert_eq!(status, "HTTP/1.1 200 OK");
@@ -442,34 +471,37 @@ fn readiness_is_shown_until_everybody_is_ready() {
 }
 
 #[test]
-fn two_players_are_seated_and_inputs_are_relayed() {
+fn two_players_get_one_frame_per_tick() {
     let server = Server::start();
     let [mut first, mut second] = server.match_of();
+    let both = PlayerSet::first(2);
 
-    first.send_input(1, 10, LEFT);
-    second.expect_input(1, 0, 10, LEFT);
-    second.send_input(1, 11, JUMP_KICK);
-    first.expect_input(1, 1, 11, JUMP_KICK);
+    first.send_input(1, 0, LEFT);
+    // Inputs of another session are dropped, and only the first input of a tick counts.
+    second.send_input(7, 0, JUMP_KICK);
+    first.send_input(1, 0, JUMP_KICK);
+    second.send_input(1, 0, Input::NONE);
+    first.expect_frame(1, 0, both, &[(0, LEFT)]);
+    second.expect_frame(1, 0, both, &[(0, LEFT)]);
 
-    // Inputs of another session are dropped: the next thing `second` sees is the next input.
-    first.send_input(7, 12, LEFT);
-    first.send_input(1, 13, Input::NONE);
-    second.expect_input(1, 0, 13, Input::NONE);
+    second.send_input(1, 1, JUMP_KICK);
+    first.send_input(1, 1, Input::NONE);
+    first.expect_frame(1, 1, both, &[(1, JUMP_KICK)]);
+    second.expect_frame(1, 1, both, &[(1, JUMP_KICK)]);
 }
 
 #[test]
 fn three_players_play_a_free_for_all() {
     let server = Server::start();
-    let [mut first, mut second, mut third] = server.match_of();
-
-    second.send_input(1, 10, LEFT);
-    first.expect_input(1, 1, 10, LEFT);
-    third.expect_input(1, 1, 10, LEFT);
-
-    // The sender does not get its own input back: the next thing it sees is somebody else's.
-    third.send_input(1, 11, JUMP_KICK);
-    second.expect_input(1, 2, 11, JUMP_KICK);
-    first.expect_input(1, 2, 11, JUMP_KICK);
+    let mut clients: [Ws; 3] = server.match_of();
+    let held = [(0, Input::NONE), (1, LEFT), (2, JUMP_KICK)];
+    for (ws, &(_, input)) in clients.iter_mut().zip(&held) {
+        ws.send_input(1, 0, input);
+    }
+    // Everybody gets the frame, the senders included.
+    for ws in &mut clients {
+        ws.expect_frame(1, 0, PlayerSet::first(3), &held);
+    }
 }
 
 #[test]
@@ -485,40 +517,50 @@ fn a_late_joiner_waits_for_the_next_match() {
     assert_eq!(first.message(), lobby);
     assert_eq!(second.message(), lobby);
 
-    // The duel goes on without them.
-    first.send_input(1, 5, LEFT);
-    second.expect_input(1, 0, 5, LEFT);
-    third.send_input(1, 5, LEFT);
+    // The duel goes on without them: their input is dropped, they get no frame.
+    third.send_input(1, 0, LEFT);
+    first.send_input(1, 0, LEFT);
+    second.send_input(1, 0, Input::NONE);
+    first.expect_frame(1, 0, PlayerSet::first(2), &[(0, LEFT)]);
+    second.expect_frame(1, 0, PlayerSet::first(2), &[(0, LEFT)]);
 
-    // Once everybody is ready, they play; `start` fails on any input they got meanwhile.
+    // Once everybody is ready, they play; `start` fails on any frame they got meanwhile.
     start(
         &mut [&mut first, &mut second, &mut third],
         2,
         PlayerSet::first(3),
     );
+    first.send_input(2, 0, Input::NONE);
+    second.send_input(2, 0, Input::NONE);
     third.send_input(2, 0, JUMP_KICK);
-    first.expect_input(2, 2, 0, JUMP_KICK);
-    second.expect_input(2, 2, 0, JUMP_KICK);
-}
-
-#[test]
-fn a_fifth_client_is_turned_away() {
-    let server = Server::start();
-    let [mut first, mut second, mut third, mut fourth] = server.match_of();
-
-    let mut fifth = server.websocket();
-    assert_eq!(fifth.message(), ServerMessage::RoomFull);
-    fifth.expect_closed();
-
-    // The match goes on, nobody noticed.
-    first.send_input(1, 1, LEFT);
-    for ws in [&mut second, &mut third, &mut fourth] {
-        ws.expect_input(1, 0, 1, LEFT);
+    for ws in [&mut first, &mut second, &mut third] {
+        ws.expect_frame(2, 0, PlayerSet::first(3), &[(2, JUMP_KICK)]);
     }
 }
 
 #[test]
-fn leaving_tells_the_others() {
+fn ten_players_brawl_and_the_eleventh_is_turned_away() {
+    let server = Server::start();
+    let mut clients: [Ws; MAX_PLAYERS] = server.match_of();
+
+    let mut eleventh = server.websocket();
+    assert_eq!(eleventh.message(), ServerMessage::RoomFull);
+    eleventh.expect_closed();
+
+    // The match goes on, nobody noticed.
+    for ws in &mut clients {
+        ws.send_input(1, 0, LEFT);
+    }
+    let held: Vec<(u8, Input)> = (0..MAX_PLAYERS as u8)
+        .map(|player| (player, LEFT))
+        .collect();
+    for ws in &mut clients {
+        ws.expect_frame(1, 0, PlayerSet::first(MAX_PLAYERS), &held);
+    }
+}
+
+#[test]
+fn the_match_goes_on_when_a_player_leaves() {
     let server = Server::start();
     let [mut first, second, mut third] = server.match_of();
 
@@ -527,10 +569,66 @@ fn leaving_tells_the_others() {
     first.expect_left(1, seated);
     third.expect_left(1, seated);
 
+    // Nobody waits for the leaver, whose fighter stands still.
+    first.send_input(1, 0, LEFT);
+    third.send_input(1, 0, Input::NONE);
+    first.expect_frame(1, 0, PlayerSet::first(3), &[(0, LEFT)]);
+    third.expect_frame(1, 0, PlayerSet::first(3), &[(0, LEFT)]);
+
     // The two others can play the next match.
     start(&mut [&mut first, &mut third], 2, seated);
     first.send_input(2, 0, LEFT);
-    third.expect_input(2, 0, 0, LEFT);
+    third.send_input(2, 0, LEFT);
+    third.expect_frame(2, 0, seated, &[(0, LEFT), (2, LEFT)]);
+}
+
+#[test]
+fn the_clock_sends_the_frames_and_cuts_off_a_client_that_stops_reading() {
+    // A clock far faster than the game's: the frames pile up quickly.
+    let server = Server::with_clock(Some(Duration::from_micros(20)));
+    let [_deaf, mut listening] = server.match_of();
+    // Nobody sends inputs, yet the frames come; the client that never reads is cut off once
+    // its queue is full, and the match is over.
+    listening.expect_after_frames(ServerMessage::PlayerLeft {
+        player: PlayerId(0),
+    });
+    assert_eq!(
+        listening.message(),
+        ServerMessage::Lobby {
+            seated: PlayerSet::first(2).without(PlayerId(0)),
+            ready: PlayerSet::EMPTY
+        }
+    );
+}
+
+#[test]
+fn the_clock_catches_up_a_second_at_most() {
+    let start = Instant::now();
+    let period = Duration::from_millis(10);
+    assert_eq!(
+        ticks_due(start + period, start, period),
+        (0, start + period),
+        "woken up early: nothing is due yet"
+    );
+    assert_eq!(
+        ticks_due(start, start + period / 2, period),
+        (1, start + period)
+    );
+    let late = start + period * TICKS_PER_SECOND;
+    assert_eq!(
+        ticks_due(start, late - period, period),
+        (TICKS_PER_SECOND, late)
+    );
+    assert_eq!(
+        ticks_due(start, late, period),
+        (TICKS_PER_SECOND, late + period)
+    );
+    // Hours late, the clock starts afresh.
+    let much_later = start + Duration::from_secs(3600);
+    assert_eq!(
+        ticks_due(start, much_later, period),
+        (TICKS_PER_SECOND, much_later + period)
+    );
 }
 
 #[test]

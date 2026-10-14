@@ -1,7 +1,8 @@
 //! The versus HUD: one health bar per fighter (two big ones facing each other in a 1v1, like in
-//! every versus game; thinner stacked ones in a 1v1v1 or 1v1v1v1), the red trail of recent
-//! damage, round wins, the timer, the grapple meter, the big centred banners (READY / FIGHT! /
-//! K.O. / results / lobby) and the bot offer.
+//! every versus game; thinner stacked ones in bigger matches, up to five a side in a brawl of
+//! ten), the red trail of recent damage, round wins, the timer, the grapple meter, the network
+//! state of each player (`LAG`, `LEFT`), the big centred banners (READY / FIGHT! / K.O. /
+//! results / lobby) and the bot offer.
 
 use super::ascii::{Canvas, block_pixels};
 use super::controls::{controls_lines, technique_keys};
@@ -19,8 +20,10 @@ pub const TRAIL_HOLD: u32 = 30;
 pub const TRAIL_SPEED: i32 = 1;
 /// Below this share of the maximum health (in percent) the bar blinks.
 pub const DANGER_PERCENT: i32 = 25;
-/// Stalled ticks (a quarter of a second) before telling whose inputs are late.
+/// Stalled ticks (a quarter of a second) before telling that the server is not heard from.
 pub const STALL_WARNING_TICKS: u32 = TICKS_PER_SECOND / 4;
+/// The banner of a match waiting for the server (see [`Client::stalled_ticks`]).
+pub const STALL_TEXT: &str = "Waiting for the server...";
 
 /// Top of the first line of controls at the bottom of the fight screen (see
 /// [`controls_lines`]); the second one is [`CONTROLS_LINE_HEIGHT`] lower.
@@ -33,6 +36,7 @@ const TIMER_WIDTH: f32 = 96.0;
 const BAR_TOP: f32 = 28.0;
 const BAR_HEIGHT: f32 = 26.0;
 const SMALL_BAR_HEIGHT: f32 = 14.0;
+const TINY_BAR_HEIGHT: f32 = 8.0;
 const BORDER: f32 = 3.0;
 
 const FRAME_COLOR: Rgba = Rgba::hex(0xe8e0f0);
@@ -157,7 +161,8 @@ pub struct BarSlot {
 }
 
 /// The slots of `count` bars: the first half (rounded up) on the left, the rest on the right,
-/// stacked from the top. A duel gets two big bars; bigger matches get thinner ones.
+/// stacked from the top. A duel gets two big bars; bigger matches get thinner ones, and more
+/// than four players tinier ones still, so that five rows stay well above the fighters.
 ///
 /// ```
 /// use srr::front::hud::bar_slots;
@@ -166,15 +171,19 @@ pub struct BarSlot {
 /// assert!(duel[0].left_side && !duel[1].left_side);
 /// assert_eq!(duel[0].y, duel[1].y);
 /// assert_eq!(duel[0].width, duel[1].width);
+///
+/// let brawl = bar_slots(10);
+/// assert_eq!(brawl.iter().filter(|slot| slot.left_side).count(), 5);
+/// assert!(brawl[4].y < 300.0, "the HUD stays in the sky");
 /// ```
 pub fn bar_slots(count: usize) -> Vec<BarSlot> {
     let left_count = count.div_ceil(2);
     let width = (SCREEN_WIDTH - TIMER_WIDTH) / 2.0 - MARGIN - 16.0;
     // Thin bars leave room under each one for its name and the grapple meter.
-    let (height, spacing) = if count <= 2 {
-        (BAR_HEIGHT, 0.0)
-    } else {
-        (SMALL_BAR_HEIGHT, SMALL_BAR_HEIGHT + 50.0)
+    let (height, spacing) = match count {
+        0..=2 => (BAR_HEIGHT, 0.0),
+        3..=4 => (SMALL_BAR_HEIGHT, SMALL_BAR_HEIGHT + 50.0),
+        _ => (TINY_BAR_HEIGHT, TINY_BAR_HEIGHT + 40.0),
     };
     (0..count)
         .map(|index| {
@@ -325,7 +334,12 @@ fn draw_bar(frame: &mut Frame, slot: &BarSlot, bar: &HealthBar, fighter: &Fighte
     };
     let local = player == session.local_player();
     frame.label(
-        format!("{}  {:>3} HP", name(client, player), fighter.health()),
+        format!(
+            "{}  {:>3} HP{}",
+            name(client, player),
+            fighter.health(),
+            network_mark(client, session, player)
+        ),
         x,
         label_y,
         size,
@@ -441,6 +455,19 @@ fn draw_grapple(
     }
 }
 
+/// What the bar of `player` says about their connection: `  LEFT` once they left the match
+/// (their fighter stands still), `  LAG` while the server has to replace their late inputs
+/// (their fighter repeats its moves), nothing otherwise.
+pub fn network_mark(client: &Client, session: &Session, player: PlayerId) -> &'static str {
+    if client.departed().contains(player) {
+        "  LEFT"
+    } else if session.lagging().contains(player) {
+        "  LAG"
+    } else {
+        ""
+    }
+}
+
 /// Upper-case name of a grapple position, as shown on the HUD.
 pub fn position_name(position: GrapplePosition) -> &'static str {
     match position {
@@ -517,10 +544,9 @@ fn round_banner(client: &Client, session: &Session) -> (Option<&'static str>, St
     let current = session.current();
     match current.phase() {
         Phase::Countdown { remaining } => (Some("READY"), format!("{}", seconds(remaining))),
-        Phase::Fighting if client.stalled_ticks() > STALL_WARNING_TICKS => (
-            None,
-            format!("Waiting for {}...", tags(client, session.waiting_for())),
-        ),
+        Phase::Fighting if client.stalled_ticks() > STALL_WARNING_TICKS => {
+            (None, STALL_TEXT.to_string())
+        }
         Phase::Fighting
             if current.config().round_time_ticks - current.remaining_ticks() < TICKS_PER_SECOND =>
         {

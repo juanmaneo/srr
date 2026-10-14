@@ -1,8 +1,8 @@
-//! The room logic alone: seats, readiness, sessions and the relay, event by event.
+//! The room logic alone: seats, readiness, sessions and the frames, event by event.
 
 use srr::game::{Input, PlayerId};
 use srr::net::{ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
-use srr_server::room::{Action, ClientId, Room};
+use srr_server::room::{Action, ClientId, GRACE, MAX_AHEAD, Room, TIMING_PERIOD};
 
 const LEFT: Input = Input {
     left: true,
@@ -47,17 +47,26 @@ fn lobby(clients: &[ClientId], seated: PlayerSet, ready: PlayerSet) -> Vec<Actio
     to_all(clients, ServerMessage::Lobby { seated, ready })
 }
 
-/// The relay of an input of `player` to each of `clients`.
-fn relayed(clients: &[ClientId], session: u8, player: u8, tick: u32, input: Input) -> Vec<Action> {
-    to_all(
-        clients,
-        ServerMessage::Input {
-            session,
-            player: PlayerId(player),
-            tick,
-            input,
-        },
-    )
+/// The frame of `tick` between `fighters`: `held` lists the inputs that are not
+/// [`Input::NONE`].
+fn frame(
+    session: u8,
+    tick: u32,
+    fighters: PlayerSet,
+    late: PlayerSet,
+    held: &[(u8, Input)],
+) -> ServerMessage {
+    let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
+    for &(player, input) in held {
+        inputs[usize::from(player)] = input;
+    }
+    ServerMessage::Frame {
+        session,
+        tick,
+        players: fighters,
+        late,
+        inputs,
+    }
 }
 
 /// A room where clients `1..=count` sit in seats `0..count`, nobody ready yet.
@@ -78,6 +87,19 @@ fn all_ready(room: &mut Room, clients: &[ClientId]) -> Vec<Action> {
         .unwrap_or_default()
 }
 
+/// `ticks` ticks of the room's clock, and everything they triggered.
+fn run(room: &mut Room, ticks: u32) -> Vec<Action> {
+    (0..ticks).flat_map(|_| room.tick()).collect()
+}
+
+/// The timing reports among `actions`.
+fn timings(actions: Vec<Action>) -> Vec<Action> {
+    actions
+        .into_iter()
+        .filter(|action| matches!(action, Action::Send(_, ServerMessage::Timing { .. })))
+        .collect()
+}
+
 #[test]
 fn empty_room() {
     let room = Room::new();
@@ -86,6 +108,7 @@ fn empty_room() {
     assert_eq!(room.seated(), PlayerSet::EMPTY);
     assert_eq!(room.ready(), PlayerSet::EMPTY);
     assert_eq!(room.playing(), PlayerSet::EMPTY);
+    assert_eq!((room.clock(), room.next_frame()), (0, 0));
     for player in 0..=MAX_PLAYERS as u8 {
         assert_eq!(room.seat(PlayerId(player)), None);
     }
@@ -117,23 +140,59 @@ fn clients_are_seated_welcomed_and_shown_the_lobby() {
 }
 
 #[test]
-fn fifth_client_is_turned_away() {
-    let mut room = room_of(4);
+fn ten_players_brawl_and_the_eleventh_is_turned_away() {
+    let full = MAX_PLAYERS as ClientId;
+    let mut room = room_of(full);
     let before = room.clone();
     assert_eq!(
-        room.join(5),
-        vec![Action::Send(5, ServerMessage::RoomFull), Action::Close(5)]
+        room.join(full + 1),
+        vec![
+            Action::Send(full + 1, ServerMessage::RoomFull),
+            Action::Close(full + 1)
+        ]
     );
     assert_eq!(room, before);
 
+    let clients: Vec<ClientId> = (1..=full).collect();
+    assert_eq!(
+        all_ready(&mut room, &clients),
+        to_all(
+            &clients,
+            ServerMessage::Start {
+                session: 1,
+                players: PlayerSet::first(MAX_PLAYERS)
+            }
+        )
+    );
     // Even during a match.
-    all_ready(&mut room, &[1, 2, 3, 4]);
     let before = room.clone();
     assert_eq!(
-        room.join(6),
-        vec![Action::Send(6, ServerMessage::RoomFull), Action::Close(6)]
+        room.join(full + 2),
+        vec![
+            Action::Send(full + 2, ServerMessage::RoomFull),
+            Action::Close(full + 2)
+        ]
     );
     assert_eq!(room, before);
+
+    // The frame of a tick goes out once all ten inputs are in.
+    for &client in &clients[..MAX_PLAYERS - 1] {
+        assert_eq!(room.receive(client, &input(1, 0, LEFT)), vec![]);
+    }
+    let held: Vec<(u8, Input)> = (0..9).map(|player| (player, LEFT)).collect();
+    assert_eq!(
+        room.receive(full, &input(1, 0, JUMP_KICK)),
+        to_all(
+            &clients,
+            frame(
+                1,
+                0,
+                PlayerSet::first(MAX_PLAYERS),
+                PlayerSet::EMPTY,
+                &[held, vec![(9, JUMP_KICK)]].concat()
+            )
+        )
+    );
 }
 
 #[test]
@@ -248,46 +307,224 @@ fn three_ready_players_start_a_free_for_all() {
 }
 
 #[test]
-fn inputs_are_relayed_to_every_other_player() {
-    let mut room = room_of(4);
-    all_ready(&mut room, &[1, 2, 3, 4]);
-    assert_eq!(room.playing(), PlayerSet::first(4));
+fn a_frame_goes_out_in_order_as_soon_as_every_input_is_there() {
+    let mut room = room_of(3);
+    all_ready(&mut room, &[1, 2, 3]);
+    let all = PlayerSet::first(3);
 
+    assert_eq!(room.receive(1, &input(1, 0, LEFT)), vec![]);
+    assert_eq!(room.receive(3, &input(1, 0, JUMP_KICK)), vec![]);
     assert_eq!(
-        room.receive(2, &input(1, 10, LEFT)),
-        relayed(&[1, 3, 4], 1, 1, 10, LEFT)
+        room.receive(2, &input(1, 0, Input::NONE)),
+        to_all(
+            &[1, 2, 3],
+            frame(1, 0, all, PlayerSet::EMPTY, &[(0, LEFT), (2, JUMP_KICK)])
+        )
+    );
+    assert_eq!(room.next_frame(), 1);
+
+    // Tick 2 is complete before tick 1: it waits for it.
+    for client in 1..=3 {
+        assert_eq!(room.receive(client, &input(1, 2, LEFT)), vec![]);
+    }
+    room.receive(1, &input(1, 1, Input::NONE));
+    room.receive(2, &input(1, 1, Input::NONE));
+    let mut expected = to_all(&[1, 2, 3], frame(1, 1, all, PlayerSet::EMPTY, &[]));
+    expected.extend(to_all(
+        &[1, 2, 3],
+        frame(
+            1,
+            2,
+            all,
+            PlayerSet::EMPTY,
+            &[(0, LEFT), (1, LEFT), (2, LEFT)],
+        ),
+    ));
+    assert_eq!(room.receive(3, &input(1, 1, Input::NONE)), expected);
+    // No clock needed on a fast network.
+    assert_eq!((room.clock(), room.next_frame()), (0, 3));
+}
+
+#[test]
+fn a_late_input_is_replaced_with_the_previous_one() {
+    let mut room = room_of(2);
+    all_ready(&mut room, &[1, 2]);
+    let both = PlayerSet::first(2);
+    room.receive(1, &input(1, 0, LEFT));
+    room.receive(2, &input(1, 0, LEFT));
+    room.receive(1, &input(1, 1, JUMP_KICK));
+    room.receive(1, &input(1, 2, Input::NONE));
+    room.receive(2, &input(1, 2, LEFT));
+
+    // The frame of tick 1 waits GRACE ticks of the clock for player 2...
+    for _ in 0..=GRACE {
+        assert_eq!(room.tick(), vec![]);
+    }
+    assert_eq!(room.clock(), GRACE + 1);
+    // ...then goes out with their previous input, followed by the complete frame of tick 2.
+    let mut expected = to_all(
+        &[1, 2],
+        frame(1, 1, both, players(&[1]), &[(0, JUMP_KICK), (1, LEFT)]),
+    );
+    expected.extend(to_all(
+        &[1, 2],
+        frame(1, 2, both, PlayerSet::EMPTY, &[(1, LEFT)]),
+    ));
+    assert_eq!(room.tick(), expected);
+    // The input, when it comes, is too late to count.
+    assert_eq!(room.receive(2, &input(1, 1, Input::NONE)), vec![]);
+
+    // Nobody sent anything for tick 3: everybody repeats, everybody is late.
+    assert_eq!(room.tick(), vec![]);
+    assert_eq!(
+        room.tick(),
+        to_all(&[1, 2], frame(1, 3, both, both, &[(1, LEFT)]))
+    );
+    assert_eq!(room.next_frame(), 4);
+}
+
+#[test]
+fn inputs_too_far_ahead_or_sent_twice_are_dropped() {
+    let mut room = room_of(2);
+    all_ready(&mut room, &[1, 2]);
+    assert_eq!(room.receive(1, &input(1, MAX_AHEAD + 1, LEFT)), vec![]);
+    for tick in 0..MAX_AHEAD {
+        room.receive(1, &input(1, tick, Input::NONE));
+        room.receive(2, &input(1, tick, Input::NONE));
+    }
+    assert_eq!(room.next_frame(), MAX_AHEAD);
+
+    assert_eq!(room.receive(1, &input(1, MAX_AHEAD, LEFT)), vec![]);
+    assert_eq!(
+        room.receive(1, &input(1, MAX_AHEAD, JUMP_KICK)),
+        vec![],
+        "the first input of a tick counts"
     );
     assert_eq!(
-        room.receive(4, &input(1, 11, JUMP_KICK)),
-        relayed(&[1, 2, 3], 1, 3, 11, JUMP_KICK)
+        room.receive(2, &input(1, MAX_AHEAD, Input::NONE)),
+        to_all(
+            &[1, 2],
+            frame(
+                1,
+                MAX_AHEAD,
+                PlayerSet::first(2),
+                PlayerSet::EMPTY,
+                &[(0, LEFT)]
+            )
+        )
     );
+    // The input too far ahead was not kept: the next frame still waits for player 1.
+    assert_eq!(room.receive(2, &input(1, MAX_AHEAD + 1, LEFT)), vec![]);
+    // Neither are inputs of frames already sent.
+    assert_eq!(room.receive(2, &input(1, 3, LEFT)), vec![]);
+    assert_eq!(room.next_frame(), MAX_AHEAD + 1);
+}
+
+#[test]
+fn every_player_hears_how_early_its_inputs_come() {
+    let mut room = room_of(3);
+    all_ready(&mut room, &[1, 2, 3]);
+    // At clock 0, player 1 is 10 ticks early at worst (tick 2), player 2 is 8 ticks early.
+    room.receive(1, &input(1, 4, LEFT));
+    room.receive(1, &input(1, 2, LEFT));
+    room.receive(2, &input(1, 0, LEFT));
+    assert_eq!(timings(run(&mut room, TIMING_PERIOD - 1)), vec![]);
+    // Then player 2's input for tick 3 comes at clock 14: three ticks too late.
+    assert_eq!(room.receive(2, &input(1, 3, LEFT)), vec![]);
+    // Player 3 sent nothing: no report.
     assert_eq!(
-        room.receive(1, &input(1, u32::MAX, Input::NONE)),
-        relayed(&[2, 3, 4], 1, 0, u32::MAX, Input::NONE)
+        timings(room.tick()),
+        vec![
+            Action::Send(1, ServerMessage::Timing { tick: 2, lead: 10 }),
+            Action::Send(2, ServerMessage::Timing { tick: 3, lead: -3 }),
+        ]
     );
+    // Each report covers the inputs since the previous one.
+    assert_eq!(timings(run(&mut room, TIMING_PERIOD)), vec![]);
+    assert_eq!(room.clock(), 2 * TIMING_PERIOD);
+}
+
+#[test]
+fn timing_reports_are_clamped_to_a_byte() {
+    let mut room = room_of(2);
+    all_ready(&mut room, &[1, 2]);
+    run(&mut room, 10 * TIMING_PERIOD);
+    room.receive(1, &input(1, 0, LEFT));
+    room.receive(2, &input(1, u32::MAX, LEFT));
+    assert_eq!(
+        timings(run(&mut room, TIMING_PERIOD)),
+        vec![
+            Action::Send(
+                1,
+                ServerMessage::Timing {
+                    tick: 0,
+                    lead: i8::MIN
+                }
+            ),
+            Action::Send(
+                2,
+                ServerMessage::Timing {
+                    tick: u32::MAX,
+                    lead: i8::MAX
+                }
+            ),
+        ]
+    );
+}
+
+#[test]
+fn the_clock_runs_during_sessions_only_and_restarts_with_each() {
+    let mut room = room_of(2);
+    assert_eq!(room.tick(), vec![], "nothing to do before a session");
+    assert_eq!(room.clock(), 0);
+
+    all_ready(&mut room, &[1, 2]);
+    // Nobody sends anything: the frames go out on time anyway, everybody late.
+    let actions = run(&mut room, GRACE + 1);
+    assert_eq!(
+        actions,
+        to_all(
+            &[1, 2],
+            frame(1, 0, PlayerSet::first(2), PlayerSet::first(2), &[])
+        )
+    );
+    run(&mut room, 11);
+    assert_eq!((room.clock(), room.next_frame()), (20, 20 - GRACE));
+
+    all_ready(&mut room, &[1, 2]);
+    assert_eq!(room.session(), 2);
+    assert_eq!((room.clock(), room.next_frame()), (0, 0));
 }
 
 #[test]
 fn inputs_of_another_session_are_dropped() {
     let mut room = room_of(2);
     // No session yet: nobody plays.
-    assert_eq!(room.receive(1, &input(0, 10, LEFT)), vec![]);
+    assert_eq!(room.receive(1, &input(0, 0, LEFT)), vec![]);
 
     all_ready(&mut room, &[1, 2]);
-    assert_eq!(room.receive(1, &input(0, 10, LEFT)), vec![]);
-    assert_eq!(room.receive(1, &input(2, 10, LEFT)), vec![]);
+    assert_eq!(room.receive(1, &input(0, 0, LEFT)), vec![]);
+    assert_eq!(room.receive(1, &input(2, 0, LEFT)), vec![]);
+    assert_eq!(room.receive(1, &input(1, 0, LEFT)), vec![]);
     assert_eq!(
-        room.receive(1, &input(1, 10, LEFT)),
-        relayed(&[2], 1, 0, 10, LEFT)
+        room.receive(2, &input(1, 0, Input::NONE)),
+        to_all(
+            &[1, 2],
+            frame(1, 0, PlayerSet::first(2), PlayerSet::EMPTY, &[(0, LEFT)])
+        )
     );
 
     // Inputs of the previous session arriving after the next one started are stale.
     all_ready(&mut room, &[1, 2]);
     assert_eq!(room.session(), 2);
-    assert_eq!(room.receive(2, &input(1, 99, LEFT)), vec![]);
+    assert_eq!(room.receive(2, &input(1, 0, LEFT)), vec![]);
+    assert_eq!(room.receive(2, &input(2, 0, LEFT)), vec![]);
     assert_eq!(
-        room.receive(2, &input(2, 0, LEFT)),
-        relayed(&[1], 2, 1, 0, LEFT)
+        room.receive(1, &input(2, 0, Input::NONE)),
+        to_all(
+            &[1, 2],
+            frame(2, 0, PlayerSet::first(2), PlayerSet::EMPTY, &[(1, LEFT)])
+        )
     );
 }
 
@@ -331,12 +568,21 @@ fn a_late_joiner_sits_out_the_running_match() {
     assert_eq!(room.seated(), PlayerSet::first(3));
     assert_eq!(room.playing(), PlayerSet::first(2));
 
-    // The duel goes on without them: they get no inputs and theirs go nowhere.
+    // The duel goes on without them: they get no frames and their inputs go nowhere.
+    room.receive(1, &input(1, 0, LEFT));
+    assert_eq!(room.receive(3, &input(1, 0, LEFT)), vec![]);
     assert_eq!(
-        room.receive(1, &input(1, 5, LEFT)),
-        relayed(&[2], 1, 0, 5, LEFT)
+        room.receive(2, &input(1, 0, Input::NONE)),
+        to_all(
+            &[1, 2],
+            frame(1, 0, PlayerSet::first(2), PlayerSet::EMPTY, &[(0, LEFT)])
+        )
     );
-    assert_eq!(room.receive(3, &input(1, 5, LEFT)), vec![]);
+    let lead = GRACE as i8;
+    assert_eq!(
+        timings(run(&mut room, TIMING_PERIOD)),
+        to_all(&[1, 2], ServerMessage::Timing { tick: 0, lead })
+    );
 
     // The next match waits for them too.
     assert_eq!(
@@ -358,9 +604,20 @@ fn a_late_joiner_sits_out_the_running_match() {
         )
     );
     assert_eq!(room.playing(), PlayerSet::first(3));
+    room.receive(1, &input(2, 0, Input::NONE));
+    room.receive(2, &input(2, 0, Input::NONE));
     assert_eq!(
         room.receive(3, &input(2, 0, JUMP_KICK)),
-        relayed(&[1, 2], 2, 2, 0, JUMP_KICK)
+        to_all(
+            &[1, 2, 3],
+            frame(
+                2,
+                0,
+                PlayerSet::first(3),
+                PlayerSet::EMPTY,
+                &[(2, JUMP_KICK)]
+            )
+        )
     );
 }
 
@@ -401,26 +658,44 @@ fn unknown_clients_are_ignored() {
 }
 
 #[test]
-fn leaving_tells_the_others_and_frees_the_seat() {
+fn the_match_goes_on_without_a_leaver_while_two_remain() {
     let mut room = room_of(3);
     all_ready(&mut room, &[1, 2, 3]);
+    let fighters = PlayerSet::first(3);
+    room.receive(1, &input(1, 0, LEFT));
+    room.receive(3, &input(1, 0, JUMP_KICK));
 
+    // The others are told, and the frame that only waited for the leaver goes out.
     let mut expected = to_all(
         &[1, 3],
         ServerMessage::PlayerLeft {
             player: PlayerId(1),
         },
     );
+    expected.extend(to_all(
+        &[1, 3],
+        frame(
+            1,
+            0,
+            fighters,
+            PlayerSet::EMPTY,
+            &[(0, LEFT), (2, JUMP_KICK)],
+        ),
+    ));
     expected.extend(lobby(&[1, 3], players(&[0, 2]), PlayerSet::EMPTY));
     assert_eq!(room.leave(2), expected);
     assert_eq!(room.seat(PlayerId(1)), None);
     assert_eq!(room.seated(), players(&[0, 2]));
     assert_eq!(room.playing(), players(&[0, 2]));
 
-    // The others' inputs still reach each other (their front ends decide what to do).
+    // Nobody waits for the leaver, whose fighter stands still (and is not late).
+    room.receive(1, &input(1, 1, LEFT));
     assert_eq!(
-        room.receive(3, &input(1, 7, LEFT)),
-        relayed(&[1], 1, 2, 7, LEFT)
+        room.receive(3, &input(1, 1, LEFT)),
+        to_all(
+            &[1, 3],
+            frame(1, 1, fighters, PlayerSet::EMPTY, &[(0, LEFT), (2, LEFT)])
+        )
     );
 
     // A newcomer takes the lowest free seat and is not part of the running session.
@@ -433,21 +708,30 @@ fn leaving_tells_the_others_and_frees_the_seat() {
     expected.extend(lobby(&[1, 4, 3], PlayerSet::first(3), PlayerSet::EMPTY));
     assert_eq!(room.join(4), expected);
     assert_eq!(room.playing(), players(&[0, 2]));
+    assert_eq!(room.receive(4, &input(1, 2, LEFT)), vec![]);
+    room.receive(1, &input(1, 2, Input::NONE));
+    assert_eq!(
+        room.receive(3, &input(1, 2, Input::NONE)),
+        to_all(&[1, 3], frame(1, 2, fighters, PlayerSet::EMPTY, &[]))
+    );
 
-    // Down to one player, then nobody: the last one leaving tells nobody.
-    room.leave(4);
+    // Down to one player: the match is over, the clock stops.
     let mut expected = to_all(
-        &[3],
+        &[4, 3],
         ServerMessage::PlayerLeft {
             player: PlayerId(0),
         },
     );
-    expected.extend(lobby(&[3], players(&[2]), PlayerSet::EMPTY));
+    expected.extend(lobby(&[4, 3], players(&[1, 2]), PlayerSet::EMPTY));
     assert_eq!(room.leave(1), expected);
-    assert_eq!(room.playing(), players(&[2]));
+    assert_eq!(room.playing(), PlayerSet::EMPTY);
+    assert_eq!(room.receive(3, &input(1, 3, LEFT)), vec![]);
+    assert_eq!(run(&mut room, 2 * GRACE + TIMING_PERIOD), vec![]);
+
+    // The last one leaving tells nobody.
+    room.leave(4);
     assert_eq!(room.leave(3), vec![]);
     assert_eq!(room.seated(), PlayerSet::EMPTY);
-    assert_eq!(room.playing(), PlayerSet::EMPTY);
 }
 
 #[test]
@@ -501,11 +785,13 @@ fn leaving_starts_the_match_when_the_others_are_all_ready() {
     expected.extend(lobby(&[1], players(&[0]), players(&[0])));
     assert_eq!(room.leave(3), expected);
     assert_eq!(room.session(), 1);
+    assert_eq!(room.playing(), PlayerSet::EMPTY);
 }
 
 #[test]
 fn session_numbers_wrap_around() {
     let mut room = room_of(2);
+    let both = PlayerSet::first(2);
     let mut session: u8 = 0;
     for _ in 0..256 {
         session = session.wrapping_add(1);
@@ -515,23 +801,28 @@ fn session_numbers_wrap_around() {
                 &[1, 2],
                 ServerMessage::Start {
                     session,
-                    players: PlayerSet::first(2)
+                    players: both
                 }
             )
         );
         assert_eq!(room.session(), session);
         if session == u8::MAX {
+            room.receive(1, &input(u8::MAX, 0, LEFT));
             assert_eq!(
-                room.receive(1, &input(u8::MAX, 0, LEFT)),
-                relayed(&[2], u8::MAX, 0, 0, LEFT)
+                room.receive(2, &input(u8::MAX, 0, Input::NONE)),
+                to_all(
+                    &[1, 2],
+                    frame(u8::MAX, 0, both, PlayerSet::EMPTY, &[(0, LEFT)])
+                )
             );
         }
     }
     // Session 255 was followed by session 0.
     assert_eq!(room.session(), 0);
-    assert_eq!(room.receive(1, &input(u8::MAX, 1, LEFT)), vec![]);
+    assert_eq!(room.receive(1, &input(u8::MAX, 0, LEFT)), vec![]);
+    room.receive(1, &input(0, 0, Input::NONE));
     assert_eq!(
-        room.receive(2, &input(0, 1, LEFT)),
-        relayed(&[1], 0, 1, 1, LEFT)
+        room.receive(2, &input(0, 0, LEFT)),
+        to_all(&[1, 2], frame(0, 0, both, PlayerSet::EMPTY, &[(1, LEFT)]))
     );
 }

@@ -29,14 +29,16 @@ the judo throws and every grapple position).
 
 ---
 
-## Current iteration: 1v1, 1v1v1 or 1v1v1v1 on the local network
+## Current iteration: up to 10 players on the local network
 
-2 to 4 players, each on their own machine, each in a web browser, on the same local network,
+2 to 10 players, each on their own machine, each in a web browser, on the same local network,
 **everybody for themselves** (free-for-all). One machine runs the small SRR server, which
-serves the game and relays the inputs; every player opens its address in a browser. A match
-starts when everybody in the room has pressed `Enter`: two players make a 1v1, three a
-1v1v1, four a 1v1v1v1. The rules engine already supports up to 10 players and alliances
-(2v1…), which later iterations will open up.
+serves the game and gathers the inputs; every player opens its address in a browser. A match
+starts when everybody in the room has pressed `Enter`: from a 1v1 to a brawl of ten. Online
+play is built to put up with bad connections (Wi-Fi, a far machine, a hidden tab): one bad
+connection only slows its own fighter, never the party (see
+[How the online match works](#how-the-online-match-works)). The rules engine already
+supports alliances (2v1…), which later iterations will open up.
 
 Alone? The game **offers** a match against the computer (the bot) and waits for your answer
 (`Y` / `N`); see [Playing alone](#playing-alone-the-training-dummy-or-the-computer).
@@ -168,8 +170,9 @@ they stepped to, and the camera follows yours.
 ### HUD
 
 Like in every versus game: in a 1v1, player 1's health bar on the left, player 2's on the
-right, both emptying towards the round timer in the middle. In a 1v1v1 or 1v1v1v1 the bars
-get thinner and stack: P1 and P2 on the left, P3 (and P4) on the right. Recent damage stays
+right, both emptying towards the round timer in the middle. In bigger matches the bars get
+thinner and stack, the first half of the players on the left and the rest on the right (up
+to five a side in a brawl of ten, tinier beyond four players). Recent damage stays
 visible as a red trail that drains after half a second, so a combo reads at a glance; the
 bar blinks orange below 25 %. Under each bar: name and HP (`P1 (you)`, `P3`, or `CPU` for
 the computer), round wins as pips, and during a grapple either the position ladder
@@ -177,7 +180,9 @@ the computer), round wins as pips, and during a grapple either the position ladd
 for the fighter on top, or for the one underneath the escape gauge (in the air: the counter
 to enter, e.g. `IPPON-SEOI-NAGE!  COUNTER 8+9`). Big graffiti words announce READY, FIGHT!,
 KO and TIME; between matches the banner shows the lobby (who is here, who is ready, who
-left), and a late input names the player the match waits for (`Waiting for P3...`).
+left). Online, a bar reads `LAG` while the server stands in for that player's late inputs
+(their fighter repeats its moves) and `LEFT` once they left the match (their fighter stands
+still); when the server itself is not heard from, the banner says `Waiting for the server...`.
 
 ### Grappling (BJJ / MMA)
 
@@ -296,7 +301,7 @@ jump when jumping again on the very tick you land, and the grapple **reversal**:
 grab on the very first tick you are grabbed swaps the roles (not during a judo projection,
 which has its own counter).
 
-### Play on your local network (2 to 4 players)
+### Play on your local network (2 to 10 players)
 
 On the machine that hosts the game (it can also be one of the players):
 
@@ -320,15 +325,16 @@ Shattered Realm: Rampage - serving dist
   local network: http://192.168.1.42:8080   <- open this on every machine
 ```
 
-1. Open `http://<host-ip>:8080` in a browser on each machine, up to four (the host can use
+1. Open `http://<host-ip>:8080` in a browser on each machine, up to ten (the host can use
    `http://localhost:8080`). Click into the page so it gets the keyboard.
 2. Leave the title screen (`Enter`). On the fight screen, press `Enter` when you are ready:
    the banner shows who is in the room and who is ready. The match starts as soon as
-   everybody in the room (at least two) is ready: 1v1, 1v1v1 or 1v1v1v1.
+   everybody in the room (at least two) is ready: from a 1v1 to a brawl of ten.
 3. Somebody who opens the page during a match waits in the room and joins the next round
-   once everybody presses `Enter` again. A fifth browser is told the room is full.
-4. If a player leaves, the match they were in stops for the others ("P3 left"), who go back
-   to the room and press `Enter` for a new match. Whoever is left alone is offered the bot.
+   once everybody presses `Enter` again. An eleventh browser is told the room is full.
+4. If a player leaves, the match goes on without them: their fighter stands still (`LEFT`).
+   Once only one fighter of the match is still connected, they go back to the room
+   ("P3 left") and press `Enter` for a new match. Whoever is left alone is offered the bot.
 
 To try it on a single computer, open several browser windows (or a private window, or
 another browser) on `http://localhost:8080`; each window is a player.
@@ -341,31 +347,56 @@ Notes:
   use the host machine's LAN address instead (`ip addr` / `ipconfig`).
 * With the default layout, keep Num Lock on to be safe. Without a numeric keypad (laptops),
   pick the WASD preset on the controls page (`C` on the title screen).
-* Keep the game tab in the foreground: a hidden tab stops sending inputs, and the match
-  waits for it ("Waiting for P2...").
+* Keep the game tab in the foreground: a hidden tab stops sending inputs, so its fighter
+  repeats its last move (`LAG`) while the others play on; back in the foreground, the tab
+  jumps straight to the current state of the match.
 * Practice alone, without the server's room, by opening `http://<host-ip>:8080/?practice`:
   you fight the training dummy, or the computer if you answer `Y`. `cargo run` (native
   window) also plays alone.
 
-How the online match works: every browser runs the same deterministic simulation in
-lock-step. Each one sends its input for every tick (60 per second) to the server, which only
-forwards it to the other players of the match; a tick is simulated once the inputs of
-everyone are known. Inputs are scheduled 3 ticks (50 ms) ahead, which hides the latency of a
-local network.
+#### How the online match works
+
+Every browser runs the same deterministic simulation from the same inputs; no game state is
+ever sent. With ten players, somebody always has a bad connection, so nobody waits for
+anybody:
+
+* **Server frames.** Each browser sends its input for every tick (60 per second), scheduled
+  2 ticks (33 ms) ahead. The server gathers the inputs of everybody into one frame per tick,
+  sent as soon as all of them are there. When an input is late, the server waits a short
+  grace period (8 ticks), then repeats that player's previous input and marks them late
+  (`LAG`): only the laggard's fighter hesitates, and everybody gets the same frame.
+* **Rollback.** A browser does not wait for the frames: it shows the match ahead of them,
+  guessing that the others keep doing what they did, and when a frame proves a guess wrong it
+  replays the ticks since then with the right inputs (up to 30 ticks, half a second; beyond
+  that it waits, `Waiting for the server...`). A browser left behind (a paused tab) jumps
+  straight to the frames.
+* **Timing.** Every quarter of a second the server tells each browser how early its inputs
+  arrive, at worst. The browser then runs a few ticks twice, or skips a few, to keep about
+  two ticks of margin, whatever its round trip to the server and the drift of its clock.
+* **Adaptive input delay.** Far from the server, running further ahead would mean guessing
+  the others for too long (big rollbacks); the browser schedules its inputs further ahead
+  instead (up to 30 ticks) and gives that delay back when the connection gets better.
+* **The server never blocks.** Each connection has its own writer with a bounded queue: a
+  connection that stops reading is cut off instead of stalling the room for the others.
+
+`server/tests/network.rs` checks all of this with a deterministic simulation of ten browsers
+behind cables, Wi-Fi, far links, freezing tabs and drifting clocks: everybody's confirmed
+match is the same, and only the bad connections are ever late.
 
 The protocol is a handful of binary WebSocket frames (integers little-endian; a set of
-players is one byte, bit `i` for player `i`):
+players is a `u16`, bit `i` for player `i`):
 
 | Tag | Message        | Direction        | Fields                                        |
 | --: | -------------- | ---------------- | --------------------------------------------- |
 | 1   | `Welcome`      | server → browser | your seat / player `u8`                       |
-| 2   | `Start`        | server → browser | session `u8`, players `u8` (set)              |
+| 2   | `Start`        | server → browser | session `u8`, players (set)                   |
 | 3   | `Input`        | browser → server | session `u8`, tick `u32`, input `u16`         |
-| 3   | `Input`        | server → browser | session `u8`, player `u8`, tick `u32`, input `u16` |
 | 4   | `PlayerLeft`   | server → browser | player `u8`                                   |
 | 5   | `RoomFull`     | server → browser | –                                             |
-| 6   | `Lobby`        | server → browser | seated `u8` (set), ready `u8` (set)           |
+| 6   | `Lobby`        | server → browser | seated (set), ready (set)                     |
 | 7   | `Ready`        | browser → server | –                                             |
+| 8   | `Frame`        | server → browser | session `u8`, tick `u32`, players (set), late (set), then one input `u16` per player, by id |
+| 9   | `Timing`       | server → browser | tick `u32`, lead `i8` (ticks of margin of the input for that tick) |
 
 ### The server
 
@@ -381,8 +412,8 @@ cargo run --release -p srr-server -- --dir dist --port 8080
 | `--dir DIR`   | `dist`  | directory with the web build to serve |
 | `-h, --help`  |         | show the usage                        |
 
-It serves the files of `DIR` on `GET` and the room (up to 4 players) on the WebSocket at
-`/ws`.
+It serves the files of `DIR` on `GET` and the room (up to 10 players) on the WebSocket at
+`/ws`, and runs the room's clock (60 ticks per second) that sends the frames of late players.
 
 ---
 
@@ -396,9 +427,10 @@ It serves the files of `DIR` on `GET` and the room (up to 4 players) on the WebS
   and the computer opponent (`bot.rs`, seeded).
   No engine, clock, thread or randomness, so it runs the same in the browser and on every
   machine of an online match.
-* `src/net/` – the pure networking logic: the binary protocol, sets of players, the N-player
-  lock-step session and the client state machine (lobby, readiness, playing alone against the
-  dummy or the bot); no sockets, so it is fully unit-tested.
+* `src/net/` – the pure networking logic: the binary protocol, sets of players, the
+  rollback session (`rollback.rs`) and the client state machine (lobby, readiness, timing and
+  input delay, playing alone against the dummy or the bot); no sockets, so it is fully
+  unit-tested.
 * `src/front/` – the screens as a pure state machine (`Game`): the graffiti ASCII intro, the
   controls page (`controls.rs`), the arena with the XKCD stick figures (`stick.rs`), the
   third-person 3D view (`tps.rs`, on the fixed-point 3D maths of `space.rs`), the
@@ -413,8 +445,9 @@ It serves the files of `DIR` on `GET` and the room (up to 4 players) on the WebS
   keyboard, tick the game 60 times per second and draw its frames.
 * `assets/fonts/` – Fira Mono (SIL OFL), the monospace font of the Fyrox backend (Bevy embeds
   the same font).
-* `server/` – `srr-server`: static files + the WebSocket room and relay for LAN matches of 2
-  to 4 players.
+* `server/` – `srr-server`: static files + the WebSocket room (`room.rs`, pure: seats,
+  frames, timing reports) for LAN matches of 2 to 10 players; `server/tests/network.rs`
+  simulates ten browsers over bad networks.
 * `xtask/` – the `cargo xtask` build automation.
 * `web/index.html` – the page that loads the WASM build.
 
@@ -515,6 +548,6 @@ println!("{}", game.text_snapshot(160, 45)); // the same screen as text
 
 `cargo xtask screenshots` runs `examples/screenshots.rs`. It plays the intro, opens the
 controls page, shows the bot offer, plays a short fight against the dummy (crouch, strikes,
-ippon-seoi-nage, juji-gatame), a round against the computer and an online 1v1v1 (the other
-two players simulated), headlessly, and writes PNGs to `target/screenshots/`. It is built with `--no-default-features`,
+ippon-seoi-nage, juji-gatame), a round against the computer, an online 1v1v1 and a brawl of
+ten (the other players simulated, one of the ten lagging), headlessly, and writes PNGs to `target/screenshots/`. It is built with `--no-default-features`,
 so no engine, window or GPU is needed: it works in CI or over SSH.

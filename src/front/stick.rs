@@ -1,7 +1,7 @@
 //! The fighters as XKCD-style stick figures: a hollow round head, a single line for the body
 //! and two-segment arms and legs, in chalk on the alley wall. Each player wears an XKCD-ish
-//! accessory in their colour (P1 the hat, P2 the beret, P3 a ponytail, P4 a headband) so the
-//! figures stay apart without changing the ink.
+//! accessory in their colour (P1 the hat, P2 the beret, P3 a ponytail, P4 a headband, then
+//! again from P5, in other colours) so the figures stay apart without changing the ink.
 //!
 //! A [`Figure`] is a skeleton in screen coordinates, posed from the fighter's state: guard,
 //! walk cycle, crouch, tucked jump, strikes (the striking limb stretches to the attack's range, in the
@@ -95,7 +95,7 @@ pub enum Accessory {
     Headband,
 }
 
-/// The accessory of `player` (they cycle every four players, like the colours).
+/// The accessory of `player` (they cycle every four players; the colours tell them apart).
 ///
 /// ```
 /// use srr::front::stick::{Accessory, accessory};

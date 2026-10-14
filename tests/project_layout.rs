@@ -79,7 +79,7 @@ fn the_game_module_is_engine_and_platform_agnostic() {
     );
 
     // Bevy would couple the rules to one engine; the rest is unavailable or non-deterministic
-    // in the browser / in a lock-step online simulation.
+    // in the browser / in a rollback online simulation.
     let forbidden = [
         "bevy::",
         "use bevy",
