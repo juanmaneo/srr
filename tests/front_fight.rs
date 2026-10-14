@@ -794,7 +794,8 @@ fn without_a_duel_the_hud_shows_the_banner_and_the_controls() {
     );
     assert_eq!(
         expected[1],
-        "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Enter: ready   P: pause"
+        "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Enter: ready   P: pause   \
+         Tab: view"
     );
 
     let mut waiting = Client::online(cfg(), 0);

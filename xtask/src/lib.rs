@@ -57,7 +57,8 @@ pub enum Task {
     Coverage,
     /// Build and assemble the playable web build in `dist/`.
     Dist,
-    /// Build `dist/` and serve it on the local network, with the 1v1 relay.
+    /// Build `dist/` and serve it on the local network, with the relay of online matches
+    /// (`srr-server`).
     Serve,
     /// Play a scripted game headlessly and save PNG screenshots in `target/screenshots`.
     Screenshots,
@@ -211,7 +212,7 @@ Tasks:
   test             run every test of the workspace
   coverage         run the tests and fail below 100 % line coverage
   dist             build and assemble the playable web build in dist/
-  serve            dist, then serve it on the local network (port 8080) for 1v1 play
+  serve            dist, then serve it on the local network (port 8080) for online play
   screenshots      play a scripted game headlessly (no window) and save PNGs in target/screenshots
   docker-image     build the Docker image holding the toolchain
   docker <task>    run build, test, coverage, dist or serve inside the Docker image

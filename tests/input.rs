@@ -512,7 +512,7 @@ fn bindings_can_be_customised_copied_and_compared() {
 // ---------------------------------------------------------------------------------------------
 
 /// Every key, in declaration order.
-const ALL_KEYS: [Key; 43] = [
+const ALL_KEYS: [Key; 44] = [
     Key::ArrowLeft,
     Key::ArrowRight,
     Key::ArrowUp,
@@ -529,6 +529,7 @@ const ALL_KEYS: [Key; 43] = [
     Key::Numpad9,
     Key::Enter,
     Key::Escape,
+    Key::Tab,
     Key::Space,
     Key::A,
     Key::B,
@@ -565,8 +566,8 @@ fn every_key_has_a_short_ascii_label() {
         labels,
         [
             "Left", "Right", "Up", "Down", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-            "Enter", "Esc", "Space", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L",
-            "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
+            "Enter", "Esc", "Tab", "Space", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K",
+            "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
         ]
     );
     let distinct: HashSet<&str> = labels.iter().copied().collect();
@@ -588,16 +589,17 @@ fn keys_are_ordered_as_declared() {
 }
 
 #[test]
-fn only_enter_escape_and_the_pause_key_cannot_be_bound() {
+fn only_the_menu_pause_and_view_keys_cannot_be_bound() {
     for key in ALL_KEYS {
         assert_eq!(
             key.is_bindable(),
-            key != Key::Enter && key != Key::Escape && key != Key::P,
+            !matches!(key, Key::Enter | Key::Escape | Key::P | Key::Tab),
             "{key:?}"
         );
     }
     let mut layout = KeyBindings::STANDARD;
     assert!(!layout.bind(0, Key::P));
+    assert!(!layout.bind(0, Key::Tab));
     assert_eq!(layout, KeyBindings::STANDARD);
 }
 

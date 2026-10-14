@@ -235,6 +235,7 @@ fn map_key(code: KeyCode) -> Option<Key> {
         KeyCode::Numpad9 => Key::Numpad9,
         KeyCode::Enter | KeyCode::NumpadEnter => Key::Enter,
         KeyCode::Escape => Key::Escape,
+        KeyCode::Tab => Key::Tab,
         KeyCode::Space => Key::Space,
         KeyCode::KeyA => Key::A,
         KeyCode::KeyB => Key::B,

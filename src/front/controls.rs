@@ -124,7 +124,8 @@ pub fn controls_lines(bindings: &KeyBindings) -> [String; 2] {
              Turn: {down}+{left} / {down}+{right}   Block: step back"
         ),
         format!(
-            "Punch: {}   Kick: {}   Grab: {}   Judo: {}, {}   Enter: ready   P: pause",
+            "Punch: {}   Kick: {}   Grab: {}   Judo: {}, {}   Enter: ready   P: pause   \
+             Tab: view",
             punches.join(" "),
             kicks.join(" "),
             b.grab.label(),

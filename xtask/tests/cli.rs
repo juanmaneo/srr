@@ -9,7 +9,7 @@
 //! cargo xtask test                 -> run every test of the workspace
 //! cargo xtask coverage             -> run the tests and enforce 100 % coverage
 //! cargo xtask dist                 -> build and assemble the distributable `dist/` folder
-//! cargo xtask serve                -> dist, then serve it on the local network for 1v1
+//! cargo xtask serve                -> dist, then serve it on the local network for online play
 //! cargo xtask docker-image         -> build the Docker image
 //! cargo xtask docker <task>        -> run build | test | coverage | dist | serve inside the image
 //! ```

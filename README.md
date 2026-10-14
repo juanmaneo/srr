@@ -63,6 +63,7 @@ numeric keypad; the **WASD** preset is for keyboards without one.
 | Escape a grapple                 | mash any key           | same |
 | Controls page (title screen)     | `C`                    | same |
 | Pause the fight / change the controls | `P`               | same |
+| Switch the view (side / third-person 3D) | `Tab`          | same |
 | Skip the title screen   | `Enter` or `Esc` | same |
 | Ready for the next match (lobby, or after a round) | `Enter` | same |
 | Answer "Fight the bot?" (alone) | `Y` yes / `N` no | same |
@@ -111,8 +112,9 @@ can be changed whenever you want, not only before playing.
 * on the **Preset** row, `←` / `→` (or `Enter`) switch between **Standard (arrows + keypad)**
   and **WASD (letters + space)**;
 * on an action row, `Enter` then the new key remaps it (`Esc` cancels). A key already used by
-  another action swaps with it, so a key never does two things. `Enter`, `Esc` and `P` cannot
-  be bound (they drive the menus, the readiness for the next match and the pause; `Y` / `N`
+  another action swaps with it, so a key never does two things. `Enter`, `Esc`, `P` and `Tab`
+  cannot be bound (they drive the menus, the readiness for the next match, the pause and the
+  view; `Y` / `N`
   only answer the bot offer while it is shown, so they stay bindable). The preset row then
   reads **Custom**;
 * `Esc` (or `Enter` on "Back to the title") goes back to the title; from the pause menu, `Esc`,
@@ -136,6 +138,22 @@ stay), the tagline is typed and "PRESS ENTER" blinks; a glitch burst keeps the w
 every few seconds. Press `Enter` or `Esc` to go to the fight, or `C` for the controls page
 (hinted in the top-left corner; the sound status is in the top-right one). Online, a match
 starts once every player in the room is on the fight screen and has pressed `Enter`.
+
+### Third-person 3D view (`Tab`)
+
+`Tab` switches the fight, at any moment, between the side view (chalk stick figures on the
+alley wall) and a third-person view over the shoulder of your fighter, like the brawls of
+Tekken's story mode. The camera glides behind you and looks towards the others, so a crowded
+free-for-all stays readable.
+
+The 3D is drawn by the game itself, the old-school way (`src/front/space.rs`,
+`src/front/tps.rs`): integer fixed-point maths, a quaternion camera, the painter's algorithm
+and everything snapped to a 2-pixel grain, for the look of a 90s console. The figures become
+wooden mannequins (every bone a tube, every joint a ball) in a comic-book style: flat two-tone
+shading and dark ink outlines, in the Streets of Rage colours of the title. Like every screen,
+the result is only rectangles and labels, so both engines draw it unchanged. The rules are
+the same in both views: fighters still move along one line (sidestepping is not in the rules
+yet).
 
 ### HUD
 
@@ -372,6 +390,7 @@ It serves the files of `DIR` on `GET` and the room (up to 4 players) on the WebS
   dummy or the bot); no sockets, so it is fully unit-tested.
 * `src/front/` – the screens as a pure state machine (`Game`): the graffiti ASCII intro, the
   controls page (`controls.rs`), the arena with the XKCD stick figures (`stick.rs`), the
+  third-person 3D view (`tps.rs`, on the fixed-point 3D maths of `space.rs`), the
   versus HUD and the music cues. Every frame is described as plain rectangles and
   monospace labels on a 1280×720 virtual screen (`Frame`), so it is fully unit-tested.
   `front/render.rs` is a software renderer for those frames (pixels, PNG, text) and

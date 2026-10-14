@@ -14,7 +14,9 @@
 //! 2. [`Screen::Controls`]: choose a keyboard preset or remap any action ([`controls`]); it is
 //!    also the pause menu of the fight screen (`P`), going back to the fight;
 //! 3. [`Screen::Fight`]: the arena ([`arena`]) under the versus HUD ([`hud`]): health bars with
-//!    the red "recoverable damage" trail, round wins, timer, grapple meter and banners.
+//!    the red "recoverable damage" trail, round wins, timer, grapple meter and banners. `Tab`
+//!    ([`VIEW_KEY`]) switches the arena between the side view and the third-person 3D view
+//!    ([`tps`]), even in the middle of a fight.
 //!
 //! On the fight screen, Enter means "ready": online, the server starts the next match (1v1,
 //! 1v1v1 or 1v1v1v1) once every seated player is ready; alone, it starts the next round.
@@ -38,6 +40,7 @@ use crate::game::{
     GrapplePosition, Input, Key, KeyBindings, Match, Phase, PlayerId, TICKS_PER_SECOND,
 };
 use crate::net::{Client, MAX_PLAYERS, Rival, Status};
+use space::Camera;
 
 pub mod arena;
 pub mod ascii;
@@ -47,7 +50,9 @@ pub mod hud;
 pub mod intro;
 pub mod render;
 mod scene;
+pub mod space;
 pub mod stick;
+pub mod tps;
 
 pub use controls::{ControlsPage, PAUSE_KEY};
 pub use headless::Headless;
@@ -122,6 +127,30 @@ pub enum Screen {
     Fight,
 }
 
+/// How the fight is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum View {
+    /// The side view: the chalk stick figures on the alley wall ([`arena`]).
+    #[default]
+    Side,
+    /// The third-person 3D view: wooden mannequins seen over the local fighter's shoulder
+    /// ([`tps`]).
+    ThirdPerson,
+}
+
+impl View {
+    /// The other view.
+    pub fn next(self) -> View {
+        match self {
+            View::Side => View::ThirdPerson,
+            View::ThirdPerson => View::Side,
+        }
+    }
+}
+
+/// The key switching the [`View`] on the fight screen.
+pub const VIEW_KEY: Key = Key::Tab;
+
 /// Seconds left on the round timer from fighting ticks (rounded up).
 pub fn seconds(ticks: u32) -> u32 {
     ticks.div_ceil(TICKS_PER_SECOND)
@@ -186,6 +215,9 @@ pub struct Game {
     sound: SoundState,
     bindings: KeyBindings,
     controls: ControlsPage,
+    view: View,
+    /// The camera of the third-person view, gliding towards [`tps::aim`] on every fight tick.
+    camera: Camera,
 }
 
 impl Game {
@@ -204,6 +236,8 @@ impl Game {
             sound: SoundState::Waiting,
             bindings: KeyBindings::STANDARD,
             controls: ControlsPage::new(),
+            view: View::Side,
+            camera: tps::overview(),
         };
         game.music.set_mood(Mood::Intro);
         game
@@ -303,6 +337,21 @@ impl Game {
         &self.bars
     }
 
+    /// How the fight screen shows the fight.
+    pub fn view(&self) -> View {
+        self.view
+    }
+
+    /// Shows the fight as `view` (what [`VIEW_KEY`] does).
+    pub fn set_view(&mut self, view: View) {
+        self.view = view;
+    }
+
+    /// The camera of the third-person view.
+    pub fn camera(&self) -> &Camera {
+        &self.camera
+    }
+
     /// One fixed tick with the keys held now. Returns the frames to send to the server, in
     /// order.
     ///
@@ -310,7 +359,8 @@ impl Game {
     /// fight screen, and a fresh `C` to the controls page (see [`ControlsPage::tick`]), which
     /// comes back to the intro.
     ///
-    /// On the fight screen, a fresh `P` ([`PAUSE_KEY`]) pauses: the controls page opens as the
+    /// On the fight screen, a fresh `Tab` ([`VIEW_KEY`]) switches the [`View`] (the fight goes
+    /// on). A fresh `P` ([`PAUSE_KEY`]) pauses: the controls page opens as the
     /// pause menu and comes back to the fight. While paused, a local match is not ticked (it
     /// freezes), and an online one is ticked with no input (it cannot wait). Otherwise, while
     /// [the bot is offered](Game::is_offering_bot), a fresh Y accepts and a fresh N declines;
@@ -344,6 +394,9 @@ impl Game {
                 }
             }
             Screen::Fight => {
+                if fresh.contains(&VIEW_KEY) {
+                    self.view = self.view.next();
+                }
                 if fresh.contains(&PAUSE_KEY) {
                     self.controls = ControlsPage::paused();
                     self.screen = Screen::Controls;
@@ -351,6 +404,10 @@ impl Game {
                 } else {
                     self.fight_ticks = self.fight_ticks.saturating_add(1);
                     self.fight(pressed, &fresh, &mut outgoing);
+                    if self.view == View::ThirdPerson {
+                        let aim = tps::aim(self.active_client());
+                        self.camera.approach(&aim, tps::CAMERA_LAG);
+                    }
                 }
             }
         }
@@ -546,9 +603,19 @@ impl Game {
                 frame
             }
             Screen::Fight => {
-                let mut frame = Frame::new(arena::BACKGROUND);
                 let client = self.active_client();
-                arena::draw(&mut frame, client, self.fight_ticks);
+                let mut frame = match self.view {
+                    View::Side => {
+                        let mut frame = Frame::new(arena::BACKGROUND);
+                        arena::draw(&mut frame, client, self.fight_ticks);
+                        frame
+                    }
+                    View::ThirdPerson => {
+                        let mut frame = Frame::new(tps::BACKGROUND);
+                        tps::draw(&mut frame, client, &self.camera, self.fight_ticks);
+                        frame
+                    }
+                };
                 hud::draw(
                     &mut frame,
                     client,

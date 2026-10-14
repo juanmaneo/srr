@@ -1,7 +1,8 @@
 //! Plays scripted games headlessly and saves screenshots: no window, no GPU, no sound. This is
 //! the game's "server-side rendering" (see `srr::front::render`). The games: practice against
 //! the training dummy, a round against the computer, and an online 1v1v1 whose other two
-//! players are simulated by handing the client their inputs, as the relay server would.
+//! players are simulated by handing the client their inputs, as the relay server would. The
+//! strikes and the free-for-all are shot in both views (`Tab`: the third-person 3D view).
 //!
 //! ```sh
 //! cargo xtask screenshots                       # or:
@@ -101,6 +102,11 @@ fn main() -> ExitCode {
         game.idle(20);
     }
     shoot(&game, "08-fight-strikes");
+    // Tab: the same moment over the shoulder; the camera takes a few ticks to glide in.
+    game.tap(&[Key::Tab]);
+    game.idle(40);
+    shoot(&game, "08-fight-strikes-3d");
+    game.tap(&[Key::Tab]);
     // The strikes pushed the dummy back: step in (collisions stop at body contact), then throw.
     game.hold(&[Key::ArrowRight], 20);
     game.hold(&[Key::Numpad8, Key::Numpad9], 1);
@@ -128,6 +134,11 @@ fn main() -> ExitCode {
         brawl_tick(&mut brawl, &[Key::ArrowRight], [Input::NONE, p3]);
     }
     shoot(&brawl, "12-free-for-all");
+    brawl.tap(&[Key::Tab]);
+    for _ in 0..40 {
+        brawl_tick(&mut brawl, &[], [Input::NONE, Input::NONE]);
+    }
+    shoot(&brawl, "12-free-for-all-3d");
 
     for (name, image) in &shots {
         let path = out.join(format!("{name}.png"));
