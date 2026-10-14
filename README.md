@@ -40,8 +40,9 @@ connection only slows its own fighter, never the party (see
 [How the online match works](#how-the-online-match-works)). The rules engine already
 supports alliances (2v1…), which later iterations will open up.
 
-Alone? The game **offers** a match against the computer (the bot) and waits for your answer
-(`Y` / `N`); see [Playing alone](#playing-alone-the-training-dummy-or-the-computer).
+Alone? **Practise** against the training dummy or the computer (the bot): `T` on the title
+screen or while waiting in the room, and `T` or the pause menu to switch between the two; see
+[Playing alone](#playing-alone-the-training-dummy-or-the-computer).
 
 ### Controls
 
@@ -69,8 +70,8 @@ numeric keypad; the **WASD** preset is for keyboards without one.
 | Switch the view (side / third-person 3D) | `Tab`          | same |
 | Skip the title screen   | `Enter` or `Esc` | same |
 | Ready for the next match (lobby, or after a round) | `Enter` | same |
-| Answer "Fight the bot?" (alone) | `Y` yes / `N` no | same |
-| Leave an online match against the computer | `Esc` | same |
+| Practice: go practising (title screen), start a practice fight while waiting online, switch the rival (dummy / computer) | `T` | same |
+| Leave a practice fight played while online | `Esc` | same |
 
 * **Low, Medium, High** are damage tiers. A stronger attack hits harder and pushes further,
   but takes longer to come out and to recover from, so it is easier to punish. Kicks reach
@@ -124,17 +125,19 @@ can be changed whenever you want, not only before playing.
 * on the **Preset** row, `←` / `→` (or `Enter`) switch between **Standard (arrows + keypad)**
   and **WASD (letters + space)**;
 * on an action row, `Enter` then the new key remaps it (`Esc` cancels). A key already used by
-  another action swaps with it, so a key never does two things. `Enter`, `Esc`, `P` and `Tab`
-  cannot be bound (they drive the menus, the readiness for the next match, the pause and the
-  view; `Y` / `N`
-  only answer the bot offer while it is shown, so they stay bindable). The preset row then
-  reads **Custom**;
+  another action swaps with it, so a key never does two things. `Enter`, `Esc`, `P`, `Tab` and
+  `T` cannot be bound (they drive the menus, the readiness for the next match, the pause, the
+  view and practice). The preset row then reads **Custom**;
+* on the **Practice** row, `←` / `→` (or `Enter`) choose who to practise against: **the
+  computer** or **the training dummy** (and, online, **off**: no practice fight, the room only);
+  the change is carried out at once, even in the middle of a round. See
+  [Playing alone](#playing-alone-the-training-dummy-or-the-computer);
 * `Esc` (or `Enter` on "Back to the title") goes back to the title; from the pause menu, `Esc`,
   `P` or `Enter` on "Resume the fight" goes back to the fight.
 
-Pausing freezes a match against the dummy or the computer. An online match cannot wait for
-one player: it goes on while the pause menu is open, with your fighter standing still (the
-others see it idle), so pause between rounds when you can.
+Pausing freezes a practice fight. An online match cannot wait for one player: it goes on while
+the pause menu is open, with your fighter standing still (the others see it idle), so pause
+between rounds when you can.
 
 The layout is local to your machine: each player picks their own, and the in-fight controls
 reminder and the `COUNTER` prompts name your keys. Keys are **physical positions**, so the
@@ -278,21 +281,31 @@ counted on the scoreboard as long as the same players keep fighting.
 
 ### Playing alone: the training dummy or the computer
 
-When you are alone (practice mode, or nobody else in the online room), the fight screen asks
-**"Nobody else is here. Fight the bot?  Y: yes  N: no"**, and nothing happens until you
-answer: the computer never starts a fight without your confirmation.
+A practice fight is a 1v1 against a **rival** played by the game, as player 2:
 
-* `Y`: the computer (`CPU`) plays player 2. It walks in, sidesteps back onto your line when
-  you dodge, picks strikes, grabs and both judo techniques, steps back to block or crouches
-  under high attacks, turns around with
-  `↓` + direction like you, mashes out of grapples, climbs to the submission, and sometimes
-  counters a judo throw with the same two keys. It is deterministic (seeded, no real
-  randomness), so it is fully tested.
-* `N` in practice: you keep the training dummy, which never moves.
-* `N` online: you keep waiting in the room; `Y` still starts a match against the computer
-  later. That match runs only in your browser while the room stays open: when someone joins,
-  a notice says so ("P2 is here - Esc: leave the bot"); `Esc` brings you back to the room,
-  where `Enter` gets you ready for the real match.
+* **the training dummy** (`P2`), which never moves: try moves on it;
+* **the computer** (`CPU`), the bot. It walks in, sidesteps back onto your line when you
+  dodge, picks strikes, grabs and both judo techniques, steps back to block or crouches under
+  high attacks, turns around with `↓` + direction like you, mashes out of grapples, climbs to
+  the submission, and sometimes counters a judo throw with the same two keys. It is
+  deterministic (seeded, no real randomness), so it is fully tested.
+
+Both are bots behind the same `Bot` trait (`src/game/bot.rs`), listed by `Rival`; switching
+the rival just swaps the bot, in the middle of the round if you like, and a new strategy is a
+new implementation.
+
+* **Practice mode** (`cargo run`, or `?practice` in the browser) is nothing but a practice
+  fight: `Enter` (or `T`) on the title screen starts it against the training dummy. The
+  notice under the banner says who you fight and that **`T` switches to the other rival**;
+  the **Practice** row of the pause menu (`P`) does the same.
+* **Online**, while waiting in the room (alone, or for the others to get ready), `T` starts a
+  practice fight against the computer; `T` again switches to the dummy, then back to the room.
+  `T` on the title screen goes straight to it. The fight runs only in your browser while the
+  room stays open: when someone joins, the notice says so ("P2 is here - Esc: leave the
+  practice"); `Esc` brings you back to the room, where `Enter` gets you ready for the real
+  match, and a real match that starts takes over anyway. The pause menu's Practice row offers
+  the same choices (the computer, the dummy, off). During an online match the row reads
+  "not during a match" and `T` does nothing.
 
 After a round alone, `Enter` starts the next one at once.
 
@@ -334,7 +347,8 @@ Shattered Realm: Rampage - serving dist
    once everybody presses `Enter` again. An eleventh browser is told the room is full.
 4. If a player leaves, the match goes on without them: their fighter stands still (`LEFT`).
    Once only one fighter of the match is still connected, they go back to the room
-   ("P3 left") and press `Enter` for a new match. Whoever is left alone is offered the bot.
+   ("P3 left") and press `Enter` for a new match. Whoever is left alone can practise
+   meanwhile (`T`).
 
 To try it on a single computer, open several browser windows (or a private window, or
 another browser) on `http://localhost:8080`; each window is a player.
@@ -351,8 +365,8 @@ Notes:
   repeats its last move (`LAG`) while the others play on; back in the foreground, the tab
   jumps straight to the current state of the match.
 * Practice alone, without the server's room, by opening `http://<host-ip>:8080/?practice`:
-  you fight the training dummy, or the computer if you answer `Y`. `cargo run` (native
-  window) also plays alone.
+  you fight the training dummy, or the computer (`T` switches). `cargo run` (native window)
+  also plays alone.
 
 #### How the online match works
 
@@ -424,12 +438,13 @@ It serves the files of `DIR` on `GET` and the room (up to 10 players) on the Web
 * `src/game/` – the engine-agnostic rules: roster and alliances, fixed-step deterministic match
   simulation, the six attacks and their frame data, blocking, crouching, push boxes, manual
   turning, the key bindings and their presets, grappling, the judo techniques and their counters, intentional glitches,
-  and the computer opponent (`bot.rs`, seeded).
+  and the computer opponents (`bot.rs`: the `Bot` trait, the training dummy and the seeded
+  brawler, listed by `Rival`).
   No engine, clock, thread or randomness, so it runs the same in the browser and on every
   machine of an online match.
 * `src/net/` – the pure networking logic: the binary protocol, sets of players, the
   rollback session (`rollback.rs`) and the client state machine (lobby, readiness, timing and
-  input delay, playing alone against the dummy or the bot); no sockets, so it is fully
+  input delay, playing alone against a rival bot); no sockets, so it is fully
   unit-tested.
 * `src/front/` – the screens as a pure state machine (`Game`): the graffiti ASCII intro, the
   controls page (`controls.rs`), the arena with the XKCD stick figures (`stick.rs`), the
@@ -454,7 +469,7 @@ It serves the files of `DIR` on `GET` and the room (up to 10 players) on the Web
 ### Native (development)
 
 ```sh
-cargo run                                   # alone: the training dummy, or the bot (Y)
+cargo run                                   # alone: the training dummy, or the bot (T)
 cargo run --features bevy/dynamic_linking   # faster incremental builds (native only)
 ```
 
@@ -538,8 +553,7 @@ use srr::front::Headless;
 use srr::game::Key;
 
 let mut game = Headless::practice();
-game.skip_intro();
-game.tap(&[Key::N]);                        // keep the training dummy
+game.skip_intro();                          // the training dummy is waiting (T: the computer)
 game.hold(&[Key::ArrowRight], 60);
 game.press(&[Key::Numpad8, Key::Numpad9]); // Ippon-seoi-nage
 let png = game.screenshot().to_png();       // what a 1280x720 window would show
@@ -547,7 +561,7 @@ println!("{}", game.text_snapshot(160, 45)); // the same screen as text
 ```
 
 `cargo xtask screenshots` runs `examples/screenshots.rs`. It plays the intro, opens the
-controls page, shows the bot offer, plays a short fight against the dummy (crouch, strikes,
+controls page, shows the pause menu, plays a short fight against the dummy (crouch, strikes,
 ippon-seoi-nage, juji-gatame), a round against the computer, an online 1v1v1 and a brawl of
 ten (the other players simulated, one of the ten lagging), headlessly, and writes PNGs to `target/screenshots/`. It is built with `--no-default-features`,
 so no engine, window or GPU is needed: it works in CI or over SSH.

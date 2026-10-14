@@ -99,9 +99,10 @@ fn main() -> ExitCode {
     game.tap(&[Key::Escape]);
 
     game.tap(&[Key::Enter]);
-    shoot(&game, "05-fight-bot-offer");
-    // N: keep the training dummy for the scripted moves.
-    game.tap(&[Key::N]);
+    // P: the pause menu, with the practice row; P again resumes against the training dummy.
+    game.tap(&[Key::P]);
+    shoot(&game, "05-pause-menu");
+    game.tap(&[Key::P]);
     game.idle(60);
     shoot(&game, "06-fight-countdown");
     game.idle(60);
@@ -126,10 +127,10 @@ fn main() -> ExitCode {
     game.idle(40);
     shoot(&game, "10-fight-juji-gatame");
 
-    // Y: the computer steps in and comes for the (idle) player.
+    // T: the computer takes over the dummy and comes for the (idle) player.
     let mut cpu = Headless::practice().with_size(width, height);
     cpu.skip_intro();
-    cpu.tap(&[Key::Y]);
+    cpu.tap(&[Key::T]);
     cpu.idle(MatchConfig::default().countdown_ticks + 75);
     shoot(&cpu, "11-versus-cpu");
 

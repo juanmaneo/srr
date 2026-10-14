@@ -1,12 +1,18 @@
-//! A computer opponent: reads the match like a player looks at the screen and answers with the
-//! [`Input`] of its fighter.
+//! The computer opponents: a [`Bot`] reads the match like a player looks at the screen and
+//! answers with the [`Input`] of its fighter.
 //!
-//! The bot is deterministic, like the rest of the rules: its "randomness" is a xorshift
+//! Two bots exist, listed by [`Rival`] (the menus cycle through it, and it spawns them):
+//!
+//! * the [`Dummy`], a training dummy that never presses anything;
+//! * the [`Brawler`], the computer that fights back, described below.
+//!
+//! A new strategy is a new type implementing [`Bot`] and a new [`Rival`] naming it. Bots are
+//! deterministic, like the rest of the rules: the brawler's "randomness" is a xorshift
 //! generator seeded by the caller, so the same seed against the same inputs plays the same
 //! match. It plays fair: it only sees what the [`Match`] shows and presses buttons under the
 //! same rules as a human (fresh presses for turns, techniques and grappling).
 //!
-//! Every tick, in this order:
+//! Every tick, in this order, the brawler:
 //!
 //! * outside the fight (countdown, finished round), knocked out, or without anybody left to
 //!   fight, it presses nothing;
@@ -31,19 +37,24 @@
 //! than half the `attack_depth` away from it, so a sidestep only shakes it off for a moment.
 //!
 //! ```
-//! use srr::game::{Bot, Match, MatchConfig, PlayerId, Roster};
+//! use srr::game::{Bot, Brawler, Match, MatchConfig, PlayerId, Rival, Roster};
 //! use std::collections::HashMap;
 //!
 //! let mut m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
-//! let mut bot = Bot::new(PlayerId(1), 42);
+//! let mut bot = Brawler::new(PlayerId(1), 42);
 //! for _ in 0..600 {
 //!     let input = bot.think(&m);
 //!     m.step(&HashMap::from([(PlayerId(1), input)]));
 //! }
 //! assert!(m.fighter(PlayerId(1)).unwrap().x() < 800, "the bot walked in");
+//!
+//! let mut dummy = Rival::Dummy.spawn(PlayerId(1), 42);
+//! assert_eq!(dummy.think(&m), srr::game::Input::NONE, "the dummy never moves");
 //! ```
 //!
 //! [`Glitch::Reversal`]: super::Glitch::Reversal
+
+use std::fmt;
 
 use super::config::{Glitch, MatchConfig};
 use super::fighter::{AttackPhase, Facing, Fighter, FighterState};
@@ -74,7 +85,128 @@ const GRAB: Input = Input {
     ..Input::NONE
 };
 
-/// What the bot does between two decisions.
+/// A computer-controlled player: see the [module documentation](self).
+///
+/// Implementations are [`Clone`] (so that the client holding one can be copied) and
+/// deterministic: everything they decide comes from the [`Match`] they are shown and from
+/// their own state.
+pub trait Bot: fmt::Debug + CloneBot {
+    /// The player the bot controls.
+    fn player(&self) -> PlayerId;
+
+    /// The input of the bot's fighter for the next step of `current`. Call it exactly once per
+    /// step: a bot may remember what it pressed.
+    fn think(&mut self, current: &Match) -> Input;
+}
+
+/// Copies a boxed [`Bot`] without knowing its type; implemented for every `Bot + Clone`.
+pub trait CloneBot {
+    /// A boxed copy of the bot.
+    fn clone_box(&self) -> Box<dyn Bot>;
+}
+
+impl<B: Bot + Clone + 'static> CloneBot for B {
+    fn clone_box(&self) -> Box<dyn Bot> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn Bot> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+/// The computer opponents a player alone can fight. Each one names a [`Bot`] and spawns it;
+/// [`Rival::ALL`] is the order the menus go round them in.
+///
+/// ```
+/// use srr::game::Rival;
+///
+/// assert_eq!(Rival::ALL, [Rival::Brawler, Rival::Dummy]);
+/// assert_eq!(Rival::Dummy.next(), Rival::Brawler, "round and round");
+/// assert_eq!(Rival::Brawler.next(), Rival::Dummy);
+/// assert_eq!(Rival::Brawler.previous(), Rival::Dummy);
+/// assert_eq!(Rival::Dummy.name(), "the training dummy");
+/// assert!(!Rival::Dummy.fights() && Rival::Brawler.fights());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Rival {
+    /// The training dummy ([`Dummy`]): it never moves.
+    Dummy,
+    /// The computer ([`Brawler`]): it fights back.
+    Brawler,
+}
+
+impl Rival {
+    /// Every rival, in menu order: the computer first (a fight is what a player waiting for
+    /// others most likely wants), the training dummy next.
+    pub const ALL: [Rival; 2] = [Rival::Brawler, Rival::Dummy];
+
+    /// The rival after this one (the first after the last).
+    pub fn next(self) -> Rival {
+        Rival::ALL[(self.index() + 1) % Rival::ALL.len()]
+    }
+
+    /// The rival before this one (the last before the first).
+    pub fn previous(self) -> Rival {
+        Rival::ALL[(self.index() + Rival::ALL.len() - 1) % Rival::ALL.len()]
+    }
+
+    fn index(self) -> usize {
+        Rival::ALL
+            .iter()
+            .position(|&rival| rival == self)
+            .expect("every rival is listed")
+    }
+
+    /// How the menus call the rival.
+    pub fn name(self) -> &'static str {
+        match self {
+            Rival::Dummy => "the training dummy",
+            Rival::Brawler => "the computer",
+        }
+    }
+
+    /// Whether the rival fights back: the HUD tags a rival that does `CPU`, and a training
+    /// dummy by its player number like anybody else.
+    pub fn fights(self) -> bool {
+        self != Rival::Dummy
+    }
+
+    /// A fresh bot controlling `player`, seeded with `seed` (meaningless to a dummy).
+    pub fn spawn(self, player: PlayerId, seed: u64) -> Box<dyn Bot> {
+        match self {
+            Rival::Dummy => Box::new(Dummy::new(player)),
+            Rival::Brawler => Box::new(Brawler::new(player, seed)),
+        }
+    }
+}
+
+/// The training dummy: a [`Bot`] that never presses anything, to try moves on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dummy {
+    player: PlayerId,
+}
+
+impl Dummy {
+    /// A dummy standing in for `player`.
+    pub fn new(player: PlayerId) -> Self {
+        Dummy { player }
+    }
+}
+
+impl Bot for Dummy {
+    fn player(&self) -> PlayerId {
+        self.player
+    }
+
+    fn think(&mut self, _current: &Match) -> Input {
+        Input::NONE
+    }
+}
+
+/// What the brawler does between two decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Plan {
     Hold,
@@ -82,9 +214,9 @@ enum Plan {
     Retreat,
 }
 
-/// A computer-controlled player; see the [module documentation](self).
+/// The computer that fights back; see the [module documentation](self).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Bot {
+pub struct Brawler {
     player: PlayerId,
     /// The xorshift state; never zero.
     state: u64,
@@ -99,14 +231,26 @@ pub struct Bot {
     mash_kick: bool,
 }
 
-impl Bot {
-    /// A bot controlling `player`; two bots with the same seed play the same way.
+impl Bot for Brawler {
+    fn player(&self) -> PlayerId {
+        self.player
+    }
+
+    fn think(&mut self, current: &Match) -> Input {
+        let input = self.decide(current);
+        self.previous = input;
+        input
+    }
+}
+
+impl Brawler {
+    /// A brawler controlling `player`; two brawlers with the same seed play the same way.
     pub fn new(player: PlayerId, seed: u64) -> Self {
         // splitmix64, so that close seeds give unrelated sequences.
         let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        Bot {
+        Brawler {
             player,
             state: (z ^ (z >> 31)) | 1,
             previous: Input::NONE,
@@ -115,19 +259,6 @@ impl Bot {
             guard: None,
             mash_kick: false,
         }
-    }
-
-    /// The player the bot controls.
-    pub fn player(&self) -> PlayerId {
-        self.player
-    }
-
-    /// The input of the bot's fighter for the next step of `current`. Call it exactly once per
-    /// step: the bot remembers what it pressed.
-    pub fn think(&mut self, current: &Match) -> Input {
-        let input = self.decide(current);
-        self.previous = input;
-        input
     }
 
     fn decide(&mut self, current: &Match) -> Input {

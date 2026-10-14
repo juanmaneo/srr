@@ -12,9 +12,9 @@
 //! let mut game = Headless::practice();
 //! game.skip_intro();
 //! assert_eq!(game.game().screen(), Screen::Fight);
-//! assert!(game.game().is_offering_bot(), "alone: fight the computer?");
-//! game.tap(&[srr::game::Key::Y]);
-//! assert!(game.text_snapshot(160, 45).contains("CPU"));
+//! assert!(game.text_snapshot(160, 45).contains("P2"), "the training dummy");
+//! game.tap(&[srr::game::Key::T]);
+//! assert!(game.text_snapshot(160, 45).contains("CPU"), "the computer took over");
 //! ```
 //!
 //! [`MusicControl`]: crate::audio::MusicControl

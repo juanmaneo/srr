@@ -1,5 +1,6 @@
-//! The computer opponent (`srr::game::Bot`): deterministic, fair, and good enough to beat an idle
-//! player, escape and counter grapples, turn around, guard and use every move.
+//! The computer opponents (`srr::game::Bot`): the training dummy, which never moves, and the
+//! brawler: deterministic, fair, and good enough to beat an idle player, escape and counter
+//! grapples, turn around, guard and use every move.
 //!
 //! Most tests put a fighter in a precise situation by driving the match with scripted inputs,
 //! then hand it to the bot. Behaviours that rely on the bot's dice are checked over many seeds or
@@ -8,8 +9,9 @@
 use std::collections::HashMap;
 
 use srr::game::{
-    Attack, AttackData, Bot, Facing, FighterState, GlitchSet, GrapplePosition, GrappleRole, Input,
-    Match, MatchConfig, Outcome, Phase, PlayerId, Roster, Strength, TeamId, Technique,
+    Attack, AttackData, Bot, Brawler, Dummy, Facing, FighterState, GlitchSet, GrapplePosition,
+    GrappleRole, Input, Match, MatchConfig, Outcome, Phase, PlayerId, Rival, Roster, Strength,
+    TeamId, Technique,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -95,8 +97,97 @@ fn thrown_bot() -> Match {
 }
 
 /// What the bot answers to the same situation `calls` times in a row.
-fn answers(bot: &mut Bot, game: &Match, calls: usize) -> Vec<Input> {
+fn answers(bot: &mut dyn Bot, game: &Match, calls: usize) -> Vec<Input> {
     (0..calls).map(|_| bot.think(game)).collect()
+}
+
+// ---------------------------------------------------------------------------------------------
+// The rivals: the dummy and the brawler, behind the same trait
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn the_training_dummy_never_presses_anything() {
+    let mut dummy = Dummy::new(CPU);
+    assert_eq!(dummy.player(), CPU);
+    assert_eq!(Dummy::new(HUMAN), Dummy::new(HUMAN));
+    let fighting = duel_at(config(), 600, 650);
+    assert!(
+        answers(&mut dummy, &fighting, 50)
+            .iter()
+            .all(|&i| i == Input::NONE)
+    );
+    let mut game = fighting.clone();
+    for _ in 0..30 {
+        let input = dummy.think(&game);
+        step(
+            &mut game,
+            Input::pressing(Attack::punch(Strength::Low)),
+            input,
+        );
+    }
+    assert!(
+        game.fighter(CPU).unwrap().health() < config().max_health,
+        "it takes the punches"
+    );
+    assert_eq!(
+        game.fighter(HUMAN).unwrap().health(),
+        config().max_health,
+        "and never hits back"
+    );
+}
+
+#[test]
+fn the_rivals_spawn_their_bots() {
+    let game = duel_at(config(), 100, 1100);
+    let mut dummy = Rival::Dummy.spawn(CPU, 9);
+    assert_eq!(dummy.player(), CPU);
+    assert_eq!(dummy.think(&game), Input::NONE);
+    let mut brawler = Rival::Brawler.spawn(CPU, 9);
+    assert_eq!(brawler.player(), CPU);
+    assert_eq!(
+        brawler.think(&game),
+        Brawler::new(CPU, 9).think(&game),
+        "the brawler, with that seed"
+    );
+    assert!(brawler.think(&game).left, "walks in");
+    assert_eq!(format!("{dummy:?}"), "Dummy { player: PlayerId(1) }");
+}
+
+#[test]
+fn the_rivals_go_round_in_menu_order_and_have_names() {
+    assert_eq!(Rival::ALL, [Rival::Brawler, Rival::Dummy]);
+    for rival in Rival::ALL {
+        assert_eq!(rival.next().previous(), rival);
+        assert_eq!(rival.previous().next(), rival);
+        assert_ne!(rival.next(), rival, "two rivals: always the other one");
+        assert!(rival.name().starts_with("the "), "{}", rival.name());
+    }
+    assert_eq!(Rival::Brawler.name(), "the computer");
+    assert_eq!(Rival::Dummy.name(), "the training dummy");
+    assert!(Rival::Brawler.fights());
+    assert!(!Rival::Dummy.fights(), "a punching bag");
+}
+
+#[test]
+fn a_boxed_bot_is_cloned_with_its_state() {
+    let game = duel_at(config(), 600, 650);
+    let mut original: Box<dyn Bot> = Rival::Brawler.spawn(CPU, 11);
+    for _ in 0..40 {
+        original.think(&game);
+    }
+    let mut copy = original.clone();
+    assert_eq!(
+        answers(copy.as_mut(), &game, 200),
+        answers(original.as_mut(), &game, 200),
+        "the copy goes on from the same dice"
+    );
+    let mut fresh = Rival::Brawler.spawn(CPU, 11);
+    assert_ne!(
+        answers(fresh.as_mut(), &game, 200),
+        answers(copy.as_mut(), &game, 200)
+    );
+    let dummy: Box<dyn Bot> = Rival::Dummy.spawn(CPU, 0);
+    assert_eq!(dummy.clone().player(), CPU);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -106,8 +197,8 @@ fn answers(bot: &mut Bot, game: &Match, calls: usize) -> Vec<Input> {
 /// Two bots fight a whole round; returns every input of both, and the final match.
 fn bot_versus_bot(seeds: (u64, u64)) -> (Vec<(Input, Input)>, Match) {
     let mut game = Match::new(Roster::duel(), config()).unwrap();
-    let mut first = Bot::new(HUMAN, seeds.0);
-    let mut second = Bot::new(CPU, seeds.1);
+    let mut first = Brawler::new(HUMAN, seeds.0);
+    let mut second = Brawler::new(CPU, seeds.1);
     let mut inputs = Vec::new();
     while game.outcome().is_none() {
         let pair = (first.think(&game), second.think(&game));
@@ -130,23 +221,23 @@ fn the_same_seed_plays_the_same_match() {
 
 #[test]
 fn a_bot_knows_its_player() {
-    assert_eq!(Bot::new(PlayerId(3), 0).player(), PlayerId(3));
-    assert_eq!(Bot::new(CPU, 7), Bot::new(CPU, 7));
-    assert_ne!(Bot::new(CPU, 7), Bot::new(CPU, 8));
+    assert_eq!(Brawler::new(PlayerId(3), 0).player(), PlayerId(3));
+    assert_eq!(Brawler::new(CPU, 7), Brawler::new(CPU, 7));
+    assert_ne!(Brawler::new(CPU, 7), Brawler::new(CPU, 8));
 }
 
 #[test]
 fn the_bot_presses_nothing_outside_the_fight() {
     let countdown = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
     assert!(matches!(countdown.phase(), Phase::Countdown { .. }));
-    let mut bot = Bot::new(CPU, 0);
+    let mut bot = Brawler::new(CPU, 0);
     assert!(
         answers(&mut bot, &countdown, 50)
             .iter()
             .all(|&i| i == Input::NONE)
     );
 
-    let mut outsider = Bot::new(PlayerId(5), 0);
+    let mut outsider = Brawler::new(PlayerId(5), 0);
     let fighting = Match::new(Roster::duel(), config()).unwrap();
     assert_eq!(outsider.think(&fighting), Input::NONE, "not in the match");
 
@@ -175,7 +266,7 @@ fn a_knocked_out_bot_presses_nothing_while_the_others_fight_on() {
         assert!(ticks < 30, "the jab must land");
     }
     assert_eq!(game.phase(), Phase::Fighting, "two are still standing");
-    let mut bot = Bot::new(CPU, 0);
+    let mut bot = Brawler::new(CPU, 0);
     assert!(
         answers(&mut bot, &game, 20)
             .iter()
@@ -192,7 +283,7 @@ fn a_busy_bot_presses_nothing() {
         Input::pressing(Attack::kick(Strength::High)),
     );
     assert!(matches!(state(&game, CPU), FighterState::Attacking(_)));
-    let mut bot = Bot::new(CPU, 0);
+    let mut bot = Brawler::new(CPU, 0);
     assert_eq!(bot.think(&game), Input::NONE);
 }
 
@@ -204,7 +295,7 @@ fn a_busy_bot_presses_nothing() {
 fn the_bot_beats_an_idle_player() {
     for seed in 0..4 {
         let mut game = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
-        let mut bot = Bot::new(CPU, seed);
+        let mut bot = Brawler::new(CPU, seed);
         while game.outcome().is_none() {
             let input = bot.think(&game);
             step(&mut game, Input::NONE, input);
@@ -224,7 +315,7 @@ fn the_bot_beats_an_idle_player() {
 #[test]
 fn the_bot_walks_in_and_jumps_now_and_then() {
     let game = duel_at(config(), 100, 1100);
-    let mut bot = Bot::new(CPU, 9);
+    let mut bot = Brawler::new(CPU, 9);
     let inputs = answers(&mut bot, &game, 1000);
     assert!(
         inputs.iter().all(|i| i.left && !i.right),
@@ -246,7 +337,7 @@ fn the_bot_drifts_towards_its_target_in_the_air() {
         },
     );
     assert_eq!(state(&game, CPU), FighterState::Airborne);
-    let mut bot = Bot::new(CPU, 0);
+    let mut bot = Brawler::new(CPU, 0);
     assert_eq!(bot.think(&game), walking(true));
 }
 
@@ -255,7 +346,7 @@ fn the_bot_turns_around_with_a_fresh_press() {
     // Both spawn facing right: the human is behind the bot.
     let mut game = duel_at(config(), 100, 300);
     assert_eq!(game.fighter(CPU).unwrap().facing(), Facing::Right);
-    let mut bot = Bot::new(CPU, 0);
+    let mut bot = Brawler::new(CPU, 0);
     let turn = Input {
         down: true,
         ..walking(true)
@@ -277,7 +368,7 @@ fn the_bot_goes_for_the_nearest_enemy() {
     let roster = Roster::free_for_all(3).unwrap();
     let game = Match::with_spawns(roster, config(), &[400, 500, 800]).unwrap();
     assert_eq!(game.fighter(CPU).unwrap().facing(), Facing::Right);
-    let mut bot = Bot::new(CPU, 0);
+    let mut bot = Brawler::new(CPU, 0);
     let input = bot.think(&game);
     assert!(
         input.down && input.left,
@@ -298,7 +389,7 @@ fn the_bot_guards_against_strikes_and_crouches_under_high_ones() {
             let mut game = duel_at(config(), 600, 660);
             step(&mut game, Input::pressing(attack), Input::NONE);
             assert!(matches!(state(&game, HUMAN), FighterState::Attacking(_)));
-            let mut bot = Bot::new(CPU, seed);
+            let mut bot = Brawler::new(CPU, seed);
             let first = bot.think(&game);
             let crouch = Input {
                 down: true,
@@ -332,7 +423,7 @@ fn a_guard_holds_until_the_strike_is_over() {
             Input::pressing(Attack::punch(Strength::Low)),
             Input::NONE,
         );
-        let mut bot = Bot::new(CPU, seed);
+        let mut bot = Brawler::new(CPU, seed);
         let mut guarded = Vec::new();
         for _ in 0..30 {
             let input = bot.think(&game);
@@ -369,7 +460,7 @@ fn the_bot_sidesteps_back_onto_the_line_of_its_target() {
     };
     // 25 across, far away: it walks in and sidesteps at once.
     let far = human_off_the_line(100, 1100, 5);
-    let inputs = answers(&mut Bot::new(CPU, 9), &far, 200);
+    let inputs = answers(&mut Brawler::new(CPU, 9), &far, 200);
     assert!(
         inputs
             .iter()
@@ -378,11 +469,11 @@ fn the_bot_sidesteps_back_onto_the_line_of_its_target() {
     );
     // 45 across, in reach: nothing would connect, it only sidesteps.
     let close = human_off_the_line(600, 650, 9);
-    let inputs = answers(&mut Bot::new(CPU, 9), &close, 50);
+    let inputs = answers(&mut Brawler::new(CPU, 9), &close, 50);
     assert!(inputs.iter().all(|&i| i == towards_the_wall(Input::NONE)));
     // 20 across, half the attack depth: close enough, no sidestep.
     let near = human_off_the_line(100, 1100, 4);
-    let inputs = answers(&mut Bot::new(CPU, 9), &near, 200);
+    let inputs = answers(&mut Brawler::new(CPU, 9), &near, 200);
     assert!(inputs.iter().all(|i| !i.sidestep_in && !i.sidestep_out));
 }
 
@@ -396,7 +487,7 @@ fn the_bot_does_not_guard_against_a_strike_off_its_line() {
             Input::NONE,
         );
         assert!(matches!(state(&game, HUMAN), FighterState::Attacking(_)));
-        let input = Bot::new(CPU, seed).think(&game);
+        let input = Brawler::new(CPU, seed).think(&game);
         assert_eq!(
             input,
             Input {
@@ -421,14 +512,14 @@ fn the_bot_goes_for_the_nearest_enemy_across_the_arena_too() {
         game.step(&HashMap::from([(HUMAN, sidestep)]));
     }
     assert_eq!(game.fighter(HUMAN).unwrap().z(), 150);
-    let input = Bot::new(CPU, 0).think(&game);
+    let input = Brawler::new(CPU, 0).think(&game);
     assert!(!input.down, "no turn towards player 0: {input:?}");
 }
 
 #[test]
 fn up_close_the_bot_uses_every_move() {
     let game = duel_at(config(), 600, 650);
-    let mut bot = Bot::new(CPU, 11);
+    let mut bot = Brawler::new(CPU, 11);
     let inputs = answers(&mut bot, &game, 3000);
     let count = |wanted: Input| inputs.iter().filter(|&&i| i == wanted).count();
     let strikes = inputs
@@ -457,7 +548,7 @@ fn up_close_the_bot_uses_every_move() {
 fn at_kick_range_the_bot_kicks_steps_in_or_backs_off() {
     let config = config();
     let game = duel_at(config.clone(), 600, 700);
-    let mut bot = Bot::new(CPU, 12);
+    let mut bot = Brawler::new(CPU, 12);
     let inputs = answers(&mut bot, &game, 3000);
     let mut kinds = [0; 3];
     for input in &inputs {
@@ -491,7 +582,7 @@ fn without_any_strike_in_reach_the_bot_grabs() {
         ..config()
     };
     let game = duel_at(config, 600, 650);
-    let mut bot = Bot::new(CPU, 13);
+    let mut bot = Brawler::new(CPU, 13);
     let inputs = answers(&mut bot, &game, 2000);
     assert!(
         inputs
@@ -513,7 +604,7 @@ fn underneath_the_bot_mashes_its_way_out() {
     };
     for seed in 0..5 {
         let mut game = grabbed_bot(config.clone());
-        let mut bot = Bot::new(CPU, seed);
+        let mut bot = Brawler::new(CPU, seed);
         let mut presses = Vec::new();
         let mut ticks = 0;
         while game.fighter(CPU).unwrap().grapple().is_some() {
@@ -543,7 +634,7 @@ fn a_fresh_clinch_tempts_the_bot_into_the_reversal_glitch() {
     let mut reversals = 0;
     for seed in 0..30 {
         let mut game = grabbed_bot(config());
-        let mut bot = Bot::new(CPU, seed);
+        let mut bot = Brawler::new(CPU, seed);
         let input = bot.think(&game);
         step(&mut game, Input::NONE, input);
         if state(&game, CPU) == FighterState::Grappling(GrappleRole::Top, GrapplePosition::Clinch) {
@@ -561,7 +652,7 @@ fn on_top_the_bot_strikes_then_advances_to_the_submission() {
     let mut struck = false;
     for seed in 0..5 {
         let mut game = bot_on_top(config.clone());
-        let mut bot = Bot::new(CPU, seed);
+        let mut bot = Brawler::new(CPU, seed);
         let health = game.fighter(HUMAN).unwrap().health();
         for _ in 0..advance - 1 {
             let input = bot.think(&game);
@@ -596,7 +687,7 @@ fn thrown_the_bot_sometimes_counters_with_the_same_technique() {
     let mut countered = 0;
     for seed in 0..30 {
         let mut game = thrown_bot();
-        let mut bot = Bot::new(CPU, seed);
+        let mut bot = Brawler::new(CPU, seed);
         let window = config().technique(Technique::Throw).counter_window;
         for _ in 0..window + 10 {
             let input = bot.think(&game);

@@ -343,8 +343,8 @@ pub enum Key {
     /// `Enter` (either the main one or the keypad's): confirms, skips the intro, ready for the
     /// next match.
     Enter,
-    /// `Escape`: skips the intro, leaves the controls page, leaves an online match against the
-    /// computer.
+    /// `Escape`: skips the intro, leaves the controls page, leaves a practice fight played
+    /// while online.
     Escape,
     /// `Tab`: switches the fight between the side view and the third-person 3D view.
     Tab,
@@ -370,6 +370,8 @@ pub enum Key {
     Q,
     R,
     S,
+    /// `T`: goes practising from the title screen; starts a practice fight between online
+    /// matches; switches the rival of a practice fight.
     T,
     U,
     V,
@@ -440,10 +442,10 @@ impl Key {
     }
 
     /// Whether the key can be bound to an action: every key but Enter and Escape, which drive
-    /// the menus (and the readiness for the next match), `P`, which pauses the fight, and
-    /// `Tab`, which switches its view.
+    /// the menus (and the readiness for the next match), `P`, which pauses the fight, `Tab`,
+    /// which switches its view, and `T`, which drives practice.
     pub fn is_bindable(self) -> bool {
-        !matches!(self, Key::Enter | Key::Escape | Key::P | Key::Tab)
+        !matches!(self, Key::Enter | Key::Escape | Key::P | Key::Tab | Key::T)
     }
 }
 

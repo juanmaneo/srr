@@ -7,12 +7,12 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use srr::game::{
-    Attack, ConfigError, Input, Match, MatchConfig, Outcome, Phase, PlayerId, PlayerSlot, Roster,
-    RosterError, SetupError, Strength, TeamId,
+    Attack, ConfigError, Input, Match, MatchConfig, Outcome, Phase, PlayerId, PlayerSlot, Rival,
+    Roster, RosterError, SetupError, Strength, TeamId,
 };
 use srr::net::{
     Client, ClientError, ClientMessage, DecodeError, FrameInputs, INPUT_DELAY, LAG_MEMORY,
-    MAX_PLAYERS, MAX_ROLLBACK, PlayerSet, Rival, ServerMessage, Session, SessionError, Status,
+    MAX_PLAYERS, MAX_ROLLBACK, PlayerSet, ServerMessage, Session, SessionError, Status,
     TARGET_LEAD,
 };
 
@@ -1697,9 +1697,9 @@ fn enter_starts_the_next_local_round_once_the_round_is_over() {
 fn a_client_versus_the_bot_lets_the_computer_play_player_two() {
     let config = no_countdown();
     let start = Match::new(Roster::duel(), config.clone()).unwrap();
-    let mut client = Client::versus_bot(config.clone());
+    let mut client = Client::versus(config.clone(), Rival::Brawler);
     assert!(client.is_local());
-    assert_eq!(client.rival(), Some(Rival::Bot));
+    assert_eq!(client.rival(), Some(Rival::Brawler));
     assert_eq!(client.bot_player(), Some(p(1)));
     assert_eq!(client.player(), Some(p(0)));
     // 30 ticks: walking in, not yet in reach.
@@ -1713,23 +1713,87 @@ fn a_client_versus_the_bot_lets_the_computer_play_player_two() {
         "the bot walked in from the right"
     );
 
-    // Deterministic: the same inputs play the same match.
-    let mut twin = Client::versus_bot(config);
+    // Deterministic: the same inputs play the same match, however the computer came in.
+    let mut twin = Client::practice(config);
+    twin.set_rival(Rival::Brawler);
     for _ in 0..30 {
         twin.tick(idle());
     }
     assert_eq!(twin.session().unwrap().current(), current);
+    let copy = twin.clone();
+    assert_eq!(copy.session().unwrap().current(), current);
+}
+
+#[test]
+fn the_rival_can_change_in_the_middle_of_a_round() {
+    let config = no_countdown();
+    let mut client = Client::practice(config.clone());
+    for _ in 0..30 {
+        client.tick(idle());
+    }
+    let before = client.session().unwrap().current().clone();
+    assert_eq!(client.rival(), Some(Rival::Dummy));
+    assert_eq!(client.bot_player(), None);
+
+    client.set_rival(Rival::Brawler);
+    assert_eq!(client.rival(), Some(Rival::Brawler));
+    assert_eq!(client.bot_player(), Some(p(1)));
+    assert_eq!(
+        client.session().unwrap().current(),
+        &before,
+        "the round goes on from where it was"
+    );
+    assert_eq!(client.session().unwrap().tick(), 30);
+    for _ in 0..30 {
+        client.tick(idle());
+    }
+    let current = client.session().unwrap().current();
+    assert!(x_of(current, 1) < x_of(&before, 1), "the computer walks in");
+
+    client.set_rival(Rival::Dummy);
+    assert_eq!(client.bot_player(), None);
+    let x = x_of(client.session().unwrap().current(), 1);
+    for _ in 0..30 {
+        client.tick(idle());
+    }
+    assert_eq!(
+        x_of(client.session().unwrap().current(), 1),
+        x,
+        "the dummy stops"
+    );
+
+    let mut online = Client::online(config, INPUT_DELAY);
+    online.set_rival(Rival::Brawler);
+    assert_eq!(online.rival(), None, "nothing to switch online");
+}
+
+#[test]
+fn setting_the_same_rival_again_keeps_the_bot_as_it_is() {
+    let config = no_countdown();
+    let mut client = Client::versus(config.clone(), Rival::Brawler);
+    let mut twin = client.clone();
+    for _ in 0..200 {
+        client.tick(idle());
+        twin.tick(idle());
+        // A fresh bot every tick would restart its dice, and play differently.
+        twin.set_rival(Rival::Brawler);
+    }
+    assert_eq!(
+        twin.session().unwrap().current(),
+        client.session().unwrap().current()
+    );
 }
 
 #[test]
 fn the_bot_comes_back_for_the_next_round() {
-    let mut client = Client::versus_bot(quick_draw_config());
+    let mut client = Client::versus(quick_draw_config(), Rival::Brawler);
     while client.session().unwrap().current().outcome().is_none() {
         client.tick(idle());
     }
     client.ready();
     assert_eq!(client.session().unwrap().id(), 1);
-    assert_eq!(client.rival(), Some(Rival::Bot));
+    assert_eq!(client.rival(), Some(Rival::Brawler));
+    assert_eq!(client.bot_player(), Some(p(1)));
     assert_eq!(client.session().unwrap().current().outcome(), None);
 }
 

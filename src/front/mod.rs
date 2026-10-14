@@ -10,9 +10,10 @@
 //! Screens:
 //!
 //! 1. [`Screen::Intro`]: the graffiti title ([`intro`]), until Enter or Escape is pressed;
-//!    `C` opens the controls page;
-//! 2. [`Screen::Controls`]: choose a keyboard preset or remap any action ([`controls`]); it is
-//!    also the pause menu of the fight screen (`P`), going back to the fight;
+//!    `C` opens the controls page, `T` ([`PRACTICE_KEY`]) goes practising;
+//! 2. [`Screen::Controls`]: choose a keyboard preset, remap any action or choose who to
+//!    practise against ([`controls`]); it is also the pause menu of the fight screen (`P`),
+//!    going back to the fight;
 //! 3. [`Screen::Fight`]: the arena ([`arena`]) under the versus HUD ([`hud`]): health bars with
 //!    the red "recoverable damage" trail, round wins, timer, grapple meter and banners. `Tab`
 //!    ([`VIEW_KEY`]) switches the arena between the side view and the third-person 3D view
@@ -20,14 +21,15 @@
 //!
 //! On the fight screen, Enter means "ready": online, the server starts the next match (from a
 //! 1v1 to a brawl of ten) once every seated player is ready; alone, it starts the next round.
-//! `P` pauses: a local match (the dummy or the bot) freezes until the pause menu is left; an
-//! online match cannot wait for one player, so it goes on with the paused player standing
-//! still.
+//! `P` pauses: a practice fight freezes until the pause menu is left; an online match cannot
+//! wait for one player, so it goes on with the paused player standing still.
 //!
-//! A player who is alone (practice mode, or nobody else in the online room) is *offered* a
-//! match against the computer and has to confirm it: Y fights the [bot](crate::game::Bot), N
-//! keeps the training dummy (or keeps waiting online, where Y still accepts later). Online, the
-//! bot match is played locally while the room stays open, and Escape leaves it.
+//! Practice is a fight against a [`Rival`]: the training dummy or the computer (the
+//! [bot](crate::game::Bot)). A practice game (natively, or with `?practice`) is nothing else;
+//! online, a practice fight is played locally while the room stays open, `T` starts it between
+//! matches and Escape leaves it, and a real match that starts takes over. `T` during a
+//! practice fight switches the rival, and so does the practice row of the pause menu
+//! ([`Practice`]).
 //!
 //! [`Headless`] plays the [`Game`] without any engine: scripted keys in, frames rendered in
 //! memory by the software renderer of [`render`] (pixels, PNG files, text snapshots). That is
@@ -37,9 +39,9 @@ use std::collections::HashSet;
 
 use crate::audio::{Mood, MusicControl};
 use crate::game::{
-    GrapplePosition, Input, Key, KeyBindings, Match, Phase, PlayerId, TICKS_PER_SECOND,
+    GrapplePosition, Input, Key, KeyBindings, Match, Phase, PlayerId, Rival, TICKS_PER_SECOND,
 };
-use crate::net::{Client, MAX_PLAYERS, Rival, Status};
+use crate::net::{Client, MAX_PLAYERS, Status};
 use space::Camera;
 
 pub mod arena;
@@ -54,7 +56,7 @@ pub mod space;
 pub mod stick;
 pub mod tps;
 
-pub use controls::{ControlsPage, PAUSE_KEY};
+pub use controls::{ControlsPage, PAUSE_KEY, Practice};
 pub use headless::Headless;
 pub use hud::HealthBar;
 pub use intro::Intro;
@@ -99,22 +101,15 @@ const SOUND_NOTE_SIZE: f32 = 16.0;
 const SOUND_WAITING: Rgba = Rgba::hex(0xffe14a);
 const SOUND_OTHER: Rgba = Rgba::hex(0x8a8098);
 
-/// The hint to the controls page, in the top-left corner of the intro.
-pub const CONTROLS_HINT: &str = "C: controls / keyboard layout";
+/// The hints to the controls page and to practice, in the top-left corner of the intro.
+pub const CONTROLS_HINT: &str = "C: controls / keyboard layout   T: practice";
 const CONTROLS_HINT_X: f32 = 24.0;
 const CONTROLS_HINT_COLOR: Rgba = Rgba::hex(0xd8d0e8);
 
-/// The question asked on the fight screen to a player who is alone.
-pub const BOT_PROMPT: &str = "Nobody else is here. Fight the bot?  Y: yes  N: no";
-
-/// Whether the player who is alone has answered the offer of a match against the computer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Offer {
-    /// Not answered: the question is asked while the player is alone.
-    Open,
-    /// Answered no; online, Y still accepts while the player is alone.
-    Declined,
-}
+/// The key going practising: on the intro it opens the fight screen and, online, starts a
+/// practice fight; on the fight screen it starts one between online matches, and switches the
+/// rival of a practice fight ([`Practice::next`]). It cannot be bound to an action.
+pub const PRACTICE_KEY: Key = Key::T;
 
 /// What the game is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -201,9 +196,8 @@ pub fn intensity(current: &Match) -> f32 {
 #[derive(Debug, Clone)]
 pub struct Game {
     client: Client,
-    /// A match against the computer, accepted while alone in the online room.
-    bot: Option<Client>,
-    offer: Offer,
+    /// A practice fight played locally while the online room stays open.
+    practice: Option<Client>,
     screen: Screen,
     intro: Intro,
     music: MusicControl,
@@ -225,8 +219,7 @@ impl Game {
     pub fn new(client: Client) -> Self {
         let game = Game {
             client,
-            bot: None,
-            offer: Offer::Open,
+            practice: None,
             screen: Screen::Intro,
             intro: Intro::new(),
             music: MusicControl::new(),
@@ -253,38 +246,48 @@ impl Game {
         &mut self.client
     }
 
-    /// The client played on the fight screen: the match against the computer accepted while
-    /// alone online, otherwise the primary client.
+    /// The client played on the fight screen: the practice fight started while online,
+    /// otherwise the primary client.
     pub fn active_client(&self) -> &Client {
-        self.bot.as_ref().unwrap_or(&self.client)
+        self.practice.as_ref().unwrap_or(&self.client)
     }
 
     fn active_mut(&mut self) -> &mut Client {
-        self.bot.as_mut().unwrap_or(&mut self.client)
+        self.practice.as_mut().unwrap_or(&mut self.client)
     }
 
-    /// Whether the player is alone: practising against the dummy, or online with nobody else
-    /// in the room.
-    pub fn is_alone(&self) -> bool {
-        match self.client.rival() {
-            Some(Rival::Dummy) => true,
-            Some(Rival::Bot) => false,
-            None => self.client.status() == Status::Lobby && self.client.seated().len() <= 1,
+    /// Whether an online player is practising while the room stays open.
+    pub fn is_practising_online(&self) -> bool {
+        self.practice.is_some()
+    }
+
+    /// Where practice stands: the rival of a practice game or of a practice fight played
+    /// while online, whether one could start, or nothing of the sort for now.
+    pub fn practice(&self) -> Practice {
+        match (self.client.rival(), self.practice.as_ref()) {
+            (Some(rival), _) => Practice::Alone(rival),
+            (None, Some(client)) => {
+                Practice::WhileWaiting(client.rival().expect("a practice client has a rival"))
+            }
+            (None, None) if self.client.status() == Status::Lobby => Practice::Off,
+            (None, None) => Practice::Unavailable,
         }
     }
 
-    /// Whether the fight screen asks the player who is alone to fight the computer
-    /// ([`BOT_PROMPT`]); the game waits for the answer.
-    pub fn is_offering_bot(&self) -> bool {
-        self.screen == Screen::Fight
-            && self.bot.is_none()
-            && self.offer == Offer::Open
-            && self.is_alone()
-    }
-
-    /// Whether an online player is playing the computer while the room stays open.
-    pub fn is_playing_bot_online(&self) -> bool {
-        self.bot.is_some()
+    /// Carries out a practice choice (what the practice row and [`PRACTICE_KEY`] do): switches
+    /// the rival of a practice fight (the new bot takes over at once, see
+    /// [`Client::set_rival`]), starts a practice fight while online, or ends it.
+    pub fn set_practice(&mut self, practice: Practice) {
+        match practice {
+            Practice::Alone(rival) => self.client.set_rival(rival),
+            Practice::WhileWaiting(rival) => match &mut self.practice {
+                Some(client) => client.set_rival(rival),
+                None => {
+                    self.practice = Some(Client::versus(self.client.config().clone(), rival));
+                }
+            },
+            Practice::Off | Practice::Unavailable => self.practice = None,
+        }
     }
 
     /// The handle steering the music; give a clone to the audio output.
@@ -356,18 +359,19 @@ impl Game {
     /// order.
     ///
     /// On the intro, a fresh press of Enter or Escape (once [`Intro::can_skip`]) goes to the
-    /// fight screen, and a fresh `C` to the controls page (see [`ControlsPage::tick`]), which
-    /// comes back to the intro.
+    /// fight screen, a fresh `T` ([`PRACTICE_KEY`]) too but practising (online: a practice
+    /// fight starts if one can), and a fresh `C` goes to the controls page (see
+    /// [`ControlsPage::tick`]), which comes back to the intro.
     ///
     /// On the fight screen, a fresh `Tab` ([`VIEW_KEY`]) switches the [`View`] (the fight goes
     /// on). A fresh `P` ([`PAUSE_KEY`]) pauses: the controls page opens as the
     /// pause menu and comes back to the fight. While paused, a local match is not ticked (it
-    /// freezes), and an online one is ticked with no input (it cannot wait). Otherwise, while
-    /// [the bot is offered](Game::is_offering_bot), a fresh Y accepts and a fresh N declines;
-    /// nothing else happens until then. Otherwise a fresh Y accepts a declined offer while
-    /// alone online, a fresh Escape leaves an online match against the computer, a fresh Enter
-    /// tells [`Client::ready`], and the keys become this tick's [`Input`] through the
-    /// [bindings](Game::bindings) for [`Client::tick`].
+    /// freezes), and an online one is ticked with no input (it cannot wait); the practice
+    /// choice made on the menu is carried out at once ([`Game::set_practice`]). Otherwise a
+    /// fresh `T` goes to the next practice choice ([`Practice::next`]: starts a practice fight
+    /// between online matches, or switches its rival), a fresh Escape leaves an online practice
+    /// fight, a fresh Enter tells [`Client::ready`], and the keys become this tick's [`Input`]
+    /// through the [bindings](Game::bindings) for [`Client::tick`].
     pub fn tick(&mut self, pressed: &HashSet<Key>) -> Vec<Vec<u8>> {
         let mut fresh: Vec<Key> = pressed.difference(&self.held).copied().collect();
         fresh.sort_unstable();
@@ -376,8 +380,13 @@ impl Game {
             Screen::Intro => {
                 self.intro.tick();
                 if fresh.contains(&Key::C) {
-                    self.controls = ControlsPage::new();
+                    self.controls = ControlsPage::new().with_practice(self.practice());
                     self.screen = Screen::Controls;
+                } else if self.intro.can_skip() && fresh.contains(&PRACTICE_KEY) {
+                    if self.practice() == Practice::Off {
+                        self.set_practice(Practice::Off.next());
+                    }
+                    self.screen = Screen::Fight;
                 } else if self.intro.can_skip()
                     && (fresh.contains(&Key::Enter) || fresh.contains(&Key::Escape))
                 {
@@ -389,6 +398,9 @@ impl Game {
                 if self.controls.tick(&fresh, &mut self.bindings) {
                     self.screen = if paused { Screen::Fight } else { Screen::Intro };
                 }
+                if self.controls.practice() != self.practice() {
+                    self.set_practice(self.controls.practice());
+                }
                 if paused {
                     self.stand_still(&mut outgoing);
                 }
@@ -398,7 +410,7 @@ impl Game {
                     self.view = self.view.next();
                 }
                 if fresh.contains(&PAUSE_KEY) {
-                    self.controls = ControlsPage::paused();
+                    self.controls = ControlsPage::paused().with_practice(self.practice());
                     self.screen = Screen::Controls;
                     self.stand_still(&mut outgoing);
                 } else {
@@ -418,27 +430,14 @@ impl Game {
     }
 
     fn fight(&mut self, pressed: &HashSet<Key>, fresh: &[Key], outgoing: &mut Vec<Vec<u8>>) {
-        if !self.is_alone() {
-            self.offer = Offer::Open;
-        }
         if self.client.status() == Status::Playing {
-            // A real match started (the player was ready before accepting the bot): it wins.
-            self.bot = None;
+            // A real match started (the player was ready before practising): it wins.
+            self.practice = None;
         }
-        let yes = fresh.contains(&Key::Y);
-        if self.is_offering_bot() {
-            if yes {
-                self.accept_bot();
-            } else if fresh.contains(&Key::N) {
-                self.offer = Offer::Declined;
-            }
-            return;
-        }
-        if yes && self.bot.is_none() && !self.client.is_local() && self.is_alone() {
-            self.accept_bot();
-        }
-        if fresh.contains(&Key::Escape) && self.bot.take().is_some() {
-            self.offer = Offer::Declined;
+        if fresh.contains(&PRACTICE_KEY) {
+            self.set_practice(self.practice().next());
+        } else if fresh.contains(&Key::Escape) {
+            self.practice = None;
         }
         if fresh.contains(&Key::Enter) {
             outgoing.extend(self.active_mut().ready());
@@ -447,23 +446,12 @@ impl Game {
         outgoing.extend(self.active_mut().tick(input));
     }
 
-    /// One paused tick. A local match (the dummy, or the bot, online too) is simply not
-    /// ticked, so it freezes; an online match cannot wait for one player, so it goes
-    /// on with the paused player standing still.
+    /// One paused tick. A local match (a practice game, or a practice fight while online) is
+    /// simply not ticked, so it freezes; an online match cannot wait for one player, so it
+    /// goes on with the paused player standing still.
     fn stand_still(&mut self, outgoing: &mut Vec<Vec<u8>>) {
         if !self.client.is_local() {
             outgoing.extend(self.client.tick(Input::NONE));
-        }
-    }
-
-    /// A match against the computer: it replaces the practice dummy, or is played locally
-    /// while the online room stays open.
-    fn accept_bot(&mut self) {
-        let versus = Client::versus_bot(self.client.config().clone());
-        if self.client.is_local() {
-            self.client = versus;
-        } else {
-            self.bot = Some(versus);
         }
     }
 
@@ -475,7 +463,7 @@ impl Game {
     }
 
     fn update_bars(&mut self) {
-        let active = self.bot.as_ref().unwrap_or(&self.client);
+        let active = self.practice.as_ref().unwrap_or(&self.client);
         let Some(current) = active.session().map(|s| s.current()) else {
             self.bars.clear();
             return;
@@ -518,12 +506,11 @@ impl Game {
 
     /// One line about the connection, shown under the intro.
     pub fn status_line(&self) -> String {
-        match self.client.rival() {
-            Some(Rival::Dummy) => {
-                return "practice mode: a training dummy (or the computer) is waiting".to_string();
-            }
-            Some(Rival::Bot) => return "practice mode: versus the computer".to_string(),
-            None => {}
+        if let Some(rival) = self.client.rival() {
+            return format!(
+                "practice mode: versus {} - T or the pause menu: change the rival",
+                rival.name()
+            );
         }
         match self.client.status() {
             Status::Connecting => "connecting to the server...".to_string(),
@@ -548,24 +535,35 @@ impl Game {
         self.active_client().session().map(|s| s.local_player())
     }
 
-    /// The small line under the banner about the match against the computer, if any.
-    pub fn bot_notice(&self) -> Option<String> {
-        if self.bot.is_some() {
-            let others: Vec<String> = self
-                .client
-                .seated()
-                .iter()
-                .filter(|&player| Some(player) != self.client.player())
-                .map(|player| format!("P{}", u32::from(player.0) + 1))
-                .collect();
-            return Some(if others.is_empty() {
-                "Versus the computer - Esc: back to the room".to_string()
-            } else {
-                format!("{} is here - Esc: leave the bot", others.join(", "))
-            });
+    /// The small line under the banner about practice, if any: the rival and how to switch it,
+    /// how to start practising between online matches, or who is waiting in the room.
+    pub fn practice_notice(&self) -> Option<String> {
+        let switch = |rival: Rival| {
+            format!(
+                "Practice: {}   T: switch to {}",
+                rival.name(),
+                rival.next().name()
+            )
+        };
+        match self.practice() {
+            Practice::Unavailable => None,
+            Practice::Off => Some("T: practice while waiting".to_string()),
+            Practice::Alone(rival) => Some(switch(rival)),
+            Practice::WhileWaiting(rival) => {
+                let others: Vec<String> = self
+                    .client
+                    .seated()
+                    .iter()
+                    .filter(|&player| Some(player) != self.client.player())
+                    .map(|player| format!("P{}", u32::from(player.0) + 1))
+                    .collect();
+                Some(if others.is_empty() {
+                    format!("{}   Esc: back to the room", switch(rival))
+                } else {
+                    format!("{} is here - Esc: leave the practice", others.join(", "))
+                })
+            }
         }
-        (self.offer == Offer::Declined && !self.client.is_local() && self.is_alone())
-            .then(|| "Y: fight the bot while waiting".to_string())
     }
 
     /// What to draw now.
@@ -623,11 +621,8 @@ impl Game {
                     self.fight_ticks,
                     &self.bindings,
                 );
-                if let Some(notice) = self.bot_notice() {
+                if let Some(notice) = self.practice_notice() {
                     hud::draw_notice(&mut frame, &notice);
-                }
-                if self.is_offering_bot() {
-                    hud::draw_prompt(&mut frame, BOT_PROMPT);
                 }
                 frame
             }

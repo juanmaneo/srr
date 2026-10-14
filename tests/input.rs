@@ -612,17 +612,18 @@ fn keys_are_ordered_as_declared() {
 }
 
 #[test]
-fn only_the_menu_pause_and_view_keys_cannot_be_bound() {
+fn only_the_menu_pause_view_and_practice_keys_cannot_be_bound() {
     for key in ALL_KEYS {
         assert_eq!(
             key.is_bindable(),
-            !matches!(key, Key::Enter | Key::Escape | Key::P | Key::Tab),
+            !matches!(key, Key::Enter | Key::Escape | Key::P | Key::Tab | Key::T),
             "{key:?}"
         );
     }
     let mut layout = KeyBindings::STANDARD;
     assert!(!layout.bind(0, Key::P));
     assert!(!layout.bind(0, Key::Tab));
+    assert!(!layout.bind(0, Key::T));
     assert_eq!(layout, KeyBindings::STANDARD);
 }
 

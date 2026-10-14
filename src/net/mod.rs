@@ -23,16 +23,16 @@
 //!   guessing the others for too long;
 //! * a player who leaves does not end the match for everybody else: their fighter stands still.
 //!
-//! A [`Client`] can also play alone, without any server: against the idle training dummy
-//! ([`Client::practice`]) or against the computer ([`Client::versus_bot`], see
-//! [`crate::game::Bot`]).
+//! A [`Client`] can also play alone, without any server, against a [`crate::game::Rival`]:
+//! the idle training dummy ([`Client::practice`]) or the computer ([`Client::versus`]), and
+//! switch between them in the middle of a round ([`Client::set_rival`]).
 
 mod client;
 mod players;
 mod protocol;
 mod rollback;
 
-pub use client::{Client, ClientError, MAX_INPUT_DELAY, Rival, Status, TARGET_LEAD};
+pub use client::{Client, ClientError, MAX_INPUT_DELAY, Status, TARGET_LEAD};
 pub use players::{MAX_PLAYERS, PlayerSet};
 pub use protocol::{ClientMessage, DecodeError, FrameInputs, ServerMessage};
 pub use rollback::{INPUT_DELAY, LAG_MEMORY, MAX_ROLLBACK, Session, SessionError};

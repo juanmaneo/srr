@@ -6,7 +6,8 @@
 //! it the server's frame (both fighters' inputs), then ticks it with the local input.
 //! That way a test controls both fighters and can reach any state: strikes, grabs, every
 //! grapple position, knockouts, time-ups, next rounds, stalls and every connection status.
-//! Bigger matches (up to ten players), the lobby and the bot offer are covered too.
+//! Bigger matches (up to ten players), the lobby and practice (the dummy, the computer, and
+//! practising while the online room stays open) are covered too.
 //!
 //! Numbers of [`cfg`]: the arena is 300 wide, so the fighters spawn at 100 and 200, inside the
 //! reach (150) of every strike and of the grab. Strikes: 2 start-up, 2 active, 2 recovery ticks,
@@ -17,9 +18,9 @@ use std::collections::HashSet;
 
 use srr::audio::Mood;
 use srr::front::arena::{self, ARENA_LEFT, ARENA_PIXELS, FLOOR_Y, LYING_TAG_Y, TAG_ABOVE};
-use srr::front::controls::{Row, controls_lines, technique_keys};
+use srr::front::controls::{Practice, Row, controls_lines, technique_keys};
 use srr::front::hud::{
-    self, CONTROLS_LINE_HEIGHT, CONTROLS_Y, DANGER_PERCENT, NOTICE_Y, PROMPT_Y, STALL_TEXT,
+    self, CONTROLS_LINE_HEIGHT, CONTROLS_Y, DANGER_PERCENT, NOTICE_Y, STALL_TEXT,
     STALL_WARNING_TICKS, TRAIL_HOLD, TRAIL_SPEED, bar_slots, lobby_text, position_name, ready_text,
 };
 use srr::front::intro::{self, SKIP_AFTER};
@@ -28,17 +29,16 @@ use srr::front::stick::{
     SUBMISSION, SWEEP_LIFT, THROW_LIFT,
 };
 use srr::front::{
-    Align, BOT_PROMPT, CONTROLS_HINT, Frame, Game, HealthBar, Label, Rect, Rgba, SCREEN_WIDTH,
+    Align, CONTROLS_HINT, Frame, Game, HealthBar, Label, PRACTICE_KEY, Rect, Rgba, SCREEN_WIDTH,
     Screen, SoundState, intensity, seconds,
 };
 use srr::game::{
     Attack, AttackData, AttackPhase, FighterState, GlitchSet, GrappleData, GrapplePosition,
-    GrappleRole, Input, Key, KeyBindings, Match, MatchConfig, Outcome, Phase, PlayerId, Roster,
-    Strength, TICKS_PER_SECOND, Technique,
+    GrappleRole, Input, Key, KeyBindings, Match, MatchConfig, Outcome, Phase, PlayerId, Rival,
+    Roster, Strength, TICKS_PER_SECOND, Technique,
 };
 use srr::net::{
-    Client, ClientError, ClientMessage, MAX_PLAYERS, MAX_ROLLBACK, PlayerSet, Rival, ServerMessage,
-    Status,
+    Client, ClientError, ClientMessage, MAX_PLAYERS, MAX_ROLLBACK, PlayerSet, ServerMessage, Status,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -495,7 +495,7 @@ fn names_mark_the_local_player_and_the_computer() {
         "no match: nobody is you"
     );
 
-    let versus = Client::versus_bot(cfg());
+    let versus = Client::versus(cfg(), Rival::Brawler);
     assert_eq!(hud::name(&versus, PlayerId(0)), "P1 (you)");
     assert_eq!(hud::name(&versus, PlayerId(1)), "CPU");
     assert_eq!(hud::tag(&versus, PlayerId(1)), "CPU");
@@ -2086,12 +2086,10 @@ fn skip_intro(game: &mut Game) {
     assert_eq!(game.screen(), Screen::Fight);
 }
 
-/// Skips the intro of a practice game and keeps the training dummy (N to the bot offer).
+/// Skips the intro of a practice game: the training dummy is waiting.
 fn practice_fight(game: &mut Game) {
     skip_intro(game);
-    assert!(game.is_offering_bot());
-    game.tick(&keys(&[Key::N]));
-    assert!(!game.is_offering_bot());
+    assert_eq!(game.practice(), Practice::Alone(Rival::Dummy));
 }
 
 /// One fight tick of an online game with the keys held, then the server's frame of that tick:
@@ -2122,7 +2120,8 @@ fn the_game_starts_on_the_intro_with_its_theme() {
     assert_eq!(game.music().mood(), Mood::Intro);
     assert_eq!(game.music().intensity(), 0.0);
     assert!(game.client().is_local());
-    assert!(!game.is_offering_bot(), "not on the intro");
+    assert_eq!(game.practice(), Practice::Alone(Rival::Dummy));
+    assert!(!game.is_practising_online());
     assert!(game.health_bars().is_empty(), "nothing ticked yet");
 }
 
@@ -2301,7 +2300,7 @@ fn p_pauses_a_practice_fight_and_opens_the_pause_menu() {
     assert!(game.is_paused());
     assert!(game.controls().is_paused());
     assert_eq!(game.controls().selected(), Row::Preset);
-    assert!(!game.is_offering_bot(), "the offer was answered");
+    assert_eq!(game.controls().practice(), Practice::Alone(Rival::Dummy));
     assert_eq!(game.music().mood(), Mood::Breakdown, "not the intro theme");
     assert_eq!(game.music().intensity(), 0.0);
     let frame = game.frame();
@@ -2383,24 +2382,57 @@ fn p_resumes_too_and_the_layout_changed_while_paused_drives_the_fight() {
     );
 }
 
+/// Up from the preset row: back, then the practice row.
+fn up_to_the_practice_row(game: &mut Game) {
+    for _ in 0..2 {
+        game.tick(&keys(&[Key::ArrowUp]));
+        game.tick(&keys(&[]));
+    }
+    assert_eq!(game.controls().selected(), Row::Practice);
+}
+
 #[test]
-fn the_pause_menu_comes_back_to_the_bot_offer() {
-    let mut game = practice();
-    skip_intro(&mut game);
-    assert!(game.is_offering_bot());
+fn the_pause_menu_switches_the_rival_of_a_practice_game() {
+    let mut game = practice_duel();
+    game.tick(&keys(&[Key::ArrowRight]));
     game.tick(&keys(&[Key::P]));
     assert!(game.is_paused());
-    assert!(!game.is_offering_bot(), "not while the menu is shown");
-    game.tick(&keys(&[Key::Y]));
+    let text = game.frame().text();
+    assert!(text.contains("Practice"), "{text}");
+    assert!(text.contains("< the training dummy >"), "{text}");
+    game.tick(&keys(&[PRACTICE_KEY]));
     assert_eq!(
         game.client().rival(),
         Some(Rival::Dummy),
-        "Y was for the menu"
+        "T is for the fight screen"
     );
+
+    up_to_the_practice_row(&mut game);
+    game.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(game.controls().practice(), Practice::Alone(Rival::Brawler));
+    assert_eq!(
+        game.client().rival(),
+        Some(Rival::Brawler),
+        "carried out at once"
+    );
+    assert_eq!(game.practice(), Practice::Alone(Rival::Brawler));
+    assert!(
+        !game.is_practising_online(),
+        "a practice game is not online"
+    );
+    assert_eq!(session_tick(&game), 1, "still frozen");
+    assert!(game.frame().text().contains("< the computer >"));
+
     game.tick(&keys(&[Key::Escape]));
     assert_eq!(game.screen(), Screen::Fight);
-    assert!(game.is_offering_bot(), "the question is still open");
-    assert!(find_label(&game.frame(), BOT_PROMPT).is_some());
+    game.tick(&keys(&[]));
+    assert_eq!(session_tick(&game), 2);
+    let text = game.frame().text();
+    assert!(text.contains("CPU  100 HP"), "{text}");
+    assert!(
+        text.contains("Practice: the computer   T: switch to the training dummy"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -2453,30 +2485,83 @@ fn an_online_match_goes_on_while_paused_with_the_player_standing_still() {
 }
 
 #[test]
-fn the_bot_played_online_freezes_while_paused() {
+fn the_practice_fight_played_online_freezes_while_paused() {
     let mut game = alone_online(0);
-    game.tick(&keys(&[Key::Y]));
-    assert!(game.is_playing_bot_online());
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert!(game.is_practising_online());
     game.tick(&keys(&[]));
-    assert_eq!(session_tick(&game), 1);
+    assert_eq!(session_tick(&game), 2);
     assert!(
         game.tick(&keys(&[Key::P])).is_empty(),
         "nothing to send: the room is idle"
     );
     assert!(game.is_paused());
+    assert_eq!(
+        game.controls().practice(),
+        Practice::WhileWaiting(Rival::Brawler)
+    );
     for _ in 0..10 {
         assert!(game.tick(&keys(&[Key::ArrowLeft])).is_empty());
     }
-    assert_eq!(session_tick(&game), 1, "the bot match is local: it waits");
-    assert!(game.is_playing_bot_online());
+    assert_eq!(
+        session_tick(&game),
+        2,
+        "the practice fight is local: it waits"
+    );
+    assert!(game.is_practising_online());
     game.tick(&keys(&[Key::Escape]));
     assert_eq!(game.screen(), Screen::Fight);
     assert!(
-        game.is_playing_bot_online(),
-        "Escape left the menu, not the bot"
+        game.is_practising_online(),
+        "Escape left the menu, not the practice"
     );
     game.tick(&keys(&[]));
-    assert_eq!(session_tick(&game), 2);
+    assert_eq!(session_tick(&game), 3);
+}
+
+#[test]
+fn the_pause_menu_starts_and_ends_a_practice_fight_while_online() {
+    let mut game = alone_online(0);
+    game.tick(&keys(&[Key::P]));
+    assert_eq!(game.controls().practice(), Practice::Off);
+    let text = game.frame().text();
+    assert!(
+        text.contains("Practice") && text.contains("< off >"),
+        "{text}"
+    );
+    up_to_the_practice_row(&mut game);
+    assert!(
+        game.tick(&keys(&[Key::Enter])).is_empty(),
+        "Enter: the next choice"
+    );
+    assert_eq!(
+        game.controls().practice(),
+        Practice::WhileWaiting(Rival::Brawler)
+    );
+    assert!(game.is_practising_online(), "started from the menu");
+    assert_eq!(game.practice(), Practice::WhileWaiting(Rival::Brawler));
+    assert_eq!(game.active_client().rival(), Some(Rival::Brawler));
+    assert_eq!(game.client().status(), Status::Lobby, "the room stays open");
+    assert!(
+        game.frame()
+            .text()
+            .contains("< the computer - the room stays open >")
+    );
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(game.practice(), Practice::WhileWaiting(Rival::Dummy));
+    assert_eq!(game.active_client().rival(), Some(Rival::Dummy));
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(game.controls().practice(), Practice::Off, "round and round");
+    assert!(!game.is_practising_online(), "ended from the menu");
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[Key::ArrowLeft]));
+    assert_eq!(game.practice(), Practice::WhileWaiting(Rival::Dummy));
+    game.tick(&keys(&[Key::P]));
+    assert_eq!(game.screen(), Screen::Fight);
+    assert!(game.is_practising_online());
+    assert_eq!(game.local_player(), Some(PlayerId(0)));
 }
 
 #[test]
@@ -2501,7 +2586,7 @@ fn the_fight_screen_plays_the_practice_duel() {
     assert_eq!(
         game.client().session().unwrap().tick(),
         0,
-        "the round waited for the answer"
+        "the intro does not play the round"
     );
     assert!(game.tick(&keys(&[])).is_empty(), "practice sends nothing");
     assert_eq!(game.client().session().unwrap().tick(), 1);
@@ -2680,11 +2765,11 @@ fn the_music_breaks_down_between_rounds_and_when_the_opponent_leaves() {
 fn the_status_line_describes_practice_and_every_connection_state() {
     assert_eq!(
         practice().status_line(),
-        "practice mode: a training dummy (or the computer) is waiting"
+        "practice mode: versus the training dummy - T or the pause menu: change the rival"
     );
     assert_eq!(
-        Game::new(Client::versus_bot(cfg())).status_line(),
-        "practice mode: versus the computer"
+        Game::new(Client::versus(cfg(), Rival::Brawler)).status_line(),
+        "practice mode: versus the computer - T or the pause menu: change the rival"
     );
 
     let mut game = Game::new(Client::online(cfg(), 0));
@@ -2782,6 +2867,12 @@ fn the_fight_frame_shows_the_arena_and_the_hud() {
     let text = frame.text();
     assert!(text.contains("P1 (you)  100 HP"), "{text}");
     assert!(text.contains("P2  100 HP"));
+    let notice = find_label(
+        &frame,
+        "Practice: the training dummy   T: switch to the computer",
+    )
+    .expect("the practice notice");
+    assert_eq!((notice.y, notice.align), (NOTICE_Y, Align::Center));
     for line in controls_lines(&KeyBindings::STANDARD) {
         assert!(text.contains(&line), "{text}");
     }
@@ -2821,7 +2912,7 @@ fn a_whole_practice_round_can_be_played_and_restarted() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Game: the bot offer
+// Game: practice
 // ---------------------------------------------------------------------------------------------
 
 /// An online game seated as `player`, alone in the room, on the fight screen.
@@ -2837,51 +2928,38 @@ fn alone_online(player: u8) -> Game {
 }
 
 #[test]
-fn a_practice_player_is_asked_before_fighting_the_bot() {
+fn t_switches_the_rival_of_a_practice_game() {
     let mut game = practice();
-    assert!(game.is_alone());
-    assert!(!game.is_offering_bot(), "not on the intro");
-    skip_intro(&mut game);
-    assert!(game.is_offering_bot());
-    let frame = game.frame();
-    let prompt = find_label(&frame, BOT_PROMPT).expect("the question");
+    practice_fight(&mut game);
     assert_eq!(
-        (prompt.align, prompt.x),
-        (Align::Center, SCREEN_WIDTH / 2.0)
+        game.practice_notice().as_deref(),
+        Some("Practice: the training dummy   T: switch to the computer")
     );
-    assert!(prompt.y > PROMPT_Y && prompt.y < PROMPT_Y + 50.0);
-    assert!(
-        frame
-            .rects
-            .iter()
-            .any(|r| r.y == PROMPT_Y && r.color.a < 1.0),
-        "on a dark panel"
-    );
+    game.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(session_tick(&game), 1);
 
-    // Nothing else happens until the answer.
-    for _ in 0..30 {
-        assert!(game.tick(&keys(&[Key::ArrowRight])).is_empty());
-        game.tick(&keys(&[Key::Enter]));
+    assert!(game.tick(&keys(&[PRACTICE_KEY])).is_empty());
+    assert_eq!(game.client().rival(), Some(Rival::Brawler));
+    assert_eq!(game.practice(), Practice::Alone(Rival::Brawler));
+    assert_eq!(session_tick(&game), 2, "the round goes on");
+    assert!(!game.is_practising_online());
+    assert_eq!(
+        game.practice_notice().as_deref(),
+        Some("Practice: the computer   T: switch to the training dummy")
+    );
+    for _ in 0..3 {
+        game.tick(&keys(&[PRACTICE_KEY]));
     }
-    assert_eq!(game.client().session().unwrap().tick(), 0);
-    assert!(game.is_offering_bot());
-
-    game.tick(&keys(&[Key::Y]));
-    assert!(!game.is_offering_bot());
     assert_eq!(
         game.client().rival(),
-        Some(Rival::Bot),
-        "it replaced the dummy"
+        Some(Rival::Brawler),
+        "held, not pressed"
     );
-    assert!(!game.is_alone());
-    assert!(!game.is_playing_bot_online());
-    assert_eq!(game.bot_notice(), None);
     game.tick(&keys(&[]));
     let frame = game.frame();
     let text = frame.text();
     assert!(text.contains("CPU  100 HP"), "{text}");
     assert!(text.contains("P1 (you)  100 HP"), "{text}");
-    assert!(find_label(&frame, BOT_PROMPT).is_none());
     assert!(
         frame
             .labels
@@ -2889,38 +2967,93 @@ fn a_practice_player_is_asked_before_fighting_the_bot() {
             .any(|l| l.text == "CPU" && l.size == 14.0),
         "the tag over the bot"
     );
+
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert_eq!(game.client().rival(), Some(Rival::Dummy), "round and round");
+    game.tick(&keys(&[]));
+    assert!(game.frame().text().contains("P2  100 HP"));
+    game.tick(&keys(&[Key::Escape]));
+    assert_eq!(
+        game.practice(),
+        Practice::Alone(Rival::Dummy),
+        "Escape leaves nothing: a practice game is nothing else"
+    );
 }
 
 #[test]
-fn declining_keeps_the_training_dummy() {
+fn t_on_the_title_goes_practising() {
     let mut game = practice();
-    practice_fight(&mut game);
-    assert_eq!(game.client().rival(), Some(Rival::Dummy));
-    assert!(game.is_alone());
-    assert_eq!(game.bot_notice(), None, "no reminder in practice");
-    for _ in 0..3 {
-        game.tick(&keys(&[Key::Y]));
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert_eq!(game.screen(), Screen::Intro, "too early, like Enter");
+    while !game.intro().can_skip() {
         game.tick(&keys(&[]));
     }
-    assert_eq!(game.client().rival(), Some(Rival::Dummy), "asked once");
-    assert!(!game.is_offering_bot());
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert_eq!(game.screen(), Screen::Fight);
+    assert_eq!(
+        game.practice(),
+        Practice::Alone(Rival::Dummy),
+        "a practice game keeps its rival"
+    );
+
+    let mut client = Client::online(cfg(), 0);
+    client.handle(ServerMessage::Welcome {
+        player: PlayerId(2),
+    });
+    lobby(&mut client, set(&[2]), PlayerSet::EMPTY);
+    let mut online = Game::new(client);
+    while !online.intro().can_skip() {
+        online.tick(&keys(&[]));
+    }
+    assert!(online.tick(&keys(&[PRACTICE_KEY])).is_empty());
+    assert_eq!(online.screen(), Screen::Fight);
+    assert!(
+        online.is_practising_online(),
+        "online: the practice fight starts"
+    );
+    assert_eq!(online.practice(), Practice::WhileWaiting(Rival::Brawler));
+    assert_eq!(
+        online.local_player(),
+        Some(PlayerId(0)),
+        "player 1 of the local fight"
+    );
+
+    let mut connecting = Game::new(Client::online(cfg(), 0));
+    while !connecting.intro().can_skip() {
+        connecting.tick(&keys(&[]));
+    }
+    connecting.tick(&keys(&[PRACTICE_KEY]));
+    assert_eq!(connecting.screen(), Screen::Fight);
+    assert!(
+        !connecting.is_practising_online(),
+        "not seated: nothing to start"
+    );
+    assert_eq!(connecting.practice(), Practice::Unavailable);
 }
 
 #[test]
-fn alone_online_the_bot_is_played_locally_while_the_room_stays_open() {
+fn online_the_practice_fight_is_played_locally_while_the_room_stays_open() {
     let mut game = alone_online(0);
-    assert!(game.is_alone());
-    assert!(game.is_offering_bot());
+    assert_eq!(game.practice(), Practice::Off);
+    let hint = "T: practice while waiting";
+    assert_eq!(game.practice_notice().as_deref(), Some(hint));
+    assert_eq!(find_label(&game.frame(), hint).unwrap().y, NOTICE_Y);
     assert_eq!(game.music().mood(), Mood::Breakdown, "waiting");
-    game.tick(&keys(&[Key::Y]));
-    assert!(game.is_playing_bot_online());
-    assert_eq!(game.active_client().rival(), Some(Rival::Bot));
-    assert_eq!(game.client().status(), Status::Lobby, "the room stays open");
-    let alone = "Versus the computer - Esc: back to the room";
-    assert_eq!(game.bot_notice().as_deref(), Some(alone));
 
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert!(game.is_practising_online());
+    assert_eq!(game.active_client().rival(), Some(Rival::Brawler));
+    assert_eq!(game.client().status(), Status::Lobby, "the room stays open");
+    let alone = "Practice: the computer   T: switch to the training dummy   Esc: back to the room";
+    assert_eq!(game.practice_notice().as_deref(), Some(alone));
+
+    assert_eq!(
+        game.active_client().session().unwrap().tick(),
+        1,
+        "the T tick already plays"
+    );
     assert!(game.tick(&keys(&[])).is_empty(), "nothing goes online");
-    assert_eq!(game.active_client().session().unwrap().tick(), 1);
+    assert_eq!(game.active_client().session().unwrap().tick(), 2);
     assert_eq!(game.local_player(), Some(PlayerId(0)));
     assert_eq!(game.health_bars().len(), 2);
     assert_eq!(game.music().mood(), Mood::Fight);
@@ -2929,100 +3062,129 @@ fn alone_online_the_bot_is_played_locally_while_the_room_stays_open() {
     assert_eq!(notice.y, NOTICE_Y);
     assert!(frame.text().contains("CPU  100 HP"));
 
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert_eq!(
+        game.active_client().rival(),
+        Some(Rival::Dummy),
+        "T switches here too"
+    );
+    assert!(game.is_practising_online());
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert!(!game.is_practising_online(), "then off");
+    assert_eq!(game.practice(), Practice::Off);
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert!(game.is_practising_online());
+
     // Somebody joins: the notice says so.
     lobby(game.client_mut(), PlayerSet::first(3), PlayerSet::EMPTY);
     game.tick(&keys(&[]));
     assert_eq!(
-        game.bot_notice().as_deref(),
-        Some("P2, P3 is here - Esc: leave the bot")
+        game.practice_notice().as_deref(),
+        Some("P2, P3 is here - Esc: leave the practice")
     );
 
     // Escape goes back to the room, where Enter tells the server.
     game.tick(&keys(&[Key::Escape]));
-    assert!(!game.is_playing_bot_online());
+    assert!(!game.is_practising_online());
     assert_eq!(game.active_client().status(), Status::Lobby);
-    assert!(!game.is_offering_bot(), "not alone");
+    assert_eq!(
+        game.practice_notice().as_deref(),
+        Some(hint),
+        "not alone, still waiting"
+    );
     assert_eq!(
         game.tick(&keys(&[Key::Enter])),
         vec![ClientMessage::Ready.encode()]
     );
+    game.tick(&keys(&[Key::Escape]));
+    assert!(!game.is_practising_online(), "Escape again changes nothing");
 }
 
 #[test]
-fn a_declined_offer_can_be_accepted_later_while_alone_online() {
-    let mut game = alone_online(2);
-    game.tick(&keys(&[Key::N]));
-    assert!(!game.is_offering_bot());
-    let reminder = "Y: fight the bot while waiting";
-    assert_eq!(game.bot_notice().as_deref(), Some(reminder));
-    assert!(find_label(&game.frame(), reminder).is_some());
-
-    game.tick(&keys(&[Key::Y]));
-    assert!(game.is_playing_bot_online());
-    game.tick(&keys(&[]));
-    game.tick(&keys(&[Key::Escape]));
-    assert!(!game.is_playing_bot_online());
-    assert!(!game.is_offering_bot(), "declined: not asked again");
-    assert_eq!(game.bot_notice().as_deref(), Some(reminder));
-    game.tick(&keys(&[]));
-    game.tick(&keys(&[Key::Escape]));
-    assert!(
-        !game.is_playing_bot_online(),
-        "Escape again changes nothing"
-    );
-
-    // Somebody comes and goes: alone again, the question is asked again.
-    lobby(game.client_mut(), set(&[0, 2]), PlayerSet::EMPTY);
-    game.tick(&keys(&[]));
-    assert!(!game.is_alone());
-    assert_eq!(game.bot_notice(), None);
-    lobby(game.client_mut(), set(&[2]), PlayerSet::EMPTY);
-    assert!(game.is_offering_bot());
-}
-
-#[test]
-fn a_real_match_takes_over_from_the_bot() {
+fn a_real_match_takes_over_from_the_practice_fight() {
     let mut game = alone_online(0);
-    game.tick(&keys(&[Key::N]));
+    game.tick(&keys(&[]));
     assert_eq!(
         game.tick(&keys(&[Key::Enter])),
         vec![ClientMessage::Ready.encode()],
         "ready in the lobby"
     );
-    game.tick(&keys(&[Key::Y]));
-    assert!(game.is_playing_bot_online());
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert!(game.is_practising_online());
     // Somebody joined and got ready meanwhile: the server starts the match.
     game.client_mut().handle(ServerMessage::Start {
         session: SESSION,
         players: PlayerSet::first(2),
     });
     let frames = fight_tick(&mut game, &[], idle());
-    assert!(!game.is_playing_bot_online());
+    assert!(!game.is_practising_online());
     assert_eq!(frames.len(), 1, "the input of the real match");
     assert_eq!(game.active_client().status(), Status::Playing);
     assert_eq!(game.client().session().unwrap().tick(), 1);
+    assert_eq!(game.practice(), Practice::Unavailable);
+    assert_eq!(game.practice_notice(), None);
+    assert!(fight_tick(&mut game, &[PRACTICE_KEY], idle()).len() == 1);
+    assert!(!game.is_practising_online(), "T: nothing during a match");
 }
 
 #[test]
-fn the_offer_is_only_for_a_lone_player() {
+fn practice_cannot_start_during_an_online_match_nor_before_being_seated() {
     let connecting = Game::new(Client::online(cfg(), 0));
-    assert!(!connecting.is_alone(), "not seated yet");
-    let playing = Game::new(duel(cfg(), 0));
-    assert!(!playing.is_alone());
-    let versus = Game::new(Client::versus_bot(cfg()));
-    assert!(!versus.is_alone());
+    assert_eq!(connecting.practice(), Practice::Unavailable);
+    assert_eq!(connecting.practice_notice(), None);
+    let mut playing = Game::new(duel(cfg(), 0));
+    assert_eq!(playing.practice(), Practice::Unavailable);
+    skip_intro(&mut playing);
+    fight_tick(&mut playing, &[PRACTICE_KEY], idle());
+    assert!(!playing.is_practising_online());
+    playing.tick(&keys(&[Key::P]));
+    assert_eq!(playing.controls().practice(), Practice::Unavailable);
+    assert!(
+        playing.frame().text().contains("- (not during a match)"),
+        "{}",
+        playing.frame().text()
+    );
+    up_to_the_practice_row(&mut playing);
+    playing.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(
+        playing.controls().practice(),
+        Practice::Unavailable,
+        "inert"
+    );
+    assert!(!playing.is_practising_online());
 
-    let mut crowded = Client::online(cfg(), 0);
-    crowded.handle(ServerMessage::Welcome {
-        player: PlayerId(0),
-    });
-    lobby(&mut crowded, PlayerSet::first(2), PlayerSet::EMPTY);
-    let mut crowded = Game::new(crowded);
-    skip_intro(&mut crowded);
-    assert!(!crowded.is_alone());
-    assert!(!crowded.is_offering_bot());
-    assert!(crowded.tick(&keys(&[Key::Y])).is_empty());
-    assert!(!crowded.is_playing_bot_online(), "Y only answers the offer");
+    let versus = Game::new(Client::versus(cfg(), Rival::Brawler));
+    assert_eq!(versus.practice(), Practice::Alone(Rival::Brawler));
+}
+
+#[test]
+fn the_controls_page_of_the_title_chooses_the_rival_too() {
+    let mut game = practice();
+    game.tick(&keys(&[Key::C]));
+    assert_eq!(game.controls().practice(), Practice::Alone(Rival::Dummy));
+    up_to_the_practice_row(&mut game);
+    game.tick(&keys(&[Key::ArrowLeft]));
+    assert_eq!(game.client().rival(), Some(Rival::Brawler));
+    game.tick(&keys(&[Key::Escape]));
+    assert_eq!(game.screen(), Screen::Intro);
+    assert!(
+        game.status_line()
+            .starts_with("practice mode: versus the computer")
+    );
+
+    let mut online = alone_online(1);
+    online.tick(&keys(&[Key::P]));
+    up_to_the_practice_row(&mut online);
+    online.tick(&keys(&[Key::ArrowLeft]));
+    assert_eq!(online.practice(), Practice::WhileWaiting(Rival::Dummy));
+    assert!(online.is_practising_online());
+    assert!(
+        online.tick(&keys(&[Key::P])).is_empty(),
+        "nothing to send: the room is idle"
+    );
+    assert_eq!(online.screen(), Screen::Fight);
 }
 
 // ---------------------------------------------------------------------------------------------

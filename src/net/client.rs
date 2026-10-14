@@ -4,8 +4,10 @@
 //! fixed tick; it returns the frames to send. [`Client::ready`] tells the server the player
 //! wants to fight (in the lobby, or once a round is over).
 //!
-//! A local client plays without any server, as player 1 against player 2: the idle training
-//! dummy ([`Client::practice`]) or the computer ([`Client::versus_bot`]).
+//! A local client plays without any server, as player 1 against player 2, a [`Bot`] chosen
+//! among the [`Rival`]s: the idle training dummy ([`Client::practice`]) or the computer
+//! ([`Client::versus`]), which can take over from each other in the middle of a round
+//! ([`Client::set_rival`]).
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -14,9 +16,9 @@ use std::fmt;
 use super::players::PlayerSet;
 use super::protocol::{ClientMessage, DecodeError, ServerMessage};
 use super::rollback::{MAX_ROLLBACK, Session, SessionError};
-use crate::game::{Bot, Input, MatchConfig, PlayerId, TICKS_PER_SECOND};
+use crate::game::{Bot, Input, MatchConfig, PlayerId, Rival, TICKS_PER_SECOND};
 
-/// The fighter played by the dummy or the bot of a local client.
+/// The fighter played by the bot of a local client.
 const RIVAL: PlayerId = PlayerId(1);
 
 /// The margin, in ticks, an online client keeps between its inputs reaching the server and
@@ -77,21 +79,14 @@ impl fmt::Display for ClientError {
 
 impl std::error::Error for ClientError {}
 
-/// Who a local client plays against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Rival {
-    /// The training dummy: it never moves.
-    Dummy,
-    /// The computer ([`Bot`]).
-    Bot,
-}
-
 #[derive(Debug, Clone)]
 enum Mode {
     Online,
-    /// `None` is the training dummy.
+    /// Alone: `bot` plays [`RIVAL`]; `rival` says which one it is, to spawn a fresh one for
+    /// the next round.
     Local {
-        bot: Option<Bot>,
+        rival: Rival,
+        bot: Box<dyn Bot>,
     },
 }
 
@@ -156,20 +151,20 @@ impl Client {
         }
     }
 
-    /// A client playing alone as player 1 against a training dummy that never moves. Nothing
-    /// is ever sent; [`Client::ready`] starts the next round once one is over.
+    /// A client playing alone as player 1 against a training dummy that never moves
+    /// ([`Rival::Dummy`]). Nothing is ever sent; [`Client::ready`] starts the next round once
+    /// one is over.
     pub fn practice(config: MatchConfig) -> Self {
-        Client::local(config, None)
+        Client::versus(config, Rival::Dummy)
     }
 
-    /// A client playing alone as player 1 against the computer (player 2, see [`Bot`]).
-    pub fn versus_bot(config: MatchConfig) -> Self {
-        Client::local(config, Some(Bot::new(RIVAL, 0)))
-    }
-
-    fn local(config: MatchConfig, bot: Option<Bot>) -> Self {
+    /// A client playing alone as player 1 against `rival`, player 2.
+    pub fn versus(config: MatchConfig, rival: Rival) -> Self {
         let mut client = Client {
-            mode: Mode::Local { bot },
+            mode: Mode::Local {
+                rival,
+                bot: rival.spawn(RIVAL, 0),
+            },
             ..Client::online(config, 0)
         };
         client.handle(ServerMessage::Welcome {
@@ -201,15 +196,41 @@ impl Client {
     pub fn rival(&self) -> Option<Rival> {
         match &self.mode {
             Mode::Online => None,
-            Mode::Local { bot: None } => Some(Rival::Dummy),
-            Mode::Local { bot: Some(_) } => Some(Rival::Bot),
+            Mode::Local { rival, .. } => Some(*rival),
         }
     }
 
-    /// The player controlled by the computer, if any.
+    /// Changes who a local client plays against: the new bot takes over the rival's fighter
+    /// at once, in the middle of the round. Nothing changes online, or when `rival` already
+    /// plays.
+    ///
+    /// ```
+    /// use srr::game::{MatchConfig, Rival};
+    /// use srr::net::Client;
+    ///
+    /// let mut client = Client::practice(MatchConfig::default());
+    /// client.set_rival(Rival::Brawler);
+    /// assert_eq!(client.rival(), Some(Rival::Brawler));
+    /// assert!(client.bot_player().is_some(), "the computer is in");
+    /// ```
+    pub fn set_rival(&mut self, wanted: Rival) {
+        let seed = self
+            .session
+            .as_ref()
+            .map_or(0, |session| u64::from(session.id()));
+        if let Mode::Local { rival, bot } = &mut self.mode
+            && *rival != wanted
+        {
+            *rival = wanted;
+            *bot = wanted.spawn(RIVAL, seed);
+        }
+    }
+
+    /// The player controlled by the computer, if any: the rival of a local client, unless it
+    /// is a training dummy (see [`Rival::fights`]).
     pub fn bot_player(&self) -> Option<PlayerId> {
         match &self.mode {
-            Mode::Local { bot: Some(bot) } => Some(bot.player()),
+            Mode::Local { rival, bot } if rival.fights() => Some(bot.player()),
             _ => None,
         }
     }
@@ -386,14 +407,12 @@ impl Client {
                     }
                     .encode()
                 })),
-                Mode::Local { bot } => {
+                Mode::Local { bot, .. } => {
                     // Everybody's input is known at once: the client is its own server.
                     for tick in ticks {
                         let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
                         inputs[usize::from(session.local_player().0)] = input;
-                        inputs[usize::from(RIVAL.0)] = bot
-                            .as_mut()
-                            .map_or(Input::NONE, |bot| bot.think(session.current()));
+                        inputs[usize::from(RIVAL.0)] = bot.think(session.current());
                         session.receive_frame(id, tick, &inputs, PlayerSet::EMPTY);
                     }
                 }
@@ -411,16 +430,15 @@ impl Client {
 
     /// The player wants to fight (Enter). Online, in the lobby or once the round is over, this
     /// returns the frame telling the server; the server starts the next match when everybody
-    /// seated is ready. A local client starts its next round at once, once the round is over.
+    /// seated is ready. A local client starts its next round at once, once the round is over,
+    /// with a fresh bot of the same [`Rival`] (seeded by the round).
     pub fn ready(&mut self) -> Option<Vec<u8>> {
         let finished = self.session.as_ref().is_some_and(Session::is_finished);
         match &mut self.mode {
-            Mode::Local { bot } => {
+            Mode::Local { rival, bot } => {
                 if let Some(session) = self.session.as_mut().filter(|_| finished) {
                     *session = session.next(session.id().wrapping_add(1));
-                    if let Some(bot) = bot {
-                        *bot = Bot::new(RIVAL, u64::from(session.id()));
-                    }
+                    *bot = rival.spawn(RIVAL, u64::from(session.id()));
                 }
                 None
             }

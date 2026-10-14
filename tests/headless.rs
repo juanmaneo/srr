@@ -16,7 +16,7 @@ use srr::front::render::{
 use srr::front::{
     Align, Frame, Game, Headless, MONO_ADVANCE, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH, Screen,
 };
-use srr::game::{FighterState, GrapplePosition, GrappleRole, Key, MatchConfig, PlayerId};
+use srr::game::{FighterState, GrapplePosition, GrappleRole, Key, MatchConfig, PlayerId, Rival};
 use srr::net::Client;
 
 const BLACK: Rgba = Rgba::rgb(0.0, 0.0, 0.0);
@@ -450,21 +450,22 @@ fn skipping_the_intro_shows_the_versus_hud() {
     let text = game.text_snapshot(160, 45);
     assert!(text.contains("P1 (you)"), "{text}");
     assert!(text.contains("100 HP"), "{text}");
-    assert!(text.contains("bot?"), "alone: asked first: {text}");
+    assert!(
+        text.contains("Practice:") && text.contains("dummy"),
+        "{text}"
+    );
 
-    // Skipping again only taps Enter (ignored while the question is open).
+    // Skipping again only taps Enter (meaningless during the round).
     let ticks = game.ticks();
     game.skip_intro();
     assert_eq!(game.ticks(), ticks + 2);
     assert_eq!(game.game().screen(), Screen::Fight);
-    assert!(game.game().is_offering_bot());
 }
 
-/// Skips the intro and answers N: the training dummy it is.
+/// Skips the intro: the training dummy it is.
 fn fight_the_dummy(game: &mut Headless) {
     game.skip_intro();
-    game.tap(&[Key::N]);
-    assert!(!game.game().is_offering_bot());
+    assert_eq!(game.game().client().rival(), Some(Rival::Dummy));
 }
 
 #[test]
@@ -479,15 +480,16 @@ fn practice_sends_nothing_whatever_the_keys() {
 }
 
 #[test]
-fn the_bot_offer_is_answered_on_the_screen() {
+fn t_brings_the_computer_in_on_the_screen() {
     let mut game = practice();
     game.skip_intro();
-    let asked = game.text_snapshot(160, 45);
-    assert!(asked.contains("bot?") && asked.contains("yes"), "{asked}");
-    game.tap(&[Key::Y]);
+    let dummy = game.text_snapshot(160, 45);
+    assert!(dummy.contains("switch.to.the.computer"), "{dummy}");
+    assert!(!dummy.contains("CPU"), "{dummy}");
+    game.tap(&[Key::T]);
     game.idle(MatchConfig::default().countdown_ticks + 90);
     let text = game.text_snapshot(160, 45);
-    assert!(!text.contains("bot?"), "{text}");
+    assert!(text.contains("switch.to.the.training.dummy"), "{text}");
     assert!(text.contains("CPU"), "{text}");
     assert!(
         x_of(&game, 1) < 800,

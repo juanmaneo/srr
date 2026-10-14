@@ -2,7 +2,7 @@
 //! every versus game; thinner stacked ones in bigger matches, up to five a side in a brawl of
 //! ten), the red trail of recent damage, round wins, the timer, the grapple meter, the network
 //! state of each player (`LAG`, `LEFT`), the big centred banners (READY / FIGHT! / K.O. /
-//! results / lobby) and the bot offer.
+//! results / lobby) and the practice notice.
 
 use super::ascii::{Canvas, block_pixels};
 use super::controls::{controls_lines, technique_keys};
@@ -56,18 +56,9 @@ const ESCAPE: Rgba = Rgba::hex(0x3fc8ff);
 const BANNER: Rgba = Rgba::hex(0xffd84a);
 const BANNER_SMALL: Rgba = Rgba::hex(0xf4f0ff);
 const CONTROLS_COLOR: Rgba = Rgba::hex(0x8a8098);
-const PANEL: Rgba = Rgba {
-    r: 0.03,
-    g: 0.02,
-    b: 0.06,
-    a: 0.88,
-};
-const PROMPT: Rgba = Rgba::hex(0x6cff8a);
 const NOTICE: Rgba = Rgba::hex(0x3fc8ff);
-/// Top of the bot offer's panel.
-pub const PROMPT_Y: f32 = SCREEN_HEIGHT * 0.55;
-/// Top of the line about the match against the computer.
-pub const NOTICE_Y: f32 = SCREEN_HEIGHT * 0.70;
+/// Top of the line about practice: just above the controls, out of the fighters' way.
+pub const NOTICE_Y: f32 = CONTROLS_Y - 26.0;
 const BIG_HOT: [Rgba; 5] = [
     Rgba::hex(0xfff35c),
     Rgba::hex(0xffc93a),
@@ -638,30 +629,8 @@ pub fn lobby_text(client: &Client) -> String {
     lines.join("\n")
 }
 
-/// The bot offer: `text` on a dark panel across the middle of the screen.
-pub fn draw_prompt(frame: &mut Frame, text: &str) {
-    let size = 26.0;
-    let width = text.chars().count() as f32 * size * super::MONO_ADVANCE + 48.0;
-    let x = (SCREEN_WIDTH - width) / 2.0;
-    frame.rect(
-        x - BORDER,
-        PROMPT_Y - BORDER,
-        width + 2.0 * BORDER,
-        56.0,
-        PROMPT,
-    );
-    frame.rect(x, PROMPT_Y, width, 50.0, PANEL);
-    frame.label(
-        text,
-        SCREEN_WIDTH / 2.0,
-        PROMPT_Y + 12.0,
-        size,
-        PROMPT,
-        Align::Center,
-    );
-}
-
-/// A small line under the banner (the match against the computer).
+/// A small line above the controls (about practice, see
+/// [`Game::practice_notice`](super::Game::practice_notice)).
 pub fn draw_notice(frame: &mut Frame, text: &str) {
     frame.label(
         text,

@@ -1,22 +1,25 @@
-//! The controls page (`srr::front::controls`): the keyboard presets and the remapping.
+//! The controls page (`srr::front::controls`): the keyboard presets, the remapping and the
+//! practice choice.
 //!
 //! Rows, top to bottom: the preset chooser, one row per action (in `KeyBindings::ACTIONS`
-//! order), then "back". The page reads the keys freshly pressed this tick, in `Key` order, and
-//! only the first one counts:
+//! order), the practice row, then "back". The page reads the keys freshly pressed this tick,
+//! in `Key` order, and only the first one counts:
 //! * `Up` / `Down` move the selection and wrap around;
 //! * on the preset row, `Right` or `Enter` pick the next preset, `Left` the previous one (both
 //!   wrap); a customised layout goes back to the first preset;
 //! * on an action row, `Enter` waits for a key: a bindable key is bound (swapping with the
 //!   action that had it), `Esc` cancels, Enter is ignored and it keeps waiting;
+//! * on the practice row, `Right` or `Enter` go to the next practice choice, `Left` to the
+//!   previous one (see `Practice`);
 //! * `Esc`, or `Enter` on the last row, leaves the page; opened as the pause menu of a fight
 //!   (`ControlsPage::paused`), `P` leaves it too.
 
 use srr::front::controls::{
-    COLUMN_X, ControlsPage, FIRST_ROW_Y, PAUSE_KEY, ROW_HEIGHT, ROWS, Row, controls_lines,
-    preset_name, technique_keys,
+    COLUMN_X, ControlsPage, FIRST_ROW_Y, PAUSE_KEY, Practice, ROW_HEIGHT, ROWS, Row,
+    controls_lines, preset_name, technique_keys,
 };
-use srr::front::{Align, Frame, Rgba};
-use srr::game::{Input, Key, KeyBindings, Technique};
+use srr::front::{Align, Frame, Rgba, SCREEN_HEIGHT};
+use srr::game::{Input, Key, KeyBindings, Rival, Technique};
 
 const WAITING: Rgba = Rgba::hex(0xffe14a);
 const HIGHLIGHT: Rgba = Rgba::hex(0x3a1430);
@@ -47,12 +50,13 @@ fn page_on(row: usize) -> ControlsPage {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn the_rows_are_the_preset_the_actions_and_back() {
-    assert_eq!(ROWS, Input::BITS as usize + 2);
+fn the_rows_are_the_preset_the_actions_the_practice_and_back() {
+    assert_eq!(ROWS, Input::BITS as usize + 3);
     assert_eq!(Row::at(0), Row::Preset);
     for action in 0..KeyBindings::ACTIONS.len() {
         assert_eq!(Row::at(action + 1), Row::Action(action));
     }
+    assert_eq!(Row::at(ROWS - 2), Row::Practice);
     assert_eq!(Row::at(ROWS - 1), Row::Back);
 }
 
@@ -189,8 +193,10 @@ fn up_and_down_move_the_selection_and_wrap() {
     assert!(!press(&mut page, &mut bindings, Key::ArrowUp));
     assert_eq!(page.selected(), Row::Back);
     press(&mut page, &mut bindings, Key::ArrowUp);
+    assert_eq!(page.selected(), Row::Practice);
+    press(&mut page, &mut bindings, Key::ArrowUp);
     assert_eq!(page.selected(), Row::Action(Input::BITS as usize - 1));
-    for _ in 0..2 {
+    for _ in 0..3 {
         press(&mut page, &mut bindings, Key::ArrowDown);
     }
     assert_eq!(page.selected(), Row::Preset);
@@ -247,6 +253,100 @@ fn left_and_right_do_nothing_on_the_other_rows() {
         assert_eq!(bindings, KeyBindings::STANDARD);
         assert_eq!(page, page_on(row));
     }
+}
+
+#[test]
+fn the_practice_row_goes_round_the_choices() {
+    let mut bindings = KeyBindings::STANDARD;
+    let mut page = page_on(ROWS - 2).with_practice(Practice::Alone(Rival::Dummy));
+    assert_eq!(page.selected(), Row::Practice);
+    assert_eq!(page.practice(), Practice::Alone(Rival::Dummy));
+    assert!(!press(&mut page, &mut bindings, Key::ArrowRight));
+    assert_eq!(page.practice(), Practice::Alone(Rival::Brawler));
+    press(&mut page, &mut bindings, Key::Enter);
+    assert_eq!(
+        page.practice(),
+        Practice::Alone(Rival::Dummy),
+        "Enter is next too"
+    );
+    assert!(!page.is_waiting());
+    press(&mut page, &mut bindings, Key::ArrowLeft);
+    assert_eq!(page.practice(), Practice::Alone(Rival::Brawler));
+    assert_eq!(bindings, KeyBindings::STANDARD, "no key changes");
+
+    let mut online = page_on(ROWS - 2).with_practice(Practice::Off);
+    for wanted in [
+        Practice::WhileWaiting(Rival::Brawler),
+        Practice::WhileWaiting(Rival::Dummy),
+        Practice::Off,
+    ] {
+        press(&mut online, &mut bindings, Key::ArrowRight);
+        assert_eq!(online.practice(), wanted);
+    }
+    press(&mut online, &mut bindings, Key::ArrowLeft);
+    assert_eq!(online.practice(), Practice::WhileWaiting(Rival::Dummy));
+
+    let mut playing = page_on(ROWS - 2);
+    assert_eq!(playing.practice(), Practice::Unavailable, "the default");
+    for key in [Key::ArrowLeft, Key::ArrowRight, Key::Enter] {
+        press(&mut playing, &mut bindings, key);
+        assert_eq!(playing.practice(), Practice::Unavailable);
+    }
+}
+
+#[test]
+fn the_practice_choice_knows_its_rival() {
+    assert_eq!(Practice::Alone(Rival::Dummy).rival(), Some(Rival::Dummy));
+    assert_eq!(
+        Practice::WhileWaiting(Rival::Brawler).rival(),
+        Some(Rival::Brawler)
+    );
+    assert_eq!(Practice::Off.rival(), None);
+    assert_eq!(Practice::Unavailable.rival(), None);
+    assert_eq!(Practice::Unavailable.previous(), Practice::Unavailable);
+    assert_eq!(
+        Practice::Alone(Rival::Dummy).previous(),
+        Practice::Alone(Rival::Brawler)
+    );
+    assert_eq!(
+        Practice::WhileWaiting(Rival::Dummy).previous(),
+        Practice::WhileWaiting(Rival::Brawler)
+    );
+    assert_eq!(
+        Practice::WhileWaiting(Rival::Brawler).previous(),
+        Practice::Off,
+        "before the first rival: off"
+    );
+    for practice in [
+        Practice::Off,
+        Practice::WhileWaiting(Rival::Dummy),
+        Practice::Alone(Rival::Brawler),
+    ] {
+        assert_eq!(practice.next().previous(), practice);
+        assert_eq!(practice.previous().next(), practice);
+    }
+    assert_eq!(ControlsPage::paused().practice(), Practice::Unavailable);
+}
+
+#[test]
+fn the_practice_row_reads_the_choice() {
+    let text_of = |practice: Practice| {
+        draw(
+            &ControlsPage::new().with_practice(practice),
+            &KeyBindings::STANDARD,
+        )
+        .text()
+    };
+    let plain = text_of(Practice::Unavailable);
+    assert!(plain.contains("Practice"), "{plain}");
+    assert!(plain.contains("- (not during a match)"), "{plain}");
+    assert!(text_of(Practice::Off).contains("< off >"));
+    assert!(
+        text_of(Practice::WhileWaiting(Rival::Brawler))
+            .contains("< the computer - the room stays open >")
+    );
+    assert!(text_of(Practice::Alone(Rival::Dummy)).contains("< the training dummy >"));
+    assert!(plain.contains("Left / Right: preset, practice"), "{plain}");
 }
 
 #[test]
@@ -320,6 +420,26 @@ fn waiting_treats_the_arrows_as_keys_to_bind() {
 
 fn row_y(index: usize) -> f32 {
     FIRST_ROW_Y + index as f32 * ROW_HEIGHT
+}
+
+#[test]
+fn every_row_and_the_judo_line_fit_the_screen() {
+    for page in [ControlsPage::new(), ControlsPage::paused()] {
+        let frame = draw(&page, &KeyBindings::STANDARD);
+        let judo = frame
+            .labels
+            .iter()
+            .find(|l| l.text.starts_with("Judo:"))
+            .expect("the judo line");
+        assert!(judo.y > row_y(ROWS - 1), "below the last row");
+        for label in &frame.labels {
+            assert!(
+                label.y + label.size <= SCREEN_HEIGHT,
+                "{} runs off the screen",
+                label.text
+            );
+        }
+    }
 }
 
 #[test]

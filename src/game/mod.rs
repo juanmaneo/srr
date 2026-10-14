@@ -24,7 +24,8 @@
 //! 6. the round timer runs and the outcome is evaluated.
 //!
 //! A [`Bot`] plays a fighter for a player who is alone: it reads the [`Match`] and answers with
-//! an [`Input`], deterministically (its randomness is a seeded generator).
+//! an [`Input`], deterministically (its randomness is a seeded generator). [`Rival`] lists the
+//! bots: the training [`Dummy`] and the [`Brawler`], the computer that fights back.
 
 mod bot;
 mod config;
@@ -35,7 +36,7 @@ mod roster;
 mod simulation;
 mod technique;
 
-pub use bot::Bot;
+pub use bot::{Bot, Brawler, CloneBot, Dummy, Rival};
 pub use config::{
     AttackData, ConfigError, Glitch, GlitchSet, GrappleData, MatchConfig, TICKS_PER_SECOND,
     TechniqueData,
