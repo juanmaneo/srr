@@ -98,7 +98,8 @@ pub struct BrawlerConfig {
     pub guard_percent: u32,
     /// Chance, per tick of walking in, of a jump.
     pub jump_percent: u32,
-    /// Ticks between two decisions in reach (at most: a step in halves the wait).
+    /// Ticks between two decisions in reach, picked between the two bounds (in either order;
+    /// at most: a step in halves the wait).
     pub decision_pause: (u32, u32),
 }
 
@@ -579,9 +580,14 @@ impl Brawler {
         self.next() % 100 < u64::from(percent)
     }
 
-    /// A number in `low..=high`.
+    /// A number between `low` and `high`, both included, in either order: a hand-written
+    /// [`BrawlerConfig::decision_pause`] may be reversed. The span is counted in `u64` so that
+    /// `(0, u32::MAX)` cannot overflow.
     fn between(&mut self, low: u32, high: u32) -> u32 {
-        low + (self.next() % u64::from(high - low + 1)) as u32
+        let (low, high) = (low.min(high), low.max(high));
+        let span = u64::from(high - low) + 1;
+        // The remainder is at most `high - low`, so it fits in a u32 and the sum stays <= high.
+        low + (self.next() % span) as u32
     }
 }
 

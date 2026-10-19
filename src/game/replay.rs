@@ -132,6 +132,10 @@ impl Replay {
     /// right after stepping, in the order the ticks run. Inputs of players outside the roster
     /// are dropped.
     ///
+    /// Skip the ticks where the match is [paused](Match::is_paused): stepping a paused match
+    /// changes nothing, but a replay never pauses, so a recorded paused tick would be played
+    /// as a real one and the replay would drift from the match.
+    ///
     /// ```
     /// use srr::game::{Input, MatchConfig, PlayerId, Replay, Roster};
     /// use std::collections::HashMap;

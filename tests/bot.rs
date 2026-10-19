@@ -287,6 +287,36 @@ fn a_configured_bot_obeys_its_config() {
 }
 
 #[test]
+fn any_decision_pause_is_accepted_even_reversed_or_extreme() {
+    let game = duel_at(config(), 600, 650);
+    let pause = |decision_pause| BrawlerConfig {
+        decision_pause,
+        ..BrawlerConfig::default()
+    };
+    // A reversed pause is the same range: the bot plays exactly like with the ordered one.
+    assert_eq!(
+        answers(
+            &mut Brawler::with_config(CPU, 5, pause((14, 8))),
+            &game,
+            300
+        ),
+        answers(
+            &mut Brawler::with_config(CPU, 5, pause((8, 14))),
+            &game,
+            300
+        ),
+    );
+    // The widest range and an empty one neither overflow nor panic.
+    for decision_pause in [(0, u32::MAX), (u32::MAX, 0), (0, 0), (u32::MAX, u32::MAX)] {
+        answers(
+            &mut Brawler::with_config(CPU, 5, pause(decision_pause)),
+            &game,
+            300,
+        );
+    }
+}
+
+#[test]
 fn the_decision_pause_sets_the_pace_of_the_choices_in_reach() {
     let game = duel_at(config(), 600, 650);
     // The committed moves (grabs, techniques, strikes) happen on decision ticks only.

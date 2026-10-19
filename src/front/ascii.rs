@@ -138,7 +138,9 @@ pub const GLYPH_HEIGHT: usize = 5;
 /// case-insensitive.
 ///
 /// The font only holds what the title and the HUD need: the letters of "Shattered Realm:
-/// Rampage" and of "KO" / "FIGHT", the colon, the exclamation mark and the space.
+/// Rampage" and of the banners ("READY", "FIGHT!", "KO", "TIME"), the colon, the
+/// exclamation mark and the space. A missing letter is silently skipped by [`block_pixels`],
+/// so a new banner word needs its letters here.
 pub fn glyph(ch: char) -> Option<[&'static str; GLYPH_HEIGHT]> {
     let rows = match ch.to_ascii_uppercase() {
         'A' => [".###.", "#...#", "#####", "#...#", "#...#"],
@@ -156,6 +158,7 @@ pub fn glyph(ch: char) -> Option<[&'static str; GLYPH_HEIGHT]> {
         'R' => ["####.", "#...#", "####.", "#..#.", "#...#"],
         'S' => [".####", "#....", ".###.", "....#", "####."],
         'T' => ["#####", "..#..", "..#..", "..#..", "..#.."],
+        'Y' => ["#...#", "#...#", ".###.", "..#..", "..#.."],
         ':' => [".", "#", ".", "#", "."],
         '!' => ["#", "#", "#", ".", "#"],
         ' ' => ["...", "...", "...", "...", "..."],

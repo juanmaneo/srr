@@ -428,7 +428,7 @@ fn an_empty_canvas_draws_nothing() {
 
 #[test]
 fn every_supported_character_has_a_rectangular_glyph() {
-    for ch in "ADEFGHIKLMOPRST:! ".chars() {
+    for ch in "ADEFGHIKLMOPRSTY:! ".chars() {
         let rows = glyph(ch).unwrap_or_else(|| panic!("no glyph for {ch:?}"));
         assert_eq!(rows.len(), GLYPH_HEIGHT);
         let width = rows[0].len();
@@ -444,7 +444,7 @@ fn every_supported_character_has_a_rectangular_glyph() {
 
 #[test]
 fn glyphs_are_case_insensitive() {
-    for ch in "adefghiklmoprst".chars() {
+    for ch in "adefghiklmoprsty".chars() {
         assert_eq!(glyph(ch), glyph(ch.to_ascii_uppercase()), "{ch}");
         assert!(glyph(ch).is_some());
     }
@@ -455,6 +455,18 @@ fn unsupported_characters_have_no_glyph() {
     for ch in ['B', 'z', '0', '9', '?', '-', '.', 'é', '\n'] {
         assert_eq!(glyph(ch), None, "{ch:?}");
     }
+}
+
+#[test]
+fn every_banner_word_is_drawn_whole() {
+    // The HUD's big words: a letter missing from the font would be skipped silently ("READY"
+    // was drawn "READ" before the font had a Y).
+    for word in ["READY", "FIGHT!", "KO", "TIME"] {
+        for ch in word.chars() {
+            assert!(glyph(ch).is_some(), "{word:?} lacks {ch:?}");
+        }
+    }
+    assert!(block_pixels("READY").1 > block_pixels("READ").1);
 }
 
 #[test]
