@@ -12,6 +12,12 @@
 //! it, a clock thread, and a mutex around the room. Nothing ever writes to a socket while
 //! holding the mutex, so a connection that stops reading cannot hold up the others: once its
 //! queue of [`QUEUE_LENGTH`] messages is full, it is closed.
+//!
+//! Every connection costs threads, so their number is capped, and one that does not finish
+//! its HTTP request in time is dropped (see [`Limits`]). Once upgraded to a WebSocket, a
+//! connection may stay silent for as long as it likes: a player sits in the lobby without
+//! sending anything until they are ready. A [`Stopper`] handle stops the whole server,
+//! telling every browser first (the binary wires it to Ctrl+C).
 
 pub mod http;
 pub mod room;
@@ -20,8 +26,10 @@ pub mod websocket;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufReader, Write};
+use std::iter;
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
@@ -43,6 +51,37 @@ pub const TICK: Duration = Duration::from_nanos(1_000_000_000 / TICKS_PER_SECOND
 /// Messages waiting to be written to one client (about four seconds of frames) before the
 /// server gives up on it and closes the connection.
 pub const QUEUE_LENGTH: usize = 256;
+/// The most connections open at once by default: the players plus browsers reloading the page
+/// or fetching files in parallel.
+pub const MAX_CONNECTIONS: usize = MAX_PLAYERS * 8;
+/// How long a client has, by default, to send the head of its HTTP request.
+pub const HEAD_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// What the server tolerates from its clients.
+///
+/// ```
+/// use srr_server::{HEAD_TIMEOUT, Limits, MAX_CONNECTIONS};
+///
+/// let limits = Limits::default();
+/// assert_eq!(limits.max_connections, MAX_CONNECTIONS);
+/// assert_eq!(limits.head_timeout, HEAD_TIMEOUT);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// Connections open at once; those beyond are closed straight away.
+    pub max_connections: usize,
+    /// How long a client has to send the head of its request before it is dropped.
+    pub head_timeout: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Limits {
+        Limits {
+            max_connections: MAX_CONNECTIONS,
+            head_timeout: HEAD_TIMEOUT,
+        }
+    }
+}
 
 /// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,25 +156,142 @@ pub fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Com
     Ok(Command::Serve { port, root })
 }
 
-/// Accepts connections forever, one thread each, serving files from `root`; the room's clock
-/// ticks every [`TICK`].
+/// Accepts connections until the server is stopped (see [`serve_with`]); blocks until then.
+/// The room's clock ticks every [`TICK`].
 pub fn serve(listener: TcpListener, root: PathBuf) {
-    serve_with_tick(listener, root, TICK);
+    serve_with_tick(listener, root, TICK).join();
 }
 
 /// [`serve`] with the room's clock ticking every `tick` (tests slow it down to control when
 /// the room gives up on late inputs).
-pub fn serve_with_tick(listener: TcpListener, root: PathBuf, tick: Duration) {
+pub fn serve_with_tick(listener: TcpListener, root: PathBuf, tick: Duration) -> ServerHandle {
+    serve_with(listener, root, tick, Limits::default())
+}
+
+/// [`serve_with_tick`] within `limits` instead of the default ones. The server runs on its own
+/// thread: stop it through [`ServerHandle::stopper`] and wait for it with [`ServerHandle::join`].
+///
+/// ```no_run
+/// use std::net::TcpListener;
+/// use srr_server::{Limits, serve_with, TICK};
+///
+/// let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+/// let server = serve_with(listener, ".".into(), TICK, Limits::default());
+/// server.stopper().stop();
+/// server.join();
+/// ```
+pub fn serve_with(
+    listener: TcpListener,
+    root: PathBuf,
+    tick: Duration,
+    limits: Limits,
+) -> ServerHandle {
     let hub = Arc::new(Mutex::new(Hub::default()));
-    let clock = Arc::clone(&hub);
-    thread::spawn(move || run_clock(&clock, tick));
-    for stream in listener.incoming().flatten() {
-        let hub = Arc::clone(&hub);
-        let root = root.clone();
-        thread::spawn(move || {
-            // A failing connection only concerns its own client.
-            let _ = handle_connection(stream, &root, &hub);
-        });
+    let stopped = Arc::new(AtomicBool::new(false));
+    {
+        let clock = Arc::clone(&hub);
+        let clock_stopped = Arc::clone(&stopped);
+        thread::spawn(move || run_clock(&clock, tick, &clock_stopped));
+    }
+    // A stop while nobody connects must still be noticed: the listener is polled.
+    let _ = listener.set_nonblocking(true);
+    let open = Arc::new(AtomicUsize::new(0));
+    let loop_stopped = Arc::clone(&stopped);
+    let thread = thread::spawn(move || {
+        loop {
+            if loop_stopped.load(Ordering::SeqCst) {
+                break;
+            }
+            let Ok((stream, _)) = listener.accept() else {
+                thread::sleep(ACCEPT_POLL);
+                continue;
+            };
+            // BSD platforms let an accepted socket inherit O_NONBLOCK from its listener.
+            let _ = stream.set_nonblocking(false);
+            // Too many connections: dropping this one closes it.
+            let Some(slot) = Slot::take(&open, limits.max_connections) else {
+                continue;
+            };
+            let hub = Arc::clone(&hub);
+            let root = root.clone();
+            thread::spawn(move || {
+                let _slot = slot;
+                // A failing connection only concerns its own client.
+                let _ = handle_connection(stream, &root, &hub, limits.head_timeout);
+            });
+        }
+        // Tell every client with a close frame (the writer threads flush it and hang up,
+        // which ends the reading threads).
+        let mut hub = lock(&hub);
+        let clients: Vec<ClientId> = hub.writers.keys().copied().collect();
+        for client in clients {
+            hub.queue(client, Outgoing::Close);
+        }
+    });
+    ServerHandle {
+        shutdown: Stopper { stopped },
+        thread,
+    }
+}
+
+/// How long the accept loop waits between two polls of the nonblocking listener: short enough
+/// to notice a stop within moments, long enough to keep the thread idle.
+const ACCEPT_POLL: Duration = Duration::from_millis(5);
+
+/// How to stop a running server from anywhere: a signal handler, another thread, [`ServerHandle`]
+/// itself. Cloning it hands the same power to somebody else.
+///
+/// Stopping is graceful: no connection is accepted anymore, every browser is told with a close
+/// frame (so its match ends), and the room's clock stops ticking.
+#[derive(Clone)]
+pub struct Stopper {
+    stopped: Arc<AtomicBool>,
+}
+
+impl Stopper {
+    /// Asks the server to stop; it does within a few [`ACCEPT_POLL`]s.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+}
+
+/// A server started with [`serve_with`], running on its own thread.
+pub struct ServerHandle {
+    shutdown: Stopper,
+    thread: thread::JoinHandle<()>,
+}
+
+impl ServerHandle {
+    /// A [`Stopper`] that stops this server: keep it (or give it to a signal handler), the
+    /// server runs on.
+    pub fn stopper(&self) -> Stopper {
+        self.shutdown.clone()
+    }
+
+    /// Waits until the server has stopped ([`Stopper::stop`]) and every client has been told.
+    /// Without a stop this blocks forever, like the server does.
+    pub fn join(self) {
+        let _ = self.thread.join();
+    }
+}
+
+/// One of the connections counted by `open`, given back when dropped (even by a panic).
+struct Slot(Arc<AtomicUsize>);
+
+impl Slot {
+    /// A slot, unless `max` are taken already.
+    fn take(open: &Arc<AtomicUsize>, max: usize) -> Option<Slot> {
+        open.try_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+            (count < max).then_some(count + 1)
+        })
+        .ok()
+        .map(|_| Slot(Arc::clone(open)))
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -165,10 +321,10 @@ pub fn ticks_due(next: Instant, now: Instant, period: Duration) -> (u32, Instant
     }
 }
 
-/// Ticks the room every `period`, on a fixed schedule (see [`ticks_due`]).
-fn run_clock(hub: &Mutex<Hub>, period: Duration) {
+/// Ticks the room every `period`, on a fixed schedule (see [`ticks_due`]), until `stopped`.
+fn run_clock(hub: &Mutex<Hub>, period: Duration, stopped: &AtomicBool) {
     let mut next = Instant::now() + period;
-    loop {
+    while !stopped.load(Ordering::SeqCst) {
         thread::sleep(next.saturating_duration_since(Instant::now()));
         let (ticks, after) = ticks_due(next, Instant::now(), period);
         next = after;
@@ -231,17 +387,31 @@ impl Hub {
 }
 
 /// Writes the queued frames of one client until the queue closes (the client left) or the
-/// connection breaks.
+/// connection breaks. Whatever was queued meanwhile goes out in one write, so a client that
+/// reads is not cut off just because the clock queued a burst of frames (after a hiccup).
 fn write_queue(mut stream: TcpStream, queue: Receiver<Outgoing>) {
-    for outgoing in queue {
-        let (opcode, payload, last) = match outgoing {
-            Outgoing::Frame(opcode, payload) => (opcode, payload, false),
-            Outgoing::Close => (OP_CLOSE, Vec::new(), true),
-        };
-        if websocket::write_frame(&mut stream, opcode, &payload).is_err() || last {
+    let mut batch = Vec::new();
+    while let Ok(first) = queue.recv() {
+        let mut last = false;
+        for outgoing in iter::once(first).chain(queue.try_iter().take(QUEUE_LENGTH)) {
+            let (opcode, payload) = match outgoing {
+                Outgoing::Frame(opcode, payload) => (opcode, payload),
+                Outgoing::Close => {
+                    last = true;
+                    (OP_CLOSE, Vec::new())
+                }
+            };
+            // Writing to a vector cannot fail.
+            let _ = websocket::write_frame(&mut batch, opcode, &payload);
+            if last {
+                break;
+            }
+        }
+        if stream.write_all(&batch).is_err() || last {
             let _ = stream.shutdown(Shutdown::Both);
             return;
         }
+        batch.clear();
     }
 }
 
@@ -251,9 +421,16 @@ fn lock(hub: &Mutex<Hub>) -> MutexGuard<'_, Hub> {
     hub.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn handle_connection(stream: TcpStream, root: &Path, hub: &Mutex<Hub>) -> io::Result<()> {
+fn handle_connection(
+    stream: TcpStream,
+    root: &Path,
+    hub: &Mutex<Hub>,
+    head_timeout: Duration,
+) -> io::Result<()> {
     // Inputs are tiny and latency matters more than throughput.
     stream.set_nodelay(true)?;
+    // A client that never finishes its request would hold its thread forever.
+    stream.set_read_timeout(Some(head_timeout))?;
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
     let head = http::read_head(&mut reader)?;
@@ -268,6 +445,9 @@ fn handle_connection(stream: TcpStream, root: &Path, hub: &Mutex<Hub>) -> io::Re
     }
     match request.header("sec-websocket-key") {
         Some(key) if request.is_websocket_upgrade() => {
+            // Seated players stay silent in the lobby; a timeout in the middle of a frame
+            // would also lose track of where the next one starts.
+            reader.get_ref().set_read_timeout(None)?;
             writer.write_all(&http::websocket_handshake(key))?;
             run_websocket(reader, writer, hub)
         }

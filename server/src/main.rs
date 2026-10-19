@@ -1,9 +1,15 @@
 use std::net::{IpAddr, Ipv4Addr, TcpListener, UdpSocket};
 use std::path::Path;
 use std::process::ExitCode;
+use std::thread;
+use std::time::Duration;
 
 use srr::net::MAX_PLAYERS;
-use srr_server::{Command, parse_args, serve, usage};
+use srr_server::{Command, Limits, TICK, parse_args, serve_with, usage};
+
+/// How long to wait, after the server has stopped, for the writer threads to flush the close
+/// frames to every browser.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
 
 fn main() -> ExitCode {
     let (port, root) = match parse_args(std::env::args().skip(1)) {
@@ -31,7 +37,14 @@ fn main() -> ExitCode {
         }
     };
     print_addresses(port, &root);
-    serve(listener, root);
+    let server = serve_with(listener, root, TICK, Limits::default());
+    // Ctrl+C: stop accepting, tell every browser, and let the server wind down.
+    let stop = server.stopper();
+    if ctrlc::set_handler(move || stop.stop()).is_err() {
+        eprintln!("warning: cannot watch Ctrl+C: kill the process to stop the server");
+    }
+    server.join();
+    thread::sleep(SHUTDOWN_GRACE);
     ExitCode::SUCCESS
 }
 
@@ -43,7 +56,7 @@ fn print_addresses(port: u16, root: &Path) {
         None => println!("  local network: http://<this machine's IP>:{port}"),
     }
     println!(
-        "Up to {MAX_PLAYERS} browsers sit in the room; a match starts when everybody pressed Enter. Ctrl+C to stop."
+        "Up to {MAX_PLAYERS} browsers sit in the room; a match starts when everybody pressed Enter. Ctrl+C stops the server."
     );
 }
 

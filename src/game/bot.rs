@@ -1,12 +1,15 @@
 //! The computer opponents: a [`Bot`] reads the match like a player looks at the screen and
 //! answers with the [`Input`] of its fighter.
 //!
-//! Two bots exist, listed by [`Rival`] (the menus cycle through it, and it spawns them):
+//! Four rivals exist, listed by [`Rival`] (the menus cycle through it, and it spawns them):
 //!
 //! * the [`Dummy`], a training dummy that never presses anything;
-//! * the [`Brawler`], the computer that fights back, described below.
+//! * the [`Brawler`], the computer that fights back, described below — in three tunings:
+//!   the standard one, [`BrawlerConfig::PATIENT`] (guards everything, picks its openings) and
+//!   [`BrawlerConfig::AGGRESSIVE`] (rushes in, rarely guards).
 //!
-//! A new strategy is a new type implementing [`Bot`] and a new [`Rival`] naming it. Bots are
+//! A new strategy is a new type implementing [`Bot`] and a new [`Rival`] naming it; a new
+//! difficulty of the same strategy is a new [`BrawlerConfig`]. Bots are
 //! deterministic, like the rest of the rules: the brawler's "randomness" is a xorshift
 //! generator seeded by the caller, so the same seed against the same inputs plays the same
 //! match. It plays fair: it only sees what the [`Match`] shows and presses buttons under the
@@ -32,9 +35,11 @@
 //!   under a high attack thrown from the floor;
 //! * out of reach, it walks in (jumping once in a while); out of the enemy's line, it
 //!   sidesteps back onto it;
-//! * in reach, every 8 to 14 ticks it picks something: a grab, a judo technique or a strike up
-//!   close, a strike or a step in further away; between two decisions it holds its ground,
-//!   walks in or backs off.
+//! * in reach, every `decision_pause` ticks at most it picks something: a grab, a judo
+//!   technique or a strike up close, a strike or a step in further away; between two
+//!   decisions it holds its ground, walks in or backs off. How often and how patiently is
+//!   tuned by its [`BrawlerConfig`], which a caller may adjust (the defaults are the
+//!   standard computer).
 //!
 //! Whatever it does on the floor, the bot sidesteps towards the enemy's line while it is more
 //! than half the `attack_depth` away from it, so a sidestep only shakes it off for a moment.
@@ -67,21 +72,77 @@ use super::roster::PlayerId;
 use super::simulation::{Match, Phase};
 use super::technique::Technique;
 
-/// Chance, per tick, that a bottom mashes a fresh press (when it did not press on the tick
-/// before): about 12 presses a second.
-const MASH_PERCENT: u32 = 25;
-/// Chance, per tick of the counter window, that the bottom of a projection counters it.
-const COUNTER_PERCENT: u32 = 8;
-/// Chance that the bottom of a fresh clinch tries the reversal glitch.
-const REVERSAL_PERCENT: u32 = 30;
-/// Chance, per tick, that the top strikes while waiting to advance.
-const TOP_STRIKE_PERCENT: u32 = 12;
-/// Chance that the bot guards against one enemy strike.
-const GUARD_PERCENT: u32 = 55;
-/// Chance, per tick of walking in, of a jump.
-const JUMP_PERCENT: u32 = 2;
-/// Ticks between two decisions in reach.
-const PAUSE: (u32, u32) = (8, 14);
+/// How the computer is tuned: the chances behind every dice it rolls and how patiently it
+/// waits between two decisions. [`BrawlerConfig::default`] is the standard computer;
+/// [`Brawler::with_config`] builds a brawler with a custom one.
+///
+/// ```
+/// use srr::game::BrawlerConfig;
+///
+/// let config = BrawlerConfig::default();
+/// assert_eq!(config.guard_percent, 55);
+/// assert_eq!(config.decision_pause, (8, 14));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BrawlerConfig {
+    /// Chance, per tick, that a bottom mashes a fresh press (when it did not press on the
+    /// tick before): about `100 * mash_percent / TICKS_PER_SECOND` presses a second.
+    pub mash_percent: u32,
+    /// Chance, per tick of the counter window, that the bottom of a projection counters it.
+    pub counter_percent: u32,
+    /// Chance that the bottom of a fresh clinch tries the reversal glitch.
+    pub reversal_percent: u32,
+    /// Chance, per tick, that the top strikes while waiting to advance.
+    pub top_strike_percent: u32,
+    /// Chance that the bot guards against one enemy strike.
+    pub guard_percent: u32,
+    /// Chance, per tick of walking in, of a jump.
+    pub jump_percent: u32,
+    /// Ticks between two decisions in reach (at most: a step in halves the wait).
+    pub decision_pause: (u32, u32),
+}
+
+impl Default for BrawlerConfig {
+    /// The standard computer: about 12 mashes a second, a patient guard, a jump in fifty
+    /// ticks of walking, and a decision every 8 to 14 ticks.
+    fn default() -> Self {
+        BrawlerConfig {
+            mash_percent: 25,
+            counter_percent: 8,
+            reversal_percent: 30,
+            top_strike_percent: 12,
+            guard_percent: 55,
+            jump_percent: 2,
+            decision_pause: (8, 14),
+        }
+    }
+}
+
+impl BrawlerConfig {
+    /// The patient computer: guards nearly everything, waits for its openings, escapes
+    /// grapples with method and counters often, but jumps rarely and never rushes in.
+    pub const PATIENT: BrawlerConfig = BrawlerConfig {
+        mash_percent: 20,
+        counter_percent: 15,
+        reversal_percent: 20,
+        top_strike_percent: 8,
+        guard_percent: 85,
+        jump_percent: 1,
+        decision_pause: (16, 26),
+    };
+
+    /// The aggressive computer: rushes in, decides twice as often, presses hard in grapples
+    /// and jumps at the enemy, but guards one strike in five.
+    pub const AGGRESSIVE: BrawlerConfig = BrawlerConfig {
+        mash_percent: 40,
+        counter_percent: 5,
+        reversal_percent: 40,
+        top_strike_percent: 20,
+        guard_percent: 20,
+        jump_percent: 4,
+        decision_pause: (4, 7),
+    };
+}
 
 const GRAB: Input = Input {
     grab: true,
@@ -121,14 +182,24 @@ impl Clone for Box<dyn Bot> {
 }
 
 /// The computer opponents a player alone can fight. Each one names a [`Bot`] and spawns it;
-/// [`Rival::ALL`] is the order the menus go round them in.
+/// [`Rival::ALL`] is the order the menus go round them in: the three computers of increasing
+/// recklessness, then the training dummy.
 ///
 /// ```
 /// use srr::game::Rival;
 ///
-/// assert_eq!(Rival::ALL, [Rival::Brawler, Rival::Dummy]);
+/// assert_eq!(
+///     Rival::ALL,
+///     [
+///         Rival::Brawler,
+///         Rival::Patient,
+///         Rival::Aggressive,
+///         Rival::Dummy
+///     ]
+/// );
 /// assert_eq!(Rival::Dummy.next(), Rival::Brawler, "round and round");
-/// assert_eq!(Rival::Brawler.next(), Rival::Dummy);
+/// assert_eq!(Rival::Brawler.next(), Rival::Patient);
+/// assert_eq!(Rival::Aggressive.next(), Rival::Dummy);
 /// assert_eq!(Rival::Brawler.previous(), Rival::Dummy);
 /// assert_eq!(Rival::Dummy.name(), "the training dummy");
 /// assert!(!Rival::Dummy.fights() && Rival::Brawler.fights());
@@ -137,14 +208,24 @@ impl Clone for Box<dyn Bot> {
 pub enum Rival {
     /// The training dummy ([`Dummy`]): it never moves.
     Dummy,
-    /// The computer ([`Brawler`]): it fights back.
+    /// The computer ([`Brawler`], standard tuning): it fights back.
     Brawler,
+    /// The patient computer ([`Brawler`], [`BrawlerConfig::PATIENT`]): it guards and waits.
+    Patient,
+    /// The aggressive computer ([`Brawler`], [`BrawlerConfig::AGGRESSIVE`]): it rushes in.
+    Aggressive,
 }
 
 impl Rival {
-    /// Every rival, in menu order: the computer first (a fight is what a player waiting for
-    /// others most likely wants), the training dummy next.
-    pub const ALL: [Rival; 2] = [Rival::Brawler, Rival::Dummy];
+    /// Every rival, in menu order: the standard computer first (a fight is what a player
+    /// waiting for others most likely wants), then the patient and the aggressive ones, the
+    /// training dummy last.
+    pub const ALL: [Rival; 4] = [
+        Rival::Brawler,
+        Rival::Patient,
+        Rival::Aggressive,
+        Rival::Dummy,
+    ];
 
     /// The rival after this one (the first after the last).
     pub fn next(self) -> Rival {
@@ -168,6 +249,8 @@ impl Rival {
         match self {
             Rival::Dummy => "the training dummy",
             Rival::Brawler => "the computer",
+            Rival::Patient => "the patient computer",
+            Rival::Aggressive => "the aggressive computer",
         }
     }
 
@@ -177,11 +260,18 @@ impl Rival {
         self != Rival::Dummy
     }
 
-    /// A fresh bot controlling `player`, seeded with `seed` (meaningless to a dummy).
+    /// A fresh bot controlling `player`, seeded with `seed` (meaningless to a dummy). The
+    /// three computers are the same [`Brawler`] with different [`BrawlerConfig`]s.
     pub fn spawn(self, player: PlayerId, seed: u64) -> Box<dyn Bot> {
         match self {
             Rival::Dummy => Box::new(Dummy::new(player)),
             Rival::Brawler => Box::new(Brawler::new(player, seed)),
+            Rival::Patient => Box::new(Brawler::with_config(player, seed, BrawlerConfig::PATIENT)),
+            Rival::Aggressive => Box::new(Brawler::with_config(
+                player,
+                seed,
+                BrawlerConfig::AGGRESSIVE,
+            )),
         }
     }
 }
@@ -223,6 +313,8 @@ pub struct Brawler {
     player: PlayerId,
     /// The xorshift state; never zero.
     state: u64,
+    /// How the brawler is tuned.
+    config: BrawlerConfig,
     /// The input of the previous tick, to make fresh presses.
     previous: Input,
     /// Ticks before the next decision in reach.
@@ -248,7 +340,15 @@ impl Bot for Brawler {
 
 impl Brawler {
     /// A brawler controlling `player`; two brawlers with the same seed play the same way.
+    /// It is tuned by [`BrawlerConfig::default`]; see [`Brawler::with_config`] for another
+    /// tuning.
     pub fn new(player: PlayerId, seed: u64) -> Self {
+        Self::with_config(player, seed, BrawlerConfig::default())
+    }
+
+    /// A brawler controlling `player`, tuned by `config`; two brawlers with the same seed and
+    /// the same config play the same way.
+    pub fn with_config(player: PlayerId, seed: u64, config: BrawlerConfig) -> Self {
         // splitmix64, so that close seeds give unrelated sequences.
         let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -256,6 +356,7 @@ impl Brawler {
         Brawler {
             player,
             state: (z ^ (z >> 31)) | 1,
+            config,
             previous: Input::NONE,
             wait: 0,
             plan: Plan::Hold,
@@ -326,7 +427,7 @@ impl Brawler {
             .fold(config.grapple.range, i32::max);
         if distance > reach {
             self.plan = Plan::Approach;
-            let jump = self.chance(JUMP_PERCENT);
+            let jump = self.chance(self.config.jump_percent);
             return Input {
                 jump,
                 ..sidestepping(walking(toward), lane)
@@ -345,7 +446,7 @@ impl Brawler {
             };
             return sidestepping(walk, lane);
         }
-        self.wait = self.between(PAUSE.0, PAUSE.1);
+        self.wait = self.between(self.config.decision_pause.0, self.config.decision_pause.1);
         self.offense(distance, toward, config)
     }
 
@@ -382,7 +483,7 @@ impl Brawler {
         match self.guard {
             Some(guard) => guard,
             None => {
-                let guard = self.chance(GUARD_PERCENT);
+                let guard = self.chance(self.config.guard_percent);
                 self.guard = Some(guard);
                 guard
             }
@@ -425,7 +526,7 @@ impl Brawler {
         match (grapple.role, position.technique()) {
             (GrappleRole::Bottom, Some(technique)) if position.is_projection() => {
                 let window = config.technique(technique).counter_window;
-                if grapple.held_ticks < window && self.chance(COUNTER_PERCENT) {
+                if grapple.held_ticks < window && self.chance(self.config.counter_percent) {
                     technique_input(technique)
                 } else {
                     Input::NONE
@@ -435,11 +536,11 @@ impl Brawler {
                 if position == GrapplePosition::Clinch
                     && grapple.held_ticks == 0
                     && config.glitches.contains(Glitch::Reversal)
-                    && self.chance(REVERSAL_PERCENT) =>
+                    && self.chance(self.config.reversal_percent) =>
             {
                 GRAB
             }
-            (GrappleRole::Bottom, _) if self.chance(MASH_PERCENT) => {
+            (GrappleRole::Bottom, _) if self.chance(self.config.mash_percent) => {
                 self.mash_kick = !self.mash_kick;
                 let limb = if self.mash_kick {
                     Limb::Kick
@@ -459,7 +560,7 @@ impl Brawler {
             {
                 GRAB
             }
-            (GrappleRole::Top, _) if self.chance(TOP_STRIKE_PERCENT) => {
+            (GrappleRole::Top, _) if self.chance(self.config.top_strike_percent) => {
                 Input::pressing(Attack::punch(Strength::Low))
             }
             (GrappleRole::Top, _) => Input::NONE,

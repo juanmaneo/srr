@@ -8,3 +8,5 @@ publish = false
 [dependencies]
 # Only the rules and the wire protocol; never Bevy.
 srr = { path = "..", default-features = false }
+# Ctrl+C handling, used by the binary only (`src/main.rs`); the library stays standard-only.
+ctrlc = "3.5"

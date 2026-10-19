@@ -98,7 +98,10 @@ impl Roster {
     pub fn new(slots: Vec<PlayerSlot>) -> Result<Self, RosterError> {
         check_player_count(slots.len())?;
         for (index, slot) in slots.iter().enumerate() {
-            if slots[..index].iter().any(|other| other.player == slot.player) {
+            if slots[..index]
+                .iter()
+                .any(|other| other.player == slot.player)
+            {
                 return Err(RosterError::DuplicatePlayer(slot.player));
             }
         }
@@ -158,7 +161,9 @@ impl Roster {
     /// assert_eq!(roster.team_of(PlayerId(3)), Some(TeamId(1)));
     /// ```
     pub fn from_team_sizes(sizes: &[usize]) -> Result<Self, RosterError> {
-        let count = sizes.iter().fold(0usize, |sum, &size| sum.saturating_add(size));
+        let count = sizes
+            .iter()
+            .fold(0usize, |sum, &size| sum.saturating_add(size));
         check_player_count(count)?;
         if sizes.contains(&0) {
             return Err(RosterError::EmptyTeam);

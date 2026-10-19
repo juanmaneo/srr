@@ -40,9 +40,10 @@ connection only slows its own fighter, never the party (see
 [How the online match works](#how-the-online-match-works)). The rules engine already
 supports alliances (2v1…), which later iterations will open up.
 
-Alone? **Practise** against the training dummy or the computer (the bot): `T` on the title
-screen or while waiting in the room, and `T` or the pause menu to switch between the two; see
-[Playing alone](#playing-alone-the-training-dummy-or-the-computer).
+Alone? **Practise** against the training dummy or the computers (the bots): `T` on the
+title screen or while waiting in the room, and `T` or the pause menu to switch between
+rivals; see
+[Playing alone](#playing-alone-the-training-dummy-or-the-computers).
 
 ### Controls
 
@@ -147,9 +148,10 @@ can be changed whenever you want, not only before playing.
   `T` cannot be bound (they drive the menus, the readiness for the next match, the pause, the
   view and practice). The preset row then reads **Custom**;
 * on the **Practice** row, `←` / `→` (or `Enter`) choose who to practise against: **the
-  computer** or **the training dummy** (and, online, **off**: no practice fight, the room only);
-  the change is carried out at once, even in the middle of a round. See
-  [Playing alone](#playing-alone-the-training-dummy-or-the-computer);
+  computer**, **the patient computer**, **the aggressive computer** or **the training
+  dummy** (and, online, **off**: no practice fight, the room only); the change is carried
+  out at once, even in the middle of a round. See
+  [Playing alone](#playing-alone-the-training-dummy-or-the-computers);
 * `Esc` (or `Enter` on "Back to the title") goes back to the title; from the pause menu, `Esc`,
   `P` or `Enter` on "Resume the fight" goes back to the fight.
 
@@ -302,7 +304,7 @@ standing, or at time-up (most health wins). Every player then presses `Enter` to
 ready, including players who arrived meanwhile ("P4 joins the next round"). Round wins are
 counted on the scoreboard as long as the same players keep fighting.
 
-### Playing alone: the training dummy or the computer
+### Playing alone: the training dummy or the computers
 
 A practice fight is a 1v1 against a **rival** played by the game, as player 2:
 
@@ -313,23 +315,29 @@ A practice fight is a 1v1 against a **rival** played by the game, as player 2:
   crouches under high attacks (never under a flying kick), turns around with `↓` + direction
   like you, mashes out of grapples, climbs to the submission, and sometimes counters a judo
   throw with the same two keys. It is deterministic (seeded, no real randomness), so it is
-  fully tested.
+  fully tested;
+* **the patient computer** and **the aggressive computer**: the same brawler with another
+  tuning (`BrawlerConfig`, see the [tuning guide](docs/tuning-guide.md)). The patient one
+  guards nearly everything, waits for its openings and escapes grapples with method, but
+  jumps rarely and never rushes in; the aggressive one decides twice as often, presses hard
+  in the grapples and jumps at you, but guards only one strike in five.
 
-Both are bots behind the same `Bot` trait (`src/game/bot.rs`), listed by `Rival`; switching
-the rival just swaps the bot, in the middle of the round if you like, and a new strategy is a
-new implementation.
+All four are bots behind the same `Bot` trait (`src/game/bot.rs`), listed by `Rival`;
+switching the rival just swaps the bot, in the middle of the round if you like, and a new
+strategy is a new implementation.
 
 * **Practice mode** (`cargo run`, or `?practice` in the browser) is nothing but a practice
   fight: `Enter` (or `T`) on the title screen starts it against the training dummy. The
-  notice under the banner says who you fight and that **`T` switches to the other rival**;
+  notice under the banner says who you fight and that **`T` switches to the next rival**;
   the **Practice** row of the pause menu (`P`) does the same.
 * **Online**, while waiting in the room (alone, or for the others to get ready), `T` starts a
-  practice fight against the computer; `T` again switches to the dummy, then back to the room.
+  practice fight against the computer; `T` again goes through the patient and aggressive
+  computers and the dummy, then back to the room.
   `T` on the title screen goes straight to it. The fight runs only in your browser while the
   room stays open: when someone joins, the notice says so ("P2 is here - Esc: leave the
   practice"); `Esc` brings you back to the room, where `Enter` gets you ready for the real
   match, and a real match that starts takes over anyway. The pause menu's Practice row offers
-  the same choices (the computer, the dummy, off). During an online match the row reads
+  the same choices (the three computers, the dummy, off). During an online match the row reads
   "not during a match" and `T` does nothing.
 
 After a round alone, `Enter` starts the next one at once.
@@ -461,6 +469,8 @@ cargo run --release -p srr-server -- --dir dist --port 8080
 
 It serves the files of `DIR` on `GET` and the room (up to 10 players) on the WebSocket at
 `/ws`, and runs the room's clock (60 ticks per second) that sends the frames of late players.
+`Ctrl-C` stops it cleanly: the browsers are told with a close frame, the sockets are flushed,
+and the process exits 0.
 
 ---
 
@@ -471,8 +481,9 @@ It serves the files of `DIR` on `GET` and the room (up to 10 players) on the Web
 * `src/game/` – the engine-agnostic rules: roster and alliances, fixed-step deterministic match
   simulation, the six attacks and their frame data, blocking, crouching, push boxes, manual
   turning, the key bindings and their presets, grappling, the judo techniques and their counters, intentional glitches,
-  and the computer opponents (`bot.rs`: the `Bot` trait, the training dummy and the seeded
-  brawler, listed by `Rival`).
+  the computer opponents (`bot.rs`: the `Bot` trait, the training dummy and the seeded
+  brawler behind three tunings, listed by `Rival`) and the replays (`replay.rs`: the input
+  frames of a match are the match).
   No engine, clock, thread or randomness, so it runs the same in the browser and on every
   machine of an online match.
 * `src/net/` – the pure networking logic: the binary protocol, sets of players, the
@@ -497,6 +508,10 @@ It serves the files of `DIR` on `GET` and the room (up to 10 players) on the Web
   frames, timing reports) for LAN matches of 2 to 10 players; `server/tests/network.rs`
   simulates ten browsers over bad networks.
 * `xtask/` – the `cargo xtask` build automation.
+* `benches/` – the `criterion` benchmarks: the simulation (`Match::step` at 2, 5 and 10
+  players), the music renderer and the protocol round-trip (`cargo bench`).
+* `docs/` – the [tuning guide](docs/tuning-guide.md): the frame data of the whole game
+  (attacks, grappling, techniques) and the bot tunings, explained for balance work.
 * `web/index.html` – the page that loads the WASM build.
 
 ### Native (development)

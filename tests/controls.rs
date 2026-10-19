@@ -266,7 +266,7 @@ fn the_practice_row_goes_round_the_choices() {
     press(&mut page, &mut bindings, Key::Enter);
     assert_eq!(
         page.practice(),
-        Practice::Alone(Rival::Dummy),
+        Practice::Alone(Rival::Patient),
         "Enter is next too"
     );
     assert!(!page.is_waiting());
@@ -277,6 +277,8 @@ fn the_practice_row_goes_round_the_choices() {
     let mut online = page_on(ROWS - 2).with_practice(Practice::Off);
     for wanted in [
         Practice::WhileWaiting(Rival::Brawler),
+        Practice::WhileWaiting(Rival::Patient),
+        Practice::WhileWaiting(Rival::Aggressive),
         Practice::WhileWaiting(Rival::Dummy),
         Practice::Off,
     ] {
@@ -306,11 +308,11 @@ fn the_practice_choice_knows_its_rival() {
     assert_eq!(Practice::Unavailable.previous(), Practice::Unavailable);
     assert_eq!(
         Practice::Alone(Rival::Dummy).previous(),
-        Practice::Alone(Rival::Brawler)
+        Practice::Alone(Rival::Aggressive)
     );
     assert_eq!(
         Practice::WhileWaiting(Rival::Dummy).previous(),
-        Practice::WhileWaiting(Rival::Brawler)
+        Practice::WhileWaiting(Rival::Aggressive)
     );
     assert_eq!(
         Practice::WhileWaiting(Rival::Brawler).previous(),

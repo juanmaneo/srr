@@ -21,6 +21,16 @@ name = "srr"
 path = "src/main.rs"
 required-features = ["client"]
 
+# The benchmarks of `benches/`: `cargo bench` (they also compile with `cargo test --workspace`,
+# which builds every target). Without the default features criterion stays light: no rayon,
+# no plotters, only what `cargo bench` needs to run.
+[[bench]]
+name = "benches"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
 [dependencies]
 # Audio output for the generated music, natively (ALSA, ...) and in the browser (WebAudio).
 # Pinned to 0.17.1: it is the last cpal linking `alsa-sys` 0.3, the one Fyrox (`tinyaudio`)

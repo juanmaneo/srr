@@ -11,9 +11,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use srr::game::{
-    Attack, AttackData, Bot, Brawler, Dummy, Facing, FighterState, GlitchSet, GrapplePosition,
-    GrappleRole, Input, Limb, Match, MatchConfig, Outcome, Phase, PlayerId, Rival, Roster,
-    Strength, TeamId, Technique,
+    Attack, AttackData, Bot, Brawler, BrawlerConfig, Dummy, Facing, FighterState, GlitchSet,
+    GrapplePosition, GrappleRole, Input, Limb, Match, MatchConfig, Outcome, Phase, PlayerId, Rival,
+    Roster, Strength, TeamId, Technique,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -144,29 +144,47 @@ fn the_rivals_spawn_their_bots() {
     let mut dummy = Rival::Dummy.spawn(CPU, 9);
     assert_eq!(dummy.player(), CPU);
     assert_eq!(dummy.think(&game), Input::NONE);
+    // Every computer is the brawler with its own tuning.
+    for (rival, tuning) in [
+        (Rival::Brawler, BrawlerConfig::default()),
+        (Rival::Patient, BrawlerConfig::PATIENT),
+        (Rival::Aggressive, BrawlerConfig::AGGRESSIVE),
+    ] {
+        let mut bot = rival.spawn(CPU, 9);
+        assert_eq!(bot.player(), CPU);
+        assert_eq!(
+            bot.think(&game),
+            Brawler::with_config(CPU, 9, tuning).think(&game),
+            "{rival:?}: the brawler, with that tuning"
+        );
+    }
     let mut brawler = Rival::Brawler.spawn(CPU, 9);
-    assert_eq!(brawler.player(), CPU);
-    assert_eq!(
-        brawler.think(&game),
-        Brawler::new(CPU, 9).think(&game),
-        "the brawler, with that seed"
-    );
     assert!(brawler.think(&game).left, "walks in");
     assert_eq!(format!("{dummy:?}"), "Dummy { player: PlayerId(1) }");
 }
 
 #[test]
 fn the_rivals_go_round_in_menu_order_and_have_names() {
-    assert_eq!(Rival::ALL, [Rival::Brawler, Rival::Dummy]);
+    assert_eq!(
+        Rival::ALL,
+        [
+            Rival::Brawler,
+            Rival::Patient,
+            Rival::Aggressive,
+            Rival::Dummy
+        ]
+    );
     for rival in Rival::ALL {
         assert_eq!(rival.next().previous(), rival);
         assert_eq!(rival.previous().next(), rival);
-        assert_ne!(rival.next(), rival, "two rivals: always the other one");
+        assert_ne!(rival.next(), rival, "four rivals: always another one");
         assert!(rival.name().starts_with("the "), "{}", rival.name());
+        assert_eq!(rival.fights(), rival != Rival::Dummy);
     }
     assert_eq!(Rival::Brawler.name(), "the computer");
+    assert_eq!(Rival::Patient.name(), "the patient computer");
+    assert_eq!(Rival::Aggressive.name(), "the aggressive computer");
     assert_eq!(Rival::Dummy.name(), "the training dummy");
-    assert!(Rival::Brawler.fights());
     assert!(!Rival::Dummy.fights(), "a punching bag");
 }
 
@@ -190,6 +208,200 @@ fn a_boxed_bot_is_cloned_with_its_state() {
     );
     let dummy: Box<dyn Bot> = Rival::Dummy.spawn(CPU, 0);
     assert_eq!(dummy.clone().player(), CPU);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The brawler's tuning (`BrawlerConfig`)
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn the_default_config_is_the_standard_computer() {
+    assert_eq!(BrawlerConfig::default().mash_percent, 25);
+    assert_eq!(BrawlerConfig::default().guard_percent, 55);
+    assert_eq!(BrawlerConfig::default().decision_pause, (8, 14));
+    assert_eq!(
+        Brawler::new(CPU, 9),
+        Brawler::with_config(CPU, 9, BrawlerConfig::default()),
+        "new is with_config with the default"
+    );
+}
+
+#[test]
+fn a_configured_bot_obeys_its_config() {
+    let game = duel_at(config(), 100, 1100);
+
+    // Never jumps.
+    let no_jumps = BrawlerConfig {
+        jump_percent: 0,
+        ..BrawlerConfig::default()
+    };
+    let inputs = answers(&mut Brawler::with_config(CPU, 9, no_jumps), &game, 1000);
+    assert!(inputs.iter().all(|i| !i.jump), "never a jump");
+
+    // Always jumps while it walks in.
+    let always_jumps = BrawlerConfig {
+        jump_percent: 100,
+        ..BrawlerConfig::default()
+    };
+    let inputs = answers(&mut Brawler::with_config(CPU, 9, always_jumps), &game, 100);
+    assert!(inputs.iter().all(|i| i.jump), "a jump every tick");
+
+    // Never guards.
+    let no_guard = BrawlerConfig {
+        guard_percent: 0,
+        ..BrawlerConfig::default()
+    };
+    let mut game = duel_at(config(), 600, 660);
+    step(
+        &mut game,
+        Input::pressing(Attack::punch(Strength::Low)),
+        Input::NONE,
+    );
+    let mut bot = Brawler::with_config(CPU, 3, no_guard);
+    assert_ne!(
+        bot.think(&game),
+        walking(false),
+        "never steps back to block"
+    );
+
+    // Always guards, so it crouches under a high kick from the floor.
+    let always_guards = BrawlerConfig {
+        guard_percent: 100,
+        ..BrawlerConfig::default()
+    };
+    let mut game = duel_at(config(), 600, 660);
+    step(
+        &mut game,
+        Input::pressing(Attack::kick(Strength::High)),
+        Input::NONE,
+    );
+    let mut bot = Brawler::with_config(CPU, 3, always_guards);
+    assert_eq!(
+        bot.think(&game),
+        Input {
+            down: true,
+            ..Input::NONE
+        },
+        "crouches under the high kick"
+    );
+}
+
+#[test]
+fn the_decision_pause_sets_the_pace_of_the_choices_in_reach() {
+    let game = duel_at(config(), 600, 650);
+    // The committed moves (grabs, techniques, strikes) happen on decision ticks only.
+    let pace = |pause: (u32, u32)| {
+        let config = BrawlerConfig {
+            decision_pause: pause,
+            ..BrawlerConfig::default()
+        };
+        let inputs = answers(&mut Brawler::with_config(CPU, 11, config), &game, 3000);
+        inputs
+            .iter()
+            .filter(|i| i.grab || i.attack().is_some())
+            .count()
+    };
+    let quick = pace((1, 1));
+    let slow = pace((20, 20));
+    assert!(
+        quick > 1000 && slow < 1000,
+        "a decision every other tick: {quick}, every twenty-one: {slow}"
+    );
+}
+
+#[test]
+fn a_configured_bot_is_still_deterministic() {
+    let fight = |bot: &mut Brawler| {
+        let mut game = Match::new(Roster::duel(), config()).unwrap();
+        let mut inputs = Vec::new();
+        while game.outcome().is_none() {
+            let input = bot.think(&game);
+            step(&mut game, Input::NONE, input);
+            inputs.push(input);
+        }
+        (inputs, game)
+    };
+    let config = BrawlerConfig {
+        mash_percent: 50,
+        guard_percent: 10,
+        ..BrawlerConfig::default()
+    };
+    let (inputs, game) = fight(&mut Brawler::with_config(CPU, 7, config));
+    let (again, replay) = fight(&mut Brawler::with_config(CPU, 7, config));
+    assert_eq!(inputs, again);
+    assert_eq!(game, replay);
+    // The jump chance governs the walk towards the enemy, so another value is another fight
+    // (the guard and the mash never come up against an idle player).
+    let (other_config, _) = fight(&mut Brawler::with_config(
+        CPU,
+        7,
+        BrawlerConfig {
+            jump_percent: 100,
+            ..config
+        },
+    ));
+    assert_ne!(inputs, other_config, "another tuning, another fight");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The rivals' difficulty tunings
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn the_patient_computer_guards_and_the_aggressive_one_rushes_in() {
+    // Against a jab coming: the patient one steps back to block, the aggressive one rarely does.
+    let blocks = |rival: Rival| {
+        (0..40)
+            .filter(|&seed| {
+                let mut game = duel_at(config(), 600, 660);
+                step(
+                    &mut game,
+                    Input::pressing(Attack::punch(Strength::Low)),
+                    Input::NONE,
+                );
+                let mut bot = rival.spawn(CPU, seed);
+                bot.think(&game) == walking(false)
+            })
+            .count()
+    };
+    let patient = blocks(Rival::Patient);
+    let aggressive = blocks(Rival::Aggressive);
+    assert!(
+        patient > 25 && aggressive < 15,
+        "patient guards {patient} times in 40, aggressive {aggressive}"
+    );
+
+    // In reach, the aggressive one commits to a move about twice as often.
+    let game = duel_at(config(), 600, 650);
+    let commits = |rival: Rival| {
+        let mut bot = rival.spawn(CPU, 11);
+        answers(bot.as_mut(), &game, 3000)
+            .iter()
+            .filter(|i| i.grab || i.attack().is_some())
+            .count()
+    };
+    assert!(
+        commits(Rival::Aggressive) > commits(Rival::Patient),
+        "the aggressive computer decides more often"
+    );
+}
+
+#[test]
+fn every_computer_beats_an_idle_player() {
+    for rival in [Rival::Brawler, Rival::Patient, Rival::Aggressive] {
+        let mut game = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+        let mut bot = rival.spawn(CPU, 0);
+        while game.outcome().is_none() {
+            let input = bot.think(&game);
+            step(&mut game, Input::NONE, input);
+        }
+        assert_eq!(
+            game.outcome(),
+            Some(Outcome::Winner(TeamId(1))),
+            "{rival:?}: wins by knockout"
+        );
+        assert!(game.fighter(HUMAN).unwrap().is_knocked_out(), "{rival:?}");
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

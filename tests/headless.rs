@@ -489,7 +489,7 @@ fn t_brings_the_computer_in_on_the_screen() {
     game.tap(&[Key::T]);
     game.idle(MatchConfig::default().countdown_ticks + 90);
     let text = game.text_snapshot(160, 45);
-    assert!(text.contains("switch.to.the.training.dummy"), "{text}");
+    assert!(text.contains("switch.to.the.patient.computer"), "{text}");
     assert!(text.contains("CPU"), "{text}");
     assert!(
         x_of(&game, 1) < 800,

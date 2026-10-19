@@ -2573,7 +2573,7 @@ fn the_pause_menu_switches_the_rival_of_a_practice_game() {
     let text = game.frame().text();
     assert!(text.contains("CPU  100 HP"), "{text}");
     assert!(
-        text.contains("Practice: the computer   T: switch to the training dummy"),
+        text.contains("Practice: the computer   T: switch to the patient computer"),
         "{text}"
     );
 }
@@ -2692,8 +2692,14 @@ fn the_pause_menu_starts_and_ends_a_practice_fight_while_online() {
     );
     game.tick(&keys(&[]));
     game.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(game.practice(), Practice::WhileWaiting(Rival::Patient));
+    assert_eq!(game.active_client().rival(), Some(Rival::Patient));
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[Key::ArrowRight]));
+    assert_eq!(game.practice(), Practice::WhileWaiting(Rival::Aggressive));
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[Key::ArrowRight]));
     assert_eq!(game.practice(), Practice::WhileWaiting(Rival::Dummy));
-    assert_eq!(game.active_client().rival(), Some(Rival::Dummy));
     game.tick(&keys(&[]));
     game.tick(&keys(&[Key::ArrowRight]));
     assert_eq!(game.controls().practice(), Practice::Off, "round and round");
@@ -3105,7 +3111,7 @@ fn t_switches_the_rival_of_a_practice_game() {
     assert!(!game.is_practising_online());
     assert_eq!(
         game.practice_notice().as_deref(),
-        Some("Practice: the computer   T: switch to the training dummy")
+        Some("Practice: the computer   T: switch to the patient computer")
     );
     for _ in 0..3 {
         game.tick(&keys(&[PRACTICE_KEY]));
@@ -3129,13 +3135,20 @@ fn t_switches_the_rival_of_a_practice_game() {
     );
 
     game.tick(&keys(&[PRACTICE_KEY]));
-    assert_eq!(game.client().rival(), Some(Rival::Dummy), "round and round");
+    assert_eq!(
+        game.client().rival(),
+        Some(Rival::Patient),
+        "round and round"
+    );
     game.tick(&keys(&[]));
-    assert!(game.frame().text().contains("P2  100 HP"));
+    assert!(
+        game.frame().text().contains("CPU  100 HP"),
+        "still a computer"
+    );
     game.tick(&keys(&[Key::Escape]));
     assert_eq!(
         game.practice(),
-        Practice::Alone(Rival::Dummy),
+        Practice::Alone(Rival::Patient),
         "Escape leaves nothing: a practice game is nothing else"
     );
 }
@@ -3204,7 +3217,8 @@ fn online_the_practice_fight_is_played_locally_while_the_room_stays_open() {
     assert!(game.is_practising_online());
     assert_eq!(game.active_client().rival(), Some(Rival::Brawler));
     assert_eq!(game.client().status(), Status::Lobby, "the room stays open");
-    let alone = "Practice: the computer   T: switch to the training dummy   Esc: back to the room";
+    let alone =
+        "Practice: the computer   T: switch to the patient computer   Esc: back to the room";
     assert_eq!(game.practice_notice().as_deref(), Some(alone));
 
     assert_eq!(
@@ -3225,10 +3239,16 @@ fn online_the_practice_fight_is_played_locally_while_the_room_stays_open() {
     game.tick(&keys(&[PRACTICE_KEY]));
     assert_eq!(
         game.active_client().rival(),
-        Some(Rival::Dummy),
+        Some(Rival::Patient),
         "T switches here too"
     );
     assert!(game.is_practising_online());
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert_eq!(game.active_client().rival(), Some(Rival::Aggressive));
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[PRACTICE_KEY]));
+    assert_eq!(game.active_client().rival(), Some(Rival::Dummy));
     game.tick(&keys(&[]));
     game.tick(&keys(&[PRACTICE_KEY]));
     assert!(!game.is_practising_online(), "then off");
@@ -3326,12 +3346,12 @@ fn the_controls_page_of_the_title_chooses_the_rival_too() {
     assert_eq!(game.controls().practice(), Practice::Alone(Rival::Dummy));
     up_to_the_practice_row(&mut game);
     game.tick(&keys(&[Key::ArrowLeft]));
-    assert_eq!(game.client().rival(), Some(Rival::Brawler));
+    assert_eq!(game.client().rival(), Some(Rival::Aggressive));
     game.tick(&keys(&[Key::Escape]));
     assert_eq!(game.screen(), Screen::Intro);
     assert!(
         game.status_line()
-            .starts_with("practice mode: versus the computer")
+            .starts_with("practice mode: versus the aggressive computer")
     );
 
     let mut online = alone_online(1);

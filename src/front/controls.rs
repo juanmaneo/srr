@@ -82,7 +82,7 @@ impl Row {
 ///
 /// assert_eq!(Practice::Off.next(), Practice::WhileWaiting(Rival::Brawler));
 /// assert_eq!(Practice::WhileWaiting(Rival::Dummy).next(), Practice::Off);
-/// assert_eq!(Practice::Alone(Rival::Brawler).next(), Practice::Alone(Rival::Dummy));
+/// assert_eq!(Practice::Alone(Rival::Brawler).next(), Practice::Alone(Rival::Patient));
 /// assert_eq!(Practice::Unavailable.next(), Practice::Unavailable);
 /// assert_eq!(Practice::Off.previous(), Practice::WhileWaiting(Rival::Dummy));
 /// ```

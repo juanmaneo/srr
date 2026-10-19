@@ -316,15 +316,21 @@ fn rosters_can_be_cloned_and_compared() {
 
 #[test]
 fn errors_have_human_readable_messages() {
-    assert!(RosterError::TooFewPlayers { count: 1 }
-        .to_string()
-        .contains('1'));
-    assert!(RosterError::TooManyPlayers { count: 11 }
-        .to_string()
-        .contains("11"));
-    assert!(RosterError::DuplicatePlayer(PlayerId(4))
-        .to_string()
-        .contains('4'));
+    assert!(
+        RosterError::TooFewPlayers { count: 1 }
+            .to_string()
+            .contains('1')
+    );
+    assert!(
+        RosterError::TooManyPlayers { count: 11 }
+            .to_string()
+            .contains("11")
+    );
+    assert!(
+        RosterError::DuplicatePlayer(PlayerId(4))
+            .to_string()
+            .contains('4')
+    );
     assert!(!RosterError::NoOpposingTeams.to_string().is_empty());
     assert!(!RosterError::EmptyTeam.to_string().is_empty());
 }

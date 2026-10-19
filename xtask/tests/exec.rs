@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use xtask::{execute, plan, run_cli, usage, CommandSpec, ExecError, Executor, Step, Task};
+use xtask::{CommandSpec, ExecError, Executor, Step, Task, execute, plan, run_cli, usage};
 
 const ROOT: &str = "/project";
 
@@ -174,7 +174,10 @@ fn run_cli_supports_docker_tasks() {
     let mut recorder = Recorder::default();
     let (code, _, _) = run(&["docker", "test"], &mut recorder);
     assert_eq!(code, 0);
-    assert_eq!(recorder.calls, calls_for(&Task::Docker(Box::new(Task::Test))));
+    assert_eq!(
+        recorder.calls,
+        calls_for(&Task::Docker(Box::new(Task::Test)))
+    );
 }
 
 #[test]

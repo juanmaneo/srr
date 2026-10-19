@@ -12,7 +12,7 @@ use srr::game::{Input, PlayerId, TICKS_PER_SECOND};
 use srr::net::{ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
 use srr_server::http::read_head;
 use srr_server::websocket::{OP_BINARY, OP_CLOSE, OP_CONTINUATION, OP_PING, OP_PONG, OP_TEXT};
-use srr_server::{serve, serve_with_tick, ticks_due};
+use srr_server::{Limits, ServerHandle, Stopper, serve, serve_with, serve_with_tick, ticks_due};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
@@ -33,6 +33,9 @@ const JUMP_KICK: Input = Input {
 struct Server {
     addr: SocketAddr,
     dir: PathBuf,
+    /// How to stop and wait for this server; `None` for one serving forever on its own thread
+    /// (only [`serve`] blocks, so only it needs the thread).
+    handle: Option<ServerHandle>,
 }
 
 impl Server {
@@ -43,6 +46,15 @@ impl Server {
 
     /// A server ticking every `tick`, or at the game's pace when `None`.
     fn with_clock(tick: Option<Duration>) -> Server {
+        Server::new(tick, None)
+    }
+
+    /// A server whose clock does not tick during a test, within `limits`.
+    fn with_limits(limits: Limits) -> Server {
+        Server::new(Some(Duration::from_secs(3600)), Some(limits))
+    }
+
+    fn new(tick: Option<Duration>, limits: Option<Limits>) -> Server {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "srr-server-test-{}-{}",
@@ -60,11 +72,32 @@ impl Server {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        thread::spawn(move || match tick {
-            Some(tick) => serve_with_tick(listener, root, tick),
-            None => serve(listener, root),
-        });
-        Server { addr, dir }
+        let handle = match (tick, limits) {
+            (Some(tick), limits) => Some(match limits {
+                Some(limits) => serve_with(listener, root, tick, limits),
+                None => serve_with_tick(listener, root, tick),
+            }),
+            (None, _) => {
+                thread::spawn(move || serve(listener, root));
+                None
+            }
+        };
+        Server { addr, dir, handle }
+    }
+
+    /// The shutdown handle of a server started with a clock.
+    fn stopper(&self) -> Stopper {
+        self.handle
+            .as_ref()
+            .expect("this server has no handle")
+            .stopper()
+    }
+
+    /// Waits for the server to stop (call [`Server::stopper`] first).
+    fn join(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.join();
+        }
     }
 
     fn connect(&self) -> TcpStream {
@@ -735,4 +768,81 @@ fn idle_connections_do_not_block_others() {
     let _idle = server.connect();
     let (status, _, _) = server.get("/");
     assert_eq!(status, "HTTP/1.1 200 OK");
+}
+
+/// Reads until the server hangs up, expecting no answer.
+fn expect_hang_up(mut stream: TcpStream) {
+    let mut answer = Vec::new();
+    match stream.read_to_end(&mut answer) {
+        Ok(_) => assert_eq!(answer, b""),
+        Err(error) => assert_eq!(error.kind(), ErrorKind::ConnectionReset),
+    }
+}
+
+#[test]
+fn connections_beyond_the_limit_are_closed() {
+    let server = Server::with_limits(Limits {
+        max_connections: 2,
+        ..Limits::default()
+    });
+    let first = server.connect();
+    let _second = server.player(0);
+    expect_hang_up(server.connect());
+
+    // Once a connection ends, its slot is free again (as soon as the server notices).
+    drop(first);
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let mut stream = server.connect();
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut answer = Vec::new();
+        let _ = stream.read_to_end(&mut answer);
+        if answer.starts_with(b"HTTP/1.1 200 OK\r\n") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the slot was never freed");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn stopping_closes_the_websockets_and_shuts_the_server_down() {
+    // A fast clock, so the room's clock thread notices the stop within the test.
+    let mut server = Server::with_clock(Some(Duration::from_millis(20)));
+    let mut ws = server.player(0);
+
+    server.stopper().stop();
+    ws.expect_closed();
+    server.join();
+    thread::sleep(Duration::from_millis(50));
+
+    // The listener is gone: nobody is served anymore.
+    assert!(
+        TcpStream::connect(server.addr).is_err(),
+        "the server is down"
+    );
+}
+
+#[test]
+fn requests_must_arrive_in_time_but_websockets_may_stay_silent() {
+    let head_timeout = Duration::from_millis(100);
+    let server = Server::with_limits(Limits {
+        head_timeout,
+        ..Limits::default()
+    });
+
+    // Half a request, then nothing: the server hangs up.
+    let mut stream = server.connect();
+    stream.write_all(b"GET / HTTP/1.1\r\n").unwrap();
+    let start = Instant::now();
+    expect_hang_up(stream);
+    assert!(start.elapsed() < TIMEOUT);
+
+    // A player waiting in the lobby sends nothing for longer, and is still there.
+    let mut ws = server.player(0);
+    thread::sleep(head_timeout * 3);
+    ws.send_frame(FIN | OP_PING, b"still here");
+    assert_eq!(ws.frame(), (FIN | OP_PONG, b"still here".to_vec()));
 }

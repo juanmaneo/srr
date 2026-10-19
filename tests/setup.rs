@@ -32,7 +32,11 @@ fn three_players_spawn_evenly_and_the_middle_one_faces_right() {
     assert_eq!(x_of(&m, 1), 600);
     assert_eq!(x_of(&m, 2), 900);
     assert_eq!(facing_of(&m, 0), Facing::Right);
-    assert_eq!(facing_of(&m, 1), Facing::Right, "the centre counts as left half");
+    assert_eq!(
+        facing_of(&m, 1),
+        Facing::Right,
+        "the centre counts as left half"
+    );
     assert_eq!(facing_of(&m, 2), Facing::Left);
 }
 
@@ -123,12 +127,20 @@ fn explicit_spawn_points_are_used_in_roster_order() {
 fn spawn_facing_depends_on_the_side_of_the_arena_centre() {
     let m = Match::with_spawns(Roster::free_for_all(3).unwrap(), cfg(), &[600, 601, 0]).unwrap();
     assert_eq!(facing_of(&m, 0), Facing::Right, "exactly at the centre");
-    assert_eq!(facing_of(&m, 1), Facing::Left, "one unit right of the centre");
+    assert_eq!(
+        facing_of(&m, 1),
+        Facing::Left,
+        "one unit right of the centre"
+    );
     assert_eq!(facing_of(&m, 2), Facing::Right, "left wall");
 
     let m = Match::with_spawns(Roster::duel(), cfg(), &[1200, 599]).unwrap();
     assert_eq!(facing_of(&m, 0), Facing::Left, "right wall");
-    assert_eq!(facing_of(&m, 1), Facing::Right, "one unit left of the centre");
+    assert_eq!(
+        facing_of(&m, 1),
+        Facing::Right,
+        "one unit left of the centre"
+    );
 }
 
 #[test]
