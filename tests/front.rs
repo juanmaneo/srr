@@ -367,6 +367,20 @@ fn display_lists_the_rows_without_trailing_spaces() {
 }
 
 #[test]
+fn display_reports_the_error_of_a_writer_that_fails() {
+    use std::fmt::{self, Write};
+
+    struct Broken;
+    impl Write for Broken {
+        fn write_str(&mut self, _: &str) -> fmt::Result {
+            Err(fmt::Error)
+        }
+    }
+
+    assert!(write!(Broken, "{}", Canvas::new(3, 2)).is_err());
+}
+
+#[test]
 fn draw_adds_one_padded_label_per_colour_of_each_row() {
     let mut canvas = Canvas::new(5, 3);
     canvas.put(0, 0, 'a', RED);

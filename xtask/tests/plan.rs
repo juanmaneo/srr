@@ -165,6 +165,11 @@ fn coverage_fails_below_one_hundred_percent() {
         .iter()
         .find(|c| has_pair(&c.args, "--fail-under-lines", "100"))
         .expect("a step that enforces 100 % line coverage");
+    // The ratchet holds every measure, not only the lines: a branch never taken on a covered
+    // line (the error of a `?`, the `else` of an `if let`) fails it too.
+    for measure in ["--fail-under-regions", "--fail-under-functions"] {
+        assert!(has_pair(&gate.args, measure, "100"), "{measure}");
+    }
     assert_eq!(gate.program, "cargo");
     assert_eq!(gate.args[0], "llvm-cov");
     assert!(gate.args.iter().any(|a| a == "--workspace"));

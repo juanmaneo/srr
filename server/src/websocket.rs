@@ -101,8 +101,7 @@ pub fn write_frame(writer: &mut impl Write, opcode: u8, payload: &[u8]) -> io::R
         }
     }
     frame.extend_from_slice(payload);
-    writer.write_all(&frame)?;
-    writer.flush()
+    writer.write_all(&frame).and_then(|()| writer.flush())
 }
 
 fn read_array<const N: usize>(reader: &mut impl Read) -> io::Result<[u8; N]> {

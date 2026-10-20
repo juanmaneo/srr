@@ -427,11 +427,12 @@ fn handle_connection(
     hub: &Mutex<Hub>,
     head_timeout: Duration,
 ) -> io::Result<()> {
-    // Inputs are tiny and latency matters more than throughput.
-    stream.set_nodelay(true)?;
-    // A client that never finishes its request would hold its thread forever.
-    stream.set_read_timeout(Some(head_timeout))?;
-    let mut writer = stream.try_clone()?;
+    // Inputs are tiny and latency matters more than throughput, and a client that never
+    // finishes its request would hold its thread forever. (std refuses a zero timeout.)
+    let mut writer = stream
+        .set_nodelay(true)
+        .and_then(|()| stream.set_read_timeout(Some(head_timeout)))
+        .and_then(|()| stream.try_clone())?;
     let mut reader = BufReader::new(stream);
     let head = http::read_head(&mut reader)?;
     let Some(request) = http::parse_request(&head) else {
@@ -447,9 +448,12 @@ fn handle_connection(
         Some(key) if request.is_websocket_upgrade() => {
             // Seated players stay silent in the lobby; a timeout in the middle of a frame
             // would also lose track of where the next one starts.
-            reader.get_ref().set_read_timeout(None)?;
-            writer.write_all(&http::websocket_handshake(key))?;
-            run_websocket(reader, writer, hub)
+            reader
+                .get_ref()
+                .set_read_timeout(None)
+                .and_then(|()| writer.write_all(&http::websocket_handshake(key)))
+                .and_then(|()| writer.try_clone())
+                .and_then(|stream| run_websocket(reader, writer, stream, hub))
         }
         _ => writer.write_all(&http::error_response("400 Bad Request")),
     }
@@ -465,13 +469,15 @@ fn serve_file(writer: &mut TcpStream, root: &Path, path: &str) -> io::Result<()>
     writer.write_all(&response)
 }
 
+/// Seats the client: `writer` goes to its writing thread, `stream` (another handle on the same
+/// socket) stays in the hub to cut the connection off.
 fn run_websocket(
     mut reader: BufReader<TcpStream>,
     writer: TcpStream,
+    stream: TcpStream,
     hub: &Mutex<Hub>,
 ) -> io::Result<()> {
     let (queue, queued) = mpsc::sync_channel(QUEUE_LENGTH);
-    let stream = writer.try_clone()?;
     thread::spawn(move || write_queue(writer, queued));
     let client = {
         let mut hub = lock(hub);

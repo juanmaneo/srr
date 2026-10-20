@@ -937,6 +937,24 @@ mod tests {
     }
 
     #[test]
+    fn only_a_grappling_fighter_takes_a_new_hold() {
+        let config = MatchConfig::default();
+        let hold = Hold::connected(&config);
+        let mut fighter = Fighter::spawn(PlayerId(0), 100, &config);
+        let before = fighter.clone();
+        fighter.set_hold(GrappleRole::Top, hold);
+        assert_eq!(fighter, before, "a free fighter ignores it");
+
+        fighter.enter_grapple(1, PlayerId(1), GrappleRole::Top, hold, 100, Facing::Right);
+        fighter.set_hold(GrappleRole::Bottom, hold);
+        assert_eq!(
+            fighter.state(),
+            FighterState::Grappling(GrappleRole::Bottom, hold.position()),
+            "a grappling fighter switches sides"
+        );
+    }
+
+    #[test]
     fn a_fighter_that_is_not_attacking_reaches_nobody() {
         let config = MatchConfig::default();
         let idle = Fighter::spawn(PlayerId(0), 100, &config);

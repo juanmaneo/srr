@@ -205,9 +205,10 @@ impl Room {
         match ClientMessage::decode(bytes) {
             Err(_) => vec![Action::Close(client)],
             Ok(ClientMessage::Ready) => {
-                if let Some(seat) = self.seats[index].as_mut() {
-                    seat.ready = true;
-                }
+                // `index_of` found the seat, so it is occupied.
+                self.seats[index]
+                    .iter_mut()
+                    .for_each(|seat| seat.ready = true);
                 self.start_or_lobby()
             }
             Ok(ClientMessage::Input {

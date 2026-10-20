@@ -177,17 +177,21 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
     for fighter in order {
         figure(fighter).draw(frame);
     }
-    if let Some(local) = current.fighter(session.local_player()) {
-        let (x, _) = feet(local, config);
-        let top = figure(local).top();
-        frame.rect(
-            x - MARKER_WIDTH / 2.0,
-            top - 8.0 - MARKER_HEIGHT,
-            MARKER_WIDTH,
-            MARKER_HEIGHT,
-            MARKER,
-        );
-    }
+    // A session only exists for a local player who is in the match, so there is one fighter.
+    current
+        .fighter(session.local_player())
+        .iter()
+        .for_each(|&local| {
+            let (x, _) = feet(local, config);
+            let top = figure(local).top();
+            frame.rect(
+                x - MARKER_WIDTH / 2.0,
+                top - 8.0 - MARKER_HEIGHT,
+                MARKER_WIDTH,
+                MARKER_HEIGHT,
+                MARKER,
+            );
+        });
     for fighter in current.fighters() {
         let (x, _) = feet(fighter, config);
         let figure = figure(fighter);

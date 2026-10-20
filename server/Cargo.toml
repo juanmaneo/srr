@@ -3,6 +3,7 @@ name = "srr-server"
 version = "0.1.0"
 edition = "2024"
 description = "Local network server for Shattered Realm: Rampage: serves the web build and runs the room of up to ten players"
+license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]

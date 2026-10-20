@@ -53,7 +53,7 @@ pub enum Task {
     Build,
     /// Run every test of the workspace.
     Test,
-    /// Run the tests and fail below 100 % line coverage.
+    /// Run the tests and fail below 100 % coverage of the lines, the regions or the functions.
     Coverage,
     /// Build and assemble the playable web build in `dist/`.
     Dist,
@@ -210,7 +210,7 @@ Usage: cargo xtask <task>
 Tasks:
   build            compile the game to WASM and run wasm-bindgen (output in target/web)
   test             run every test of the workspace
-  coverage         run the tests and fail below 100 % line coverage
+  coverage         run the tests and fail below 100 % coverage (lines, regions, functions)
   dist             build and assemble the playable web build in dist/
   serve            dist, then serve it on the local network (port 8080) for online play
   screenshots      play a scripted game headlessly (no window) and save PNGs in target/screenshots
@@ -310,6 +310,10 @@ pub fn plan(task: &Task, root: &Path) -> Vec<Step> {
                 "llvm-cov",
                 "--workspace",
                 "--fail-under-lines",
+                "100",
+                "--fail-under-regions",
+                "100",
+                "--fail-under-functions",
                 "100",
                 "--ignore-filename-regex",
                 COVERAGE_IGNORE,
@@ -714,7 +718,11 @@ mod tests {
         fs::write(root.join("not-a-dir"), "x").unwrap();
         let mut executor = SystemExecutor::new(root.clone());
         let result = executor.remove_dir(Path::new("not-a-dir"));
+        fs::create_dir_all(root.join("a-dir")).unwrap();
+        assert_eq!(executor.remove_dir(Path::new("a-dir")), Ok(()));
+        assert!(!root.join("a-dir").exists());
         let _ = fs::remove_dir_all(&root);
-        assert!(matches!(result, Err(ExecError::Io { .. })), "{result:?}");
+        let message = result.unwrap_err().to_string();
+        assert!(message.contains("not-a-dir"), "{message}");
     }
 }

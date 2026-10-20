@@ -826,6 +826,18 @@ fn stopping_closes_the_websockets_and_shuts_the_server_down() {
 }
 
 #[test]
+fn a_connection_whose_setup_fails_is_dropped_at_once() {
+    // The operating system refuses a read timeout of zero, so the setup of every connection
+    // fails: the server hangs up without a word and goes on.
+    let server = Server::with_limits(Limits {
+        head_timeout: Duration::ZERO,
+        ..Limits::default()
+    });
+    expect_hang_up(server.connect());
+    expect_hang_up(server.connect());
+}
+
+#[test]
 fn requests_must_arrive_in_time_but_websockets_may_stay_silent() {
     let head_timeout = Duration::from_millis(100);
     let server = Server::with_limits(Limits {
