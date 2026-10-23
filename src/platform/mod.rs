@@ -91,9 +91,12 @@ impl Shell {
         }
     }
 
-    /// One fixed tick: reads the network, advances the game with the keys held and sends this
-    /// tick's input.
-    pub fn tick(&mut self, pressed: &HashSet<Key>) {
+    /// One fixed tick: reads the network, advances the game with the keys held and the
+    /// fingers on the screen (virtual screen coordinates, see
+    /// [`Viewport::to_virtual`](crate::front::Viewport::to_virtual)) and sends this tick's
+    /// input.
+    pub fn tick(&mut self, pressed: &HashSet<Key>, touches: &[(f32, f32)]) {
+        self.game.set_touches(touches);
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(connection) = &self.connection {

@@ -20,7 +20,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use srr::front::intro::{COMPLETE_AT, SHATTER_AT};
-use srr::front::{Game, Headless};
+use srr::front::touch::{self, TouchPad};
+use srr::front::{Game, Headless, Screen};
 use srr::game::{Attack, Character, Input, Key, MatchConfig, PlayerId, Strength};
 use srr::net::{Client, PlayerSet, ServerMessage};
 
@@ -228,6 +229,23 @@ fn main() -> ExitCode {
     zip.hold(&[Key::Numpad3], 1);
     zip.idle(7);
     shoot(&zip, "16-zip-slide-tackle");
+
+    // On a phone: the touch controls, a thumb on the pad and a finger on the special button.
+    let mut phone = Headless::practice().with_size(width, height);
+    phone.touch(&[(640.0, 300.0)]);
+    phone.skip_intro_as(Character::Torch);
+    phone.idle(countdown);
+    let special = TouchPad::for_screen(Screen::Fight)
+        .buttons()
+        .iter()
+        .find(|button| button.label == "SPECIAL")
+        .map(|b| (b.x + b.width / 2.0, b.y + b.height / 2.0))
+        .expect("the special button");
+    let thumb = (touch::PAD_CENTER.0 + 70.0, touch::PAD_CENTER.1);
+    phone.hold_touch(&[thumb], 20);
+    phone.hold_touch(&[thumb, special], 20);
+    phone.game_mut().set_touches(&[thumb, special]);
+    shoot(&phone, "18-phone-touch-controls");
 
     for (name, image) in &shots {
         let path = out.join(format!("{name}.png"));

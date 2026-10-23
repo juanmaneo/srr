@@ -136,6 +136,27 @@ numeric keypad; the **WASD** preset is for keyboards without one.
   yours. A grab shows as green arms, a judo technique as blue limbs, a submission as a red
   locked limb.
 
+### Playing on a phone or a tablet
+
+Open the same address in the phone's browser (`http://<host-ip>:8080`, or `?practice` to play
+alone) and **turn the phone sideways**. As soon as you touch the screen, on-screen controls
+appear (a keyboard player never sees them):
+
+* on the title: **START** and **PRACTICE**;
+* on the select screen and in the pause menu: a directional pad (the arrows), **OK** and
+  **BACK**;
+* in the fight: the **pad** on the left (left / right to walk, up to jump, down to crouch;
+  push it diagonally for down + a direction to turn around, or up + a direction to jump
+  sideways), **WALL** / **STREET** to sidestep next to it; on the right the six attacks
+  (**LK MK HK** above, **LP MP HP** below), **GRAB** and **SPECIAL**; at the top **BACK**,
+  **READY** (between rounds), **RIVAL** (practice), **VIEW** (3D) and **PAUSE**.
+
+Several fingers press several buttons, so the judo techniques work as on a keyboard (**MP** +
+**HK** for the sweep, **MK** + **HK** for the throw). The buttons press the keys of your
+layout, so phones and keyboards can play in the same room. Added to the home screen, the page
+opens full screen like an app. The controls are drawn by the game itself (`src/front/touch.rs`),
+like every other screen, and tested headlessly.
+
 ### Characters
 
 Every player picks a character on the **select screen** that follows the title (`Left` /
@@ -536,7 +557,8 @@ and the process exits 0.
   input delay, playing alone against a rival bot); no sockets, so it is fully
   unit-tested.
 * `src/front/` – the screens as a pure state machine (`Game`): the graffiti ASCII intro, the
-  character select screen (`select.rs`), the controls page (`controls.rs`), the arena with the XKCD stick figures (`stick.rs`), the
+  character select screen (`select.rs`), the controls page (`controls.rs`), the on-screen
+  touch controls for phones (`touch.rs`), the arena with the XKCD stick figures (`stick.rs`), the
   third-person 3D view (`tps.rs`, on the fixed-point 3D maths of `space.rs`), the
   versus HUD and the music cues. Every frame is described as plain rectangles and
   monospace labels on a 1280×720 virtual screen (`Frame`), so it is fully unit-tested.
@@ -725,7 +747,7 @@ controls page, shows the character select screen and the pause menu, plays a sho
 a flying kick into a 3-hit combo, ippon-seoi-nage, juji-gatame), a round against the
 computer, an online 1v1v1 and a brawl of
 ten (the other players simulated, one of the ten lagging), then each special move (Torch's
-fireball in both views, Brick's palm, Zip's slide), headlessly, and writes PNGs to `target/screenshots/`. It is built with `--no-default-features`,
+fireball in both views, Brick's palm, Zip's slide) and the phone's touch controls, headlessly, and writes PNGs to `target/screenshots/`. It is built with `--no-default-features`,
 so no engine, window or GPU is needed: it works in CI or over SSH.
 
 ---

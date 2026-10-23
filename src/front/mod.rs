@@ -34,6 +34,10 @@
 //! practice fight switches the rival, and so does the practice row of the pause menu
 //! ([`Practice`]).
 //!
+//! On a touch screen the engine hands the game its touches ([`Game::set_touches`]): from the
+//! first one on, on-screen controls ([`touch`]) are drawn over every screen and press keys like
+//! a keyboard would.
+//!
 //! [`Headless`] plays the [`Game`] without any engine: scripted keys in, frames rendered in
 //! memory by the software renderer of [`render`] (pixels, PNG files, text snapshots). That is
 //! how the tests look at the screens without opening a window.
@@ -59,6 +63,7 @@ mod scene;
 pub mod select;
 pub mod space;
 pub mod stick;
+pub mod touch;
 pub mod tps;
 
 pub use controls::{ControlsPage, PAUSE_KEY, Practice};
@@ -69,6 +74,7 @@ pub use scene::{
     Align, Frame, Label, MONO_ADVANCE, Rect, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH, Viewport,
 };
 pub use select::{Choice, SelectPage};
+pub use touch::TouchPad;
 
 /// Whether the music reaches the speakers, as reported by the platform layer (the [`Game`]
 /// itself never touches a sound card).
@@ -226,6 +232,10 @@ pub struct Game {
     /// Whether the select screen was opened with [`PRACTICE_KEY`]: the fight then starts with
     /// a practice fight, online.
     practise_after_select: bool,
+    /// The fingers on the screen, in virtual screen coordinates.
+    touches: Vec<(f32, f32)>,
+    /// Whether the screen was ever touched: the touch controls are shown from then on.
+    touch_mode: bool,
 }
 
 impl Game {
@@ -247,6 +257,8 @@ impl Game {
             camera: tps::overview(),
             select: SelectPage::new(character),
             practise_after_select: false,
+            touches: Vec::new(),
+            touch_mode: false,
             client,
         };
         game.music.set_mood(Mood::Intro);
@@ -327,6 +339,25 @@ impl Game {
     /// The select screen's state.
     pub fn select(&self) -> &SelectPage {
         &self.select
+    }
+
+    /// The fingers on the screen now, in virtual screen coordinates (see
+    /// [`Viewport::to_virtual`]); the next [`Game::tick`] presses the keys of the touch
+    /// controls under them. The first touch turns the touch controls on for good.
+    pub fn set_touches(&mut self, touches: &[(f32, f32)]) {
+        self.touches.clear();
+        self.touches.extend_from_slice(touches);
+        self.touch_mode |= !touches.is_empty();
+    }
+
+    /// Whether the touch controls are shown: the screen was touched at least once.
+    pub fn touch_mode(&self) -> bool {
+        self.touch_mode
+    }
+
+    /// The touch controls of the screen shown.
+    pub fn touch_pad(&self) -> TouchPad {
+        TouchPad::for_screen(self.screen)
     }
 
     /// The handle steering the music; give a clone to the audio output.
@@ -415,6 +446,10 @@ impl Game {
     /// fight, a fresh Enter tells [`Client::ready`], and the keys become this tick's [`Input`]
     /// through the [bindings](Game::bindings) for [`Client::tick`].
     pub fn tick(&mut self, pressed: &HashSet<Key>) -> Vec<Vec<u8>> {
+        // The fingers press keys like the keyboard does.
+        let mut pressed = pressed.clone();
+        pressed.extend(self.touch_pad().keys(&self.touches, &self.bindings));
+        let pressed = &pressed;
         let mut fresh: Vec<Key> = pressed.difference(&self.held).copied().collect();
         fresh.sort_unstable();
         let mut outgoing = Vec::new();
@@ -605,17 +640,24 @@ impl Game {
 
     /// The small line under the banner about practice, if any: the rival and how to switch it,
     /// how to start practising between online matches, or who is waiting in the room.
+    ///
+    /// With the touch controls on, it names their buttons (RIVAL, BACK) instead of the keys.
     pub fn practice_notice(&self) -> Option<String> {
+        let (rival_key, back_key) = if self.touch_mode {
+            ("RIVAL", "BACK")
+        } else {
+            ("T", "Esc")
+        };
         let switch = |rival: Rival| {
             format!(
-                "Practice: {}   T: switch to {}",
+                "Practice: {}   {rival_key}: switch to {}",
                 rival.name(),
                 rival.next().name()
             )
         };
         match self.practice() {
             Practice::Unavailable => None,
-            Practice::Off => Some("T: practice while waiting".to_string()),
+            Practice::Off => Some(format!("{rival_key}: practice while waiting")),
             Practice::Alone(rival) => Some(switch(rival)),
             Practice::WhileWaiting(rival) => {
                 let others: Vec<String> = self
@@ -626,16 +668,37 @@ impl Game {
                     .map(|player| format!("P{}", u32::from(player.0) + 1))
                     .collect();
                 Some(if others.is_empty() {
-                    format!("{}   Esc: back to the room", switch(rival))
+                    format!("{}   {back_key}: back to the room", switch(rival))
                 } else {
-                    format!("{} is here - Esc: leave the practice", others.join(", "))
+                    format!(
+                        "{} is here - {back_key}: leave the practice",
+                        others.join(", ")
+                    )
                 })
             }
         }
     }
 
-    /// What to draw now.
+    /// What to draw now: the screen, and over it the touch controls once the screen was
+    /// touched (they replace the keyboard reminder of the fight screen).
     pub fn frame(&self) -> Frame {
+        let mut frame = self.screen_frame();
+        if self.touch_mode {
+            if self.screen == Screen::Fight {
+                frame.labels.retain(|label| label.y < hud::CONTROLS_Y);
+                // The practice notice moves up, under the top buttons, clear of the others.
+                for label in &mut frame.labels {
+                    if label.y == hud::NOTICE_Y {
+                        label.y = touch::NOTICE_Y;
+                    }
+                }
+            }
+            self.touch_pad().draw(&mut frame, &self.touches);
+        }
+        frame
+    }
+
+    fn screen_frame(&self) -> Frame {
         match self.screen {
             Screen::Intro => {
                 let mut frame = Frame::new(intro::BACKGROUND);

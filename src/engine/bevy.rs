@@ -1,7 +1,8 @@
 //! The [Bevy](https://bevyengine.org) 0.15 backend (default; native and browser).
 //!
 //! * The [`Shell`] lives in a non-send resource (it owns the audio stream) and is ticked in
-//!   `FixedUpdate`, at [`TICKS_PER_SECOND`], with the keys held.
+//!   `FixedUpdate`, at [`TICKS_PER_SECOND`], with the keys held and the fingers on a touch
+//!   screen (mapped back onto the virtual screen, for the touch controls).
 //! * Each `Update`, its [`Frame`] is mapped onto the window with a letterboxing [`Viewport`]:
 //!   rectangles become top-left anchored sprites, labels become `Text2d` in the default font
 //!   (Fira Mono, a monospace font, as the ASCII art requires). Sizes are scaled in window
@@ -43,6 +44,7 @@ impl Engine for Bevy {
             .insert_resource(Time::<Fixed>::from_hz(f64::from(TICKS_PER_SECOND)))
             .init_resource::<Pools>()
             .init_resource::<Taps>()
+            .init_resource::<TouchTaps>()
             .add_systems(Startup, spawn_camera)
             .add_systems(FixedUpdate, tick)
             .add_systems(Update, (latch_taps, draw))
@@ -62,6 +64,11 @@ struct Pools {
 /// Keys pressed since the last tick: a tap shorter than a tick still reaches the game.
 #[derive(Resource, Default)]
 struct Taps(HashSet<Key>);
+
+/// Where fingers touched the screen since the last tick (window coordinates): a tap shorter
+/// than a tick still reaches the game.
+#[derive(Resource, Default)]
+struct TouchTaps(Vec<Vec2>);
 
 #[derive(Component)]
 struct RectNode;
@@ -129,19 +136,41 @@ fn key(code: KeyCode) -> Option<Key> {
     })
 }
 
-fn latch_taps(keyboard: Res<ButtonInput<KeyCode>>, mut taps: ResMut<Taps>) {
+fn latch_taps(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    touches: Res<Touches>,
+    mut taps: ResMut<Taps>,
+    mut touch_taps: ResMut<TouchTaps>,
+) {
     taps.0
         .extend(keyboard.get_just_pressed().copied().filter_map(key));
+    touch_taps
+        .0
+        .extend(touches.iter_just_pressed().map(|touch| touch.position()));
 }
 
 fn tick(
     keyboard: Res<ButtonInput<KeyCode>>,
+    touches: Res<Touches>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     mut taps: ResMut<Taps>,
+    mut touch_taps: ResMut<TouchTaps>,
     mut shell: NonSendMut<ShellResource>,
 ) {
     let mut pressed: HashSet<Key> = keyboard.get_pressed().copied().filter_map(key).collect();
     pressed.extend(taps.0.drain());
-    shell.0.tick(&pressed);
+    let viewport = windows
+        .get_single()
+        .map_or(Viewport::fit(0.0, 0.0), |window| {
+            Viewport::fit(window.width(), window.height())
+        });
+    let fingers: Vec<(f32, f32)> = touches
+        .iter()
+        .map(|touch| touch.position())
+        .chain(touch_taps.0.drain(..))
+        .map(|position| viewport.to_virtual(position.x, position.y))
+        .collect();
+    shell.0.tick(&pressed, &fingers);
 }
 
 fn color(rgba: Rgba) -> Color {

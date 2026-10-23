@@ -166,7 +166,7 @@ impl Plugin for Game {
         let mut ticks = 0;
         while self.lag >= TICK {
             self.lag -= TICK;
-            self.shell.tick(self.keys.held());
+            self.shell.tick(self.keys.held(), &[]);
             self.keys.ticked();
             ticks += 1;
             if ticks == MAX_CATCH_UP_TICKS {

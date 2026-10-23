@@ -2,7 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Phones: no zoom on double tap or pinch, and the whole screen (notch included). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <!-- Added to the home screen, it opens full screen, like an app. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#120f1a" />
     <title>Shattered Realm: Rampage</title>
     <style>
       html,
@@ -10,17 +19,48 @@
         margin: 0;
         height: 100%;
         background: #120f1a;
+        /* Fingers play the game: no scrolling, bouncing, selecting or callouts. */
+        overflow: hidden;
+        overscroll-behavior: none;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body {
+        position: fixed;
+        inset: 0;
       }
       canvas {
         display: block;
         width: 100%;
         height: 100%;
         outline: none;
+        touch-action: none;
+      }
+      #rotate {
+        display: none;
+      }
+      /* A phone held upright shows the game tiny: ask to turn it sideways. */
+      @media (orientation: portrait) and (pointer: coarse) {
+        #rotate {
+          display: flex;
+          position: fixed;
+          inset: auto 0 0 0;
+          padding: 24px;
+          justify-content: center;
+          color: #ffd84a;
+          font: 18px monospace;
+          text-align: center;
+          pointer-events: none;
+        }
       }
     </style>
   </head>
   <body>
-    <canvas id="srr-canvas" tabindex="0"></canvas>
+    <canvas id="srr-canvas" tabindex="0" oncontextmenu="return false"></canvas>
+    <div id="rotate">Turn your phone sideways to play</div>
     <script type="module">
       import init from "./srr.js";
 
