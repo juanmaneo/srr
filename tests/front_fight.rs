@@ -34,9 +34,9 @@ use srr::front::{
     Screen, SoundState, intensity, seconds,
 };
 use srr::game::{
-    Attack, AttackData, AttackPhase, FighterState, GlitchSet, GrappleData, GrapplePosition,
-    GrappleRole, Input, Key, KeyBindings, Match, MatchConfig, Outcome, Phase, PlayerId, Rival,
-    Roster, Strength, TICKS_PER_SECOND, Technique,
+    Attack, AttackData, AttackPhase, Character, FighterState, GlitchSet, GrappleData,
+    GrapplePosition, GrappleRole, Input, Key, KeyBindings, Match, MatchConfig, Outcome, Phase,
+    PlayerId, Rival, Roster, Strength, TICKS_PER_SECOND, Technique,
 };
 use srr::net::{
     Client, ClientError, ClientMessage, MAX_PLAYERS, MAX_ROLLBACK, PlayerSet, ServerMessage, Status,
@@ -183,6 +183,7 @@ fn brawl(config: MatchConfig, local: u8, players: PlayerSet) -> Client {
     client.handle(ServerMessage::Start {
         session: SESSION,
         players,
+        characters: [Character::Chalk; 10],
     });
     assert_eq!(client.status(), Status::Playing);
     client
@@ -232,6 +233,7 @@ fn next_round(client: &mut Client) {
     client.handle(ServerMessage::Start {
         session: id,
         players,
+        characters: [Character::Chalk; 10],
     });
 }
 
@@ -589,6 +591,7 @@ fn the_banner_tells_where_the_connection_is() {
     client.handle(ServerMessage::Start {
         session: SESSION,
         players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
     });
     client.handle(ServerMessage::PlayerLeft {
         player: PlayerId(1),
@@ -631,6 +634,7 @@ fn the_banner_reports_a_failed_connection() {
     client.handle(ServerMessage::Start {
         session: SESSION,
         players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
     });
     assert_eq!(
         client.status(),
@@ -699,8 +703,8 @@ fn the_bars_mark_who_lags_and_who_left() {
     assert_eq!(marks, ["", "", "  LAG", "  LEFT"]);
 
     let frame = hud_frame(&client, &bars_of(&client), TICKS_PER_SECOND);
-    assert!(find_label(&frame, "P3  100 HP  LAG").is_some());
-    assert!(find_label(&frame, "P4  100 HP  LEFT").is_some());
+    assert!(find_label(&frame, "P3 Chalk  100 HP  LAG").is_some());
+    assert!(find_label(&frame, "P4 Chalk  100 HP  LEFT").is_some());
 }
 
 #[test]
@@ -858,8 +862,8 @@ fn without_a_duel_the_hud_shows_the_banner_and_the_controls() {
     );
     assert_eq!(
         expected[1],
-        "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Enter: ready   P: pause   \
-         Tab: view"
+        "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Special: 3   Enter: ready   \
+         P: pause   Tab: view"
     );
 
     let mut waiting = Client::online(cfg(), 0);
@@ -881,12 +885,12 @@ fn without_a_duel_the_hud_shows_the_banner_and_the_controls() {
 fn the_hud_draws_both_bars_names_and_the_timer() {
     let client = duel(cfg(), 0);
     let frame = hud_frame(&client, &bars_of(&client), 1);
-    let p1 = find_label(&frame, "P1 (you)  100 HP").unwrap();
+    let p1 = find_label(&frame, "P1 (you) Chalk  100 HP").unwrap();
     assert_eq!(
         (p1.align, p1.color, p1.size),
         (Align::Left, LOCAL_NAME, 18.0)
     );
-    let p2 = find_label(&frame, "P2  100 HP").unwrap();
+    let p2 = find_label(&frame, "P2 Chalk  100 HP").unwrap();
     assert_eq!((p2.align, p2.color), (Align::Right, NAME));
     let timer = find_label(&frame, "20").unwrap();
     assert_eq!(timer.color, TIMER, "plenty of time left");
@@ -927,7 +931,7 @@ fn the_trail_shows_recent_damage_on_the_right_side_of_the_left_bar() {
         .unwrap();
     assert_eq!(trail.width, slot.width);
     assert!((health.width - slot.width * 0.9).abs() < 1e-3);
-    assert!(find_label(&frame, "P1 (you)   90 HP").is_some());
+    assert!(find_label(&frame, "P1 (you) Chalk   90 HP").is_some());
 }
 
 #[test]
@@ -1024,7 +1028,7 @@ fn the_combo_counter_shows_from_the_second_hit_under_the_bar_of_the_fighter_hit(
     );
     let slot = bar_slots(2)[1];
     assert_eq!(counter.x, slot.x + slot.width, "under player 2's bar");
-    let name = find_label(&frame, "P2   80 HP").unwrap();
+    let name = find_label(&frame, "P2 Chalk   80 HP").unwrap();
     assert!(counter.y > name.y, "below the name");
 
     let high = hold(Input::pressing(Attack::punch(Strength::High)));
@@ -1149,9 +1153,9 @@ fn small_bars_get_small_labels() {
     let mut bars = bars_of(&client);
     bars.push(HealthBar::new(PlayerId(2), 100));
     let frame = hud_frame(&client, &bars, 0);
-    let p1 = find_label(&frame, "P1 (you)  100 HP").unwrap();
+    let p1 = find_label(&frame, "P1 (you) Chalk  100 HP").unwrap();
     assert_eq!(p1.size, 13.0);
-    let p2 = find_label(&frame, "P2  100 HP").unwrap();
+    let p2 = find_label(&frame, "P2 Chalk  100 HP").unwrap();
     assert_eq!(
         p2.align,
         Align::Left,
@@ -1286,7 +1290,7 @@ fn idle_fighters_stand_with_shadows_name_tags_and_the_local_marker() {
     assert_eq!(shadows.len(), 2);
     assert!(shadows.iter().all(|s| s.width == 64.0));
     let tags: Vec<&str> = frame.labels.iter().map(|l| l.text.as_str()).collect();
-    assert_eq!(tags, vec!["P1", "P2"]);
+    assert_eq!(tags, vec!["P1 Chalk", "P2 Chalk"]);
     assert!(
         frame
             .labels
@@ -1318,9 +1322,9 @@ fn an_airborne_fighter_casts_a_smaller_shadow() {
     let frame = arena_frame(&client, 0);
     let widths: Vec<f32> = rects_of(&frame, SHADOW).iter().map(|s| s.width).collect();
     assert_eq!(widths, vec![64.0, 36.0]);
-    let tag = find_label(&frame, "P2").unwrap();
+    let tag = find_label(&frame, "P2 Chalk").unwrap();
     assert!(
-        tag.y < find_label(&frame, "P1").unwrap().y,
+        tag.y < find_label(&frame, "P1 Chalk").unwrap().y,
         "the tag rises with the jump"
     );
 }
@@ -1362,7 +1366,7 @@ fn a_fighter_further_back_stands_higher_and_is_drawn_first() {
     let frame = arena_frame(&client, 0);
     let shadows = rects_of(&frame, SHADOW);
     assert_eq!(shadows[1].y, shadows[0].y - rise, "the shadow rises too");
-    assert!(find_label(&frame, "P2").unwrap().y < find_label(&frame, "P1").unwrap().y);
+    assert!(find_label(&frame, "P2 Chalk").unwrap().y < find_label(&frame, "P1 Chalk").unwrap().y);
     // After the shadows, the accessory of the one further back comes first.
     let fighters = &frame.rects[frame.rects.iter().rposition(|r| r.color == SHADOW).unwrap()..];
     let first = |player: u8| {
@@ -1988,7 +1992,9 @@ fn a_clinch_wraps_both_figures_arms_around_each_other() {
 
 /// The tag of `player` in `frame`.
 fn tag_y(frame: &Frame, player: u8) -> f32 {
-    find_label(frame, &format!("P{}", player + 1)).unwrap().y
+    find_label(frame, &format!("P{} Chalk", player + 1))
+        .unwrap()
+        .y
 }
 
 /// Asserts that the lying `player` has its head away from `other`, farther than its hips.
@@ -2220,11 +2226,15 @@ fn online_game(config: MatchConfig, local: u8) -> Game {
     Game::new(duel(config, local))
 }
 
-/// Waits until the intro can be skipped, then presses and releases Enter.
+/// Waits until the intro can be skipped, then presses Enter on the title and on the select
+/// screen (keeping the character): the fight screen is up, Enter still held.
 fn skip_intro(game: &mut Game) {
     while !game.intro().can_skip() {
         assert!(game.tick(&keys(&[])).is_empty());
     }
+    game.tick(&keys(&[Key::Enter]));
+    assert_eq!(game.screen(), Screen::Select);
+    game.tick(&keys(&[]));
     game.tick(&keys(&[Key::Enter]));
     assert_eq!(game.screen(), Screen::Fight);
 }
@@ -2279,6 +2289,9 @@ fn enter_cannot_skip_the_intro_too_early() {
     assert_eq!(game.screen(), Screen::Intro);
     assert!(game.intro().can_skip());
     game.tick(&keys(&[Key::Enter]));
+    assert_eq!(game.screen(), Screen::Select, "choose the character first");
+    game.tick(&keys(&[]));
+    game.tick(&keys(&[Key::Enter]));
     assert_eq!(game.screen(), Screen::Fight);
     assert_eq!(game.music().mood(), Mood::Fight, "the countdown runs");
 }
@@ -2296,7 +2309,7 @@ fn a_key_held_since_before_the_skip_delay_does_not_skip() {
     );
     game.tick(&keys(&[Key::ArrowLeft]));
     game.tick(&keys(&[Key::Escape, Key::ArrowLeft]));
-    assert_eq!(game.screen(), Screen::Fight);
+    assert_eq!(game.screen(), Screen::Select);
 }
 
 #[test]
@@ -2571,7 +2584,7 @@ fn the_pause_menu_switches_the_rival_of_a_practice_game() {
     game.tick(&keys(&[]));
     assert_eq!(session_tick(&game), 2);
     let text = game.frame().text();
-    assert!(text.contains("CPU  100 HP"), "{text}");
+    assert!(text.contains("CPU Chalk  100 HP"), "{text}");
     assert!(
         text.contains("Practice: the computer   T: switch to the patient computer"),
         "{text}"
@@ -2780,7 +2793,14 @@ fn enter_after_the_round_tells_the_server_the_player_is_ready() {
     fight_tick(&mut game, &[], idle());
     assert!(game.shown_match().unwrap().outcome().is_some());
     let frames = fight_tick(&mut game, &[Key::Enter], idle());
-    assert_eq!(frames[0], ClientMessage::Ready.encode(), "ready first");
+    assert_eq!(
+        frames[0],
+        ClientMessage::Ready {
+            character: Character::Chalk
+        }
+        .encode(),
+        "ready first"
+    );
     assert_eq!(frames.len(), 2, "then the (ignored) input of the tick");
     assert!(
         fight_tick(&mut game, &[Key::Enter], idle()).len() == 1,
@@ -2840,6 +2860,7 @@ fn without_a_duel_there_are_no_health_bars() {
     game.client_mut().handle(ServerMessage::Start {
         session: SESSION,
         players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
     });
     fight_tick(&mut game, &[], idle());
     assert_eq!(game.health_bars().len(), 2, "built for the new duel");
@@ -2952,6 +2973,7 @@ fn the_status_line_describes_practice_and_every_connection_state() {
     game.client_mut().handle(ServerMessage::Start {
         session: SESSION,
         players: PlayerSet::first(3),
+        characters: [Character::Chalk; 10],
     });
     assert_eq!(game.status_line(), "a match is running - press Enter");
     game.client_mut().handle(ServerMessage::RoomFull);
@@ -3031,8 +3053,8 @@ fn the_fight_frame_shows_the_arena_and_the_hud() {
     let frame = game.frame();
     assert_eq!(frame.background, arena::BACKGROUND);
     let text = frame.text();
-    assert!(text.contains("P1 (you)  100 HP"), "{text}");
-    assert!(text.contains("P2  100 HP"));
+    assert!(text.contains("P1 (you) Chalk  100 HP"), "{text}");
+    assert!(text.contains("P2 Chalk  100 HP"));
     let notice = find_label(
         &frame,
         "Practice: the training dummy   T: switch to the computer",
@@ -3049,7 +3071,7 @@ fn the_fight_frame_shows_the_arena_and_the_hud() {
         frame
             .labels
             .iter()
-            .any(|l| l.text == "P1" && l.align == Align::Center)
+            .any(|l| l.text == "P1 Chalk" && l.align == Align::Center)
     );
 }
 
@@ -3124,13 +3146,13 @@ fn t_switches_the_rival_of_a_practice_game() {
     game.tick(&keys(&[]));
     let frame = game.frame();
     let text = frame.text();
-    assert!(text.contains("CPU  100 HP"), "{text}");
-    assert!(text.contains("P1 (you)  100 HP"), "{text}");
+    assert!(text.contains("CPU Chalk  100 HP"), "{text}");
+    assert!(text.contains("P1 (you) Chalk  100 HP"), "{text}");
     assert!(
         frame
             .labels
             .iter()
-            .any(|l| l.text == "CPU" && l.size == 14.0),
+            .any(|l| l.text == "CPU Chalk" && l.size == 14.0),
         "the tag over the bot"
     );
 
@@ -3142,7 +3164,7 @@ fn t_switches_the_rival_of_a_practice_game() {
     );
     game.tick(&keys(&[]));
     assert!(
-        game.frame().text().contains("CPU  100 HP"),
+        game.frame().text().contains("CPU Chalk  100 HP"),
         "still a computer"
     );
     game.tick(&keys(&[Key::Escape]));
@@ -3162,6 +3184,8 @@ fn t_on_the_title_goes_practising() {
         game.tick(&keys(&[]));
     }
     game.tick(&keys(&[PRACTICE_KEY]));
+    assert_eq!(game.screen(), Screen::Select);
+    game.tick(&keys(&[Key::Enter]));
     assert_eq!(game.screen(), Screen::Fight);
     assert_eq!(
         game.practice(),
@@ -3179,6 +3203,12 @@ fn t_on_the_title_goes_practising() {
         online.tick(&keys(&[]));
     }
     assert!(online.tick(&keys(&[PRACTICE_KEY])).is_empty());
+    assert_eq!(online.screen(), Screen::Select);
+    assert!(
+        !online.is_practising_online(),
+        "not before the character is picked"
+    );
+    assert!(online.tick(&keys(&[Key::Enter])).is_empty());
     assert_eq!(online.screen(), Screen::Fight);
     assert!(
         online.is_practising_online(),
@@ -3196,6 +3226,7 @@ fn t_on_the_title_goes_practising() {
         connecting.tick(&keys(&[]));
     }
     connecting.tick(&keys(&[PRACTICE_KEY]));
+    connecting.tick(&keys(&[Key::Enter]));
     assert_eq!(connecting.screen(), Screen::Fight);
     assert!(
         !connecting.is_practising_online(),
@@ -3234,7 +3265,7 @@ fn online_the_practice_fight_is_played_locally_while_the_room_stays_open() {
     let frame = game.frame();
     let notice = find_label(&frame, alone).unwrap();
     assert_eq!(notice.y, NOTICE_Y);
-    assert!(frame.text().contains("CPU  100 HP"));
+    assert!(frame.text().contains("CPU Chalk  100 HP"));
 
     game.tick(&keys(&[PRACTICE_KEY]));
     assert_eq!(
@@ -3276,7 +3307,12 @@ fn online_the_practice_fight_is_played_locally_while_the_room_stays_open() {
     );
     assert_eq!(
         game.tick(&keys(&[Key::Enter])),
-        vec![ClientMessage::Ready.encode()]
+        vec![
+            ClientMessage::Ready {
+                character: Character::Chalk
+            }
+            .encode()
+        ]
     );
     game.tick(&keys(&[Key::Escape]));
     assert!(!game.is_practising_online(), "Escape again changes nothing");
@@ -3288,7 +3324,12 @@ fn a_real_match_takes_over_from_the_practice_fight() {
     game.tick(&keys(&[]));
     assert_eq!(
         game.tick(&keys(&[Key::Enter])),
-        vec![ClientMessage::Ready.encode()],
+        vec![
+            ClientMessage::Ready {
+                character: Character::Chalk
+            }
+            .encode()
+        ],
         "ready in the lobby"
     );
     game.tick(&keys(&[PRACTICE_KEY]));
@@ -3297,6 +3338,7 @@ fn a_real_match_takes_over_from_the_practice_fight() {
     game.client_mut().handle(ServerMessage::Start {
         session: SESSION,
         players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
     });
     let frames = fight_tick(&mut game, &[], idle());
     assert!(!game.is_practising_online());
@@ -3385,9 +3427,9 @@ fn play_all(client: &mut Client, inputs: &[Input]) {
 fn three_fighters_get_three_stacked_bars() {
     let client = brawl(cfg(), 1, PlayerSet::first(3));
     let frame = hud_frame(&client, &bars_of(&client), 1);
-    let p1 = find_label(&frame, "P1  100 HP").unwrap();
-    let p2 = find_label(&frame, "P2 (you)  100 HP").unwrap();
-    let p3 = find_label(&frame, "P3  100 HP").unwrap();
+    let p1 = find_label(&frame, "P1 Chalk  100 HP").unwrap();
+    let p2 = find_label(&frame, "P2 (you) Chalk  100 HP").unwrap();
+    let p3 = find_label(&frame, "P3 Chalk  100 HP").unwrap();
     assert_eq!(
         (p1.align, p2.align, p3.align),
         (Align::Left, Align::Left, Align::Right)
@@ -3398,7 +3440,7 @@ fn three_fighters_get_three_stacked_bars() {
     assert_eq!(rects_of(&frame, HEALTH).len(), 3);
 
     let arena = arena_frame(&client, 1);
-    for tag in ["P1", "P2", "P3"] {
+    for tag in ["P1 Chalk", "P2 Chalk", "P3 Chalk"] {
         assert!(find_label(&arena, tag).is_some(), "{tag}");
     }
     assert_eq!(rects_of(&arena, MARKER).len(), 1, "only the local fighter");

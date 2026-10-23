@@ -2,14 +2,17 @@
 //!
 //! [`MatchConfig`] holds every tunable rule of a match, including the frame data of the six
 //! attacks ([`AttackData`]), the grappling rules ([`GrappleData`]) and the judo techniques
-//! ([`TechniqueData`]); [`MatchConfig::validate`] is called by the match constructors.
+//! ([`TechniqueData`]), the default special move ([`SpecialData`]) and the [`Character`] of
+//! every player; [`MatchConfig::validate`] is called by the match constructors.
 //! [`Glitch`] and [`GlitchSet`] describe the exploits that exist on purpose and can be switched
 //! on and off individually.
 
 use std::fmt;
 
+use super::character::{Character, SHOULDER_RUSH, SpecialData};
 use super::grapple::GrapplePosition;
 use super::input::{Attack, Limb};
+use super::roster::{PlayerId, Roster};
 use super::technique::Technique;
 
 /// The simulation advances by one `Match::step` per tick, at this fixed rate.
@@ -322,6 +325,12 @@ pub struct MatchConfig {
     /// Depth of a fighter's push box: fighters at least this far apart across the arena walk
     /// past each other. Must not be negative.
     pub body_depth: i32,
+    /// The special move of the default character ([`Character::Chalk`]); every other
+    /// character brings its own (see [`Character::rules`]).
+    pub special: SpecialData,
+    /// The character of each player, indexed by [`PlayerId`] (everybody plays
+    /// [`Character::Chalk`] by default). Players outside the match are ignored.
+    pub characters: [Character; Roster::MAX_PLAYERS],
 }
 
 /// Shorthand for the default frame data table.
@@ -414,6 +423,8 @@ impl Default for MatchConfig {
             sidestep_speed: 5,
             attack_depth: 40,
             body_depth: 40,
+            special: SHOULDER_RUSH,
+            characters: [Character::Chalk; Roster::MAX_PLAYERS],
         }
     }
 }
@@ -458,6 +469,10 @@ pub enum ConfigError {
     /// The escape from the given position (a rung of the ladder or a technique's finish) needs
     /// zero presses.
     ZeroEscapePresses(GrapplePosition),
+    /// The special move's `active` frames are zero, so it could never hit.
+    ZeroSpecialActiveFrames,
+    /// The special move's projectile has a zero `lifetime`, so it could never hit.
+    ZeroProjectileLifetime,
 }
 
 impl MatchConfig {
@@ -484,6 +499,37 @@ impl MatchConfig {
         &self.techniques[technique.index()]
     }
 
+    /// The character `player` plays ([`Character::Chalk`] for an id beyond the table).
+    pub fn character(&self, player: PlayerId) -> Character {
+        self.characters
+            .get(usize::from(player.0))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// This configuration with `player` playing `character` (no change for an id beyond the
+    /// table).
+    ///
+    /// ```
+    /// use srr::game::{Character, MatchConfig, PlayerId};
+    ///
+    /// let config = MatchConfig::default().with_character(PlayerId(1), Character::Torch);
+    /// assert_eq!(config.character(PlayerId(1)), Character::Torch);
+    /// assert_eq!(config.character(PlayerId(0)), Character::Chalk);
+    /// ```
+    pub fn with_character(mut self, player: PlayerId, character: Character) -> Self {
+        if let Some(slot) = self.characters.get_mut(usize::from(player.0)) {
+            *slot = character;
+        }
+        self
+    }
+
+    /// The rules the fighter of `player` follows: these, adjusted by its character (see
+    /// [`Character::rules`]).
+    pub fn rules_of(&self, player: PlayerId) -> MatchConfig {
+        self.character(player).rules(self)
+    }
+
     /// Checks that the configuration can run a match.
     ///
     /// Returns the first problem found, checking in this order: arena width, max health,
@@ -499,7 +545,10 @@ impl MatchConfig {
     /// `grapple.takedown_damage`, `grapple.submission_damage`), and finally every technique in
     /// [`Technique::ALL`] order: active frames, escape presses (reported for its finish), then
     /// `range` and `damage` (field names `sweep.range`, `sweep.damage`, `throw.range`,
-    /// `throw.damage`).
+    /// `throw.damage`), then the special move: active frames, the projectile's lifetime, then
+    /// the values that must not be negative (`special.range`, `special.damage`,
+    /// `special.knockback`, `special.lunge`, `special.projectile.speed`,
+    /// `special.projectile.size`).
     ///
     /// # Errors
     ///
@@ -553,8 +602,30 @@ impl MatchConfig {
         for technique in Technique::ALL {
             validate_technique(technique, self.technique(technique))?;
         }
-        Ok(())
+        validate_special(&self.special)
     }
+}
+
+fn validate_special(data: &SpecialData) -> Result<(), ConfigError> {
+    if data.attack.active == 0 {
+        return Err(ConfigError::ZeroSpecialActiveFrames);
+    }
+    let projectile = data.projectile.unwrap_or(super::character::ProjectileData {
+        speed: 0,
+        lifetime: 1,
+        size: 0,
+    });
+    if projectile.lifetime == 0 {
+        return Err(ConfigError::ZeroProjectileLifetime);
+    }
+    non_negative(&[
+        ("special.range", data.attack.range),
+        ("special.damage", data.attack.damage),
+        ("special.knockback", data.attack.knockback),
+        ("special.lunge", data.lunge),
+        ("special.projectile.speed", projectile.speed),
+        ("special.projectile.size", projectile.size),
+    ])
 }
 
 /// The first negative value of `fields`, as a [`ConfigError::NegativeValue`].
@@ -659,6 +730,12 @@ impl fmt::Display for ConfigError {
             }
             ConfigError::ZeroEscapePresses(position) => {
                 write!(f, "escaping the {position} needs at least one press")
+            }
+            ConfigError::ZeroSpecialActiveFrames => {
+                write!(f, "the special move needs at least one active tick")
+            }
+            ConfigError::ZeroProjectileLifetime => {
+                write!(f, "the projectile needs a lifetime of at least one tick")
             }
         }
     }

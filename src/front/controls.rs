@@ -1,23 +1,23 @@
 //! The controls page: pick a keyboard preset ([`KeyBindings::PRESETS`]: the standard arrows +
-//! keypad layout, which stays the default, or WASD + letters + space), remap any action, and
-//! choose who to practise against.
+//! keypad layout, which stays the default, or WASD + letters + space), remap any action, pick
+//! your [`Character`], and choose who to practise against.
 //!
 //! Reached from the intro with `C`, or from the fight with `P`, which pauses it (the page is
 //! then the pause menu, see [`ControlsPage::paused`]). `Up` / `Down` choose a row; on the
 //! preset row `Left` / `Right` (or `Enter`) switch presets; on an action row `Enter` waits for
 //! the new key (`Esc` cancels), and a key already bound elsewhere swaps with the old one; on
-//! the practice row `Left` / `Right` (or `Enter`) choose the rival of a practice fight (see
-//! [`Practice`]); `Esc` (or `Enter` on the last row, or `P` while paused) goes back to where
-//! the page was opened from.
+//! the character row `Left` / `Right` (or `Enter`) go round the characters; on the practice
+//! row they choose the rival of a practice fight (see [`Practice`]); `Esc` (or `Enter` on the
+//! last row, or `P` while paused) goes back to where the page was opened from.
 //!
-//! The page only edits a [`KeyBindings`] and a [`Practice`] choice; the [`Game`](super::Game)
-//! keeps the first and carries out the second.
+//! The page only edits a [`KeyBindings`], a [`Character`] and a [`Practice`] choice; the
+//! [`Game`](super::Game) keeps the first and carries out the others.
 
 use super::scene::{Align, Frame, Rgba, SCREEN_WIDTH};
-use crate::game::{Input, Key, KeyBindings, Rival, Technique};
+use crate::game::{Character, Input, Key, KeyBindings, Rival, Technique};
 
-/// Rows of the page: the preset, one per action, the practice, then "back".
-pub const ROWS: usize = Input::BITS as usize + 3;
+/// Rows of the page: the preset, one per action, the character, the practice, then "back".
+pub const ROWS: usize = Input::BITS as usize + 4;
 
 /// The key pausing the fight (and resuming it from the pause menu); it cannot be bound.
 pub const PAUSE_KEY: Key = Key::P;
@@ -25,7 +25,7 @@ pub const PAUSE_KEY: Key = Key::P;
 /// Top of the first row.
 pub const FIRST_ROW_Y: f32 = 150.0;
 /// Distance between two rows: the [`ROWS`] rows and the judo line below them fit the screen.
-pub const ROW_HEIGHT: f32 = 32.0;
+pub const ROW_HEIGHT: f32 = 28.0;
 /// Where the names end and the keys start.
 pub const COLUMN_X: f32 = SCREEN_WIDTH / 2.0;
 
@@ -45,6 +45,8 @@ pub enum Row {
     Preset,
     /// The action at this index of [`KeyBindings::ACTIONS`].
     Action(usize),
+    /// The character played (see [`Character`]).
+    Character,
     /// The rival of a practice fight (see [`Practice`]).
     Practice,
     /// Back to the title, or back to the fight when paused.
@@ -59,6 +61,7 @@ impl Row {
     ///
     /// assert_eq!(Row::at(0), Row::Preset);
     /// assert_eq!(Row::at(1), Row::Action(0));
+    /// assert_eq!(Row::at(ROWS - 3), Row::Character);
     /// assert_eq!(Row::at(ROWS - 2), Row::Practice);
     /// assert_eq!(Row::at(ROWS - 1), Row::Back);
     /// ```
@@ -67,6 +70,7 @@ impl Row {
             0 => Row::Preset,
             i if i + 1 >= ROWS => Row::Back,
             i if i + 2 == ROWS => Row::Practice,
+            i if i + 3 == ROWS => Row::Character,
             i => Row::Action(i - 1),
         }
     }
@@ -193,7 +197,7 @@ pub fn technique_keys(technique: Technique, bindings: &KeyBindings) -> String {
 ///
 /// let [moves, attacks] = controls_lines(&KeyBindings::WASD);
 /// assert!(moves.starts_with("Move: A / D   Sidestep: Q / E   Jump: W   Crouch: S"));
-/// assert!(attacks.contains("Grab: Space   Judo: H+U, Y+U"));
+/// assert!(attacks.contains("Grab: Space   Judo: H+U, Y+U   Special: F"));
 /// ```
 pub fn controls_lines(bindings: &KeyBindings) -> [String; 2] {
     let b = bindings;
@@ -207,24 +211,26 @@ pub fn controls_lines(bindings: &KeyBindings) -> [String; 2] {
              Crouch: {down}   Turn: {down}+{left} / {down}+{right}   Block: step back"
         ),
         format!(
-            "Punch: {}   Kick: {}   Grab: {}   Judo: {}, {}   Enter: ready   P: pause   \
-             Tab: view",
+            "Punch: {}   Kick: {}   Grab: {}   Judo: {}, {}   Special: {}   Enter: ready   \
+             P: pause   Tab: view",
             punches.join(" "),
             kicks.join(" "),
             b.grab.label(),
             technique_keys(Technique::Sweep, b),
             technique_keys(Technique::Throw, b),
+            b.special.label(),
         ),
     ]
 }
 
 /// The state of the controls page: the row chosen, whether it waits for a new key, whether
-/// it is the pause menu of a fight, and the practice choice.
+/// it is the pause menu of a fight, the character and the practice choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ControlsPage {
     selected: usize,
     waiting: bool,
     paused: bool,
+    character: Character,
     practice: Practice,
 }
 
@@ -247,6 +253,16 @@ impl ControlsPage {
     /// The page with `practice` on its practice row.
     pub fn with_practice(self, practice: Practice) -> Self {
         ControlsPage { practice, ..self }
+    }
+
+    /// The page with `character` on its character row.
+    pub fn with_character(self, character: Character) -> Self {
+        ControlsPage { character, ..self }
+    }
+
+    /// The character, as changed on the character row.
+    pub fn character(&self) -> Character {
+        self.character
     }
 
     /// The row chosen.
@@ -296,6 +312,10 @@ impl ControlsPage {
                     preset_index(bindings).map_or(0, |index| (index + count - 1) % count);
                 *bindings = KeyBindings::PRESETS[previous].1;
             }
+            (Key::ArrowRight | Key::Enter, Row::Character) => {
+                self.character = self.character.next();
+            }
+            (Key::ArrowLeft, Row::Character) => self.character = self.character.previous(),
             (Key::ArrowRight | Key::Enter, Row::Practice) => {
                 self.practice = self.practice.next();
             }
@@ -312,14 +332,14 @@ impl ControlsPage {
         let (title, help) = if self.paused {
             (
                 "PAUSED",
-                "Up / Down: choose   Left / Right: preset, practice   Enter: change   \
-                 Esc / P: resume",
+                "Up / Down: choose   Left / Right: preset, character, practice   \
+                 Enter: change   Esc / P: resume",
             )
         } else {
             (
                 "CONTROLS",
-                "Up / Down: choose   Left / Right: preset, practice   Enter: change   \
-                 Esc: back",
+                "Up / Down: choose   Left / Right: preset, character, practice   \
+                 Enter: change   Esc: back",
             )
         };
         frame.label(title, center, 50.0, 44.0, TITLE, Align::Center);
@@ -346,6 +366,13 @@ impl ControlsPage {
                         keys[action].label().to_string()
                     };
                     (KeyBindings::ACTIONS[action], value)
+                }
+                Row::Character => {
+                    let data = self.character.data();
+                    (
+                        "Character",
+                        format!("< {} - {} >", data.name, data.special_name),
+                    )
                 }
                 Row::Practice => ("Practice", self.practice.label()),
                 Row::Back => (

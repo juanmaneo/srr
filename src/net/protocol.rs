@@ -1,24 +1,25 @@
 //! The binary messages exchanged between the browsers and the relay server.
 //!
 //! Every message is one WebSocket binary frame: a tag byte followed by its fields, integers in
-//! little-endian order. A set of players ([`PlayerSet`]) is two bytes, bit `i` for player `i`.
+//! little-endian order. A set of players ([`PlayerSet`]) is two bytes, bit `i` for player `i`,
+//! and a [`Character`] is its [index](Character::index) in one byte.
 //!
 //! | tag | message                       | direction | fields                                                   |
 //! | --- | ----------------------------- | --------- | -------------------------------------------------------- |
 //! | 1   | [`ServerMessage::Welcome`]    | to client | player `u8`                                              |
-//! | 2   | [`ServerMessage::Start`]      | to client | session `u8`, players `u16`                              |
+//! | 2   | [`ServerMessage::Start`]      | to client | session `u8`, players `u16`, then one character `u8` per player, by increasing id |
 //! | 3   | [`ClientMessage::Input`]      | to server | session `u8`, tick `u32`, input `u16`                    |
 //! | 4   | [`ServerMessage::PlayerLeft`] | to client | player `u8`                                              |
 //! | 5   | [`ServerMessage::RoomFull`]   | to client | —                                                        |
 //! | 6   | [`ServerMessage::Lobby`]      | to client | seated `u16`, ready `u16`                                |
-//! | 7   | [`ClientMessage::Ready`]      | to server | —                                                        |
+//! | 7   | [`ClientMessage::Ready`]      | to server | character `u8`                                           |
 //! | 8   | [`ServerMessage::Frame`]      | to client | session `u8`, tick `u32`, players `u16`, late `u16`, then one input `u16` per player, by increasing id |
 //! | 9   | [`ServerMessage::Timing`]     | to client | tick `u32`, lead `i8`                                    |
 
 use std::fmt;
 
-use super::players::PlayerSet;
-use crate::game::{Input, PlayerId};
+use super::players::{MAX_PLAYERS, PlayerSet};
+use crate::game::{Character, Input, PlayerId};
 
 const TAG_WELCOME: u8 = 1;
 const TAG_START: u8 = 2;
@@ -38,6 +39,9 @@ const FRAME_HEADER_LENGTH: usize = 1 + 1 + 4 + 2 + 2;
 /// The inputs of one tick, indexed by player id (see [`ServerMessage::Frame`]).
 pub type FrameInputs = [Input; PlayerSet::CAPACITY];
 
+/// The character of every seat, indexed by player id (see [`ServerMessage::Start`]).
+pub type Characters = [Character; MAX_PLAYERS];
+
 /// Why bytes could not be decoded into a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -45,6 +49,8 @@ pub enum DecodeError {
     Empty,
     /// The first byte is not the tag of a message this side can receive.
     UnknownTag(u8),
+    /// A byte that should name a [`Character`] names none.
+    UnknownCharacter(u8),
     /// The message has the wrong size for its tag.
     WrongLength {
         /// The tag of the message.
@@ -61,6 +67,7 @@ impl fmt::Display for DecodeError {
         match self {
             DecodeError::Empty => write!(f, "empty message"),
             DecodeError::UnknownTag(tag) => write!(f, "unknown message tag {tag}"),
+            DecodeError::UnknownCharacter(index) => write!(f, "unknown character {index}"),
             DecodeError::WrongLength {
                 tag,
                 expected,
@@ -87,21 +94,25 @@ pub enum ClientMessage {
         /// What the sender holds on that tick.
         input: Input,
     },
-    /// The sender is ready for the next match (in the lobby, or once a round is over). The
-    /// server starts one when every seated player is ready.
-    Ready,
+    /// The sender is ready for the next match (in the lobby, or once a round is over), as
+    /// `character`. The server starts one when every seated player is ready.
+    Ready {
+        /// The character the sender fights as in the next match.
+        character: Character,
+    },
 }
 
 impl ClientMessage {
     /// The bytes of one WebSocket binary frame.
     ///
     /// ```
-    /// use srr::game::Input;
+    /// use srr::game::{Character, Input};
     /// use srr::net::ClientMessage;
     ///
     /// let message = ClientMessage::Input { session: 1, tick: 42, input: Input::NONE };
     /// assert_eq!(ClientMessage::decode(&message.encode()), Ok(message));
-    /// assert_eq!(ClientMessage::Ready.encode(), vec![7]);
+    /// let ready = ClientMessage::Ready { character: Character::Torch };
+    /// assert_eq!(ready.encode(), vec![7, 1]);
     /// ```
     pub fn encode(&self) -> Vec<u8> {
         match *self {
@@ -115,7 +126,7 @@ impl ClientMessage {
                 bytes.extend_from_slice(&input.to_bits().to_le_bytes());
                 bytes
             }
-            ClientMessage::Ready => vec![TAG_READY],
+            ClientMessage::Ready { character } => vec![TAG_READY, character.index()],
         }
     }
 
@@ -134,7 +145,12 @@ impl ClientMessage {
                     input: Input::from_bits(u16::from_le_bytes([i0, i1])),
                 })
             }
-            TAG_READY => fixed::<1>(bytes).map(|_| ClientMessage::Ready),
+            TAG_READY => {
+                let [_, character] = fixed::<2>(bytes)?;
+                Ok(ClientMessage::Ready {
+                    character: character_of(character)?,
+                })
+            }
             tag => Err(DecodeError::UnknownTag(tag)),
         }
     }
@@ -158,6 +174,9 @@ pub enum ServerMessage {
         session: u8,
         /// Who fights, everybody for themselves.
         players: PlayerSet,
+        /// The character of each player of `players`, by id; only theirs are sent (the others
+        /// decode as [`Character::Chalk`]).
+        characters: Characters,
     },
     /// The inputs of every player of session `session` for `tick`, as decided by the server:
     /// sent, in tick order, as soon as every input arrived, or once the server gave up waiting.
@@ -214,9 +233,18 @@ impl ServerMessage {
     pub fn encode(&self) -> Vec<u8> {
         match *self {
             ServerMessage::Welcome { player } => vec![TAG_WELCOME, player.0],
-            ServerMessage::Start { session, players } => {
+            ServerMessage::Start {
+                session,
+                players,
+                characters,
+            } => {
                 let mut bytes = vec![TAG_START, session];
                 push_set(&mut bytes, players);
+                bytes.extend(
+                    players
+                        .iter()
+                        .map(|player| character_at(&characters, player).index()),
+                );
                 bytes
             }
             ServerMessage::Frame {
@@ -267,13 +295,7 @@ impl ServerMessage {
                     player: PlayerId(player),
                 })
             }
-            TAG_START => {
-                let [_, session, p0, p1] = fixed::<4>(bytes)?;
-                Ok(ServerMessage::Start {
-                    session,
-                    players: set([p0, p1]),
-                })
-            }
+            TAG_START => decode_start(bytes),
             TAG_FRAME => decode_frame(bytes),
             TAG_PLAYER_LEFT => {
                 let [_, player] = fixed::<2>(bytes)?;
@@ -299,6 +321,47 @@ impl ServerMessage {
             tag => Err(DecodeError::UnknownTag(tag)),
         }
     }
+}
+
+/// A start: the session and the players, then as many characters as there are players.
+fn decode_start(bytes: &[u8]) -> Result<ServerMessage, DecodeError> {
+    const HEADER: usize = 1 + 1 + 2;
+    let wrong_length = |expected| DecodeError::WrongLength {
+        tag: TAG_START,
+        expected,
+        actual: bytes.len(),
+    };
+    let Some((&[_, session, p0, p1], rest)) = bytes.split_first_chunk::<HEADER>() else {
+        return Err(wrong_length(HEADER));
+    };
+    let players = set([p0, p1]);
+    if rest.len() != players.len() {
+        return Err(wrong_length(HEADER + players.len()));
+    }
+    let mut characters = [Character::Chalk; MAX_PLAYERS];
+    for (player, &index) in players.iter().zip(rest) {
+        let character = character_of(index)?;
+        if let Some(slot) = characters.get_mut(usize::from(player.0)) {
+            *slot = character;
+        }
+    }
+    Ok(ServerMessage::Start {
+        session,
+        players,
+        characters,
+    })
+}
+
+/// The character of `player` in `characters` ([`Character::Chalk`] beyond the seats).
+pub fn character_at(characters: &Characters, player: PlayerId) -> Character {
+    characters
+        .get(usize::from(player.0))
+        .copied()
+        .unwrap_or_default()
+}
+
+fn character_of(index: u8) -> Result<Character, DecodeError> {
+    Character::from_index(index).ok_or(DecodeError::UnknownCharacter(index))
 }
 
 /// A frame: the fixed header, then as many inputs as the header has players.

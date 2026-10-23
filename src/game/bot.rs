@@ -35,9 +35,12 @@
 //!   under a high attack thrown from the floor;
 //! * out of reach, it walks in (jumping once in a while); out of the enemy's line, it
 //!   sidesteps back onto it;
+//! * out of reach, a character that throws fireballs throws one now and then when it is ready
+//!   and on the enemy's line;
 //! * in reach, every `decision_pause` ticks at most it picks something: a grab, a judo
-//!   technique or a strike up close, a strike or a step in further away; between two
-//!   decisions it holds its ground, walks in or backs off. How often and how patiently is
+//!   technique, its character's special move (when ready and in its reach) or a strike up
+//!   close, the special move, a strike or a step in further away; between two decisions it
+//!   holds its ground, walks in or backs off. How often and how patiently is
 //!   tuned by its [`BrawlerConfig`], which a caller may adjust (the defaults are the
 //!   standard computer).
 //!
@@ -149,6 +152,14 @@ const GRAB: Input = Input {
     grab: true,
     ..Input::NONE
 };
+
+const SPECIAL: Input = Input {
+    special: true,
+    ..Input::NONE
+};
+
+/// Chance, per tick of walking in, that a fireball thrower that is ready throws one.
+const FIREBALL_PERCENT: u32 = 4;
 
 /// A computer-controlled player: see the [module documentation](self).
 ///
@@ -371,7 +382,8 @@ impl Brawler {
             Some(me) if current.phase() == Phase::Fighting && !me.is_knocked_out() => me,
             _ => return Input::NONE,
         };
-        let config = current.config();
+        // The bot's own rules: its character's reach, speed and special move.
+        let config = current.rules(self.player).unwrap_or(current.config());
         if let Some(grapple) = me.grapple() {
             return self.grapple(&grapple, config);
         }
@@ -426,8 +438,16 @@ impl Brawler {
             .into_iter()
             .map(|attack| config.attack(attack).range)
             .fold(config.grapple.range, i32::max);
+        let ready = me.special_cooldown() == 0;
         if distance > reach {
             self.plan = Plan::Approach;
+            if ready
+                && config.special.projectile.is_some()
+                && dz.abs() <= i64::from(config.attack_depth)
+                && self.chance(FIREBALL_PERCENT)
+            {
+                return SPECIAL;
+            }
             let jump = self.chance(self.config.jump_percent);
             return Input {
                 jump,
@@ -448,7 +468,7 @@ impl Brawler {
             return sidestepping(walk, lane);
         }
         self.wait = self.between(self.config.decision_pause.0, self.config.decision_pause.1);
-        self.offense(distance, toward, config)
+        self.offense(distance, toward, config, ready)
     }
 
     /// The strike that chains after the one in progress, once it connected: the next tier,
@@ -491,9 +511,19 @@ impl Brawler {
         }
     }
 
-    /// Picks the next move in reach (`distance` is at most the longest reach).
-    fn offense(&mut self, distance: i32, toward: Facing, config: &MatchConfig) -> Input {
+    /// Picks the next move in reach (`distance` is at most the longest reach); the special
+    /// move is an option when it is `ready` and reaches (a fireball always does).
+    fn offense(
+        &mut self,
+        distance: i32,
+        toward: Facing,
+        config: &MatchConfig,
+        ready: bool,
+    ) -> Input {
         let roll = self.between(0, 99);
+        let special = ready
+            && (60..=69).contains(&roll)
+            && (config.special.projectile.is_some() || distance <= special_reach(config));
         let reaching: Vec<Attack> = Attack::ALL
             .into_iter()
             .filter(|&attack| config.attack(attack).range >= distance)
@@ -512,6 +542,9 @@ impl Brawler {
             return walking(toward);
         } else {
             self.plan = if roll < 55 { Plan::Retreat } else { Plan::Hold };
+        }
+        if special {
+            return SPECIAL;
         }
         // Up close nothing may reach (with very short strikes): grab instead.
         let index = self.between(0, reaching.len().max(1) as u32 - 1) as usize;
@@ -589,6 +622,15 @@ impl Brawler {
         // The remainder is at most `high - low`, so it fits in a u32 and the sum stays <= high.
         low + (self.next() % span) as u32
     }
+}
+
+/// How far the special move of `config` reaches from where it starts: its range, plus the
+/// distance its lunge covers until its active phase ends.
+fn special_reach(config: &MatchConfig) -> i32 {
+    let special = &config.special;
+    let ticks = special.attack.startup.saturating_add(special.attack.active);
+    let lunge = i64::from(special.lunge) * i64::from(ticks);
+    (i64::from(special.attack.range) + lunge).clamp(0, i64::from(i32::MAX)) as i32
 }
 
 /// Whether a fighter in `state` reads its input (and can therefore move or start something).

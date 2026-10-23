@@ -4,6 +4,7 @@
 //! Fighters are created and driven by [`Match`](super::Match); outside this module they can
 //! only be observed through the read-only accessors of [`Fighter`].
 
+use super::character::ProjectileData;
 use super::config::{AttackData, Glitch, MatchConfig};
 use super::grapple::{Grapple, GrapplePosition, GrappleRole, Hold, Link};
 use super::input::{Attack, Input, Limb, Strength};
@@ -88,6 +89,9 @@ pub enum FighterState {
     Crouching,
     /// In the middle of an attack, in the given phase.
     Attacking(AttackPhase),
+    /// In the middle of its character's special move, in the given phase (see
+    /// [`SpecialData`](super::SpecialData)).
+    Special(AttackPhase),
     /// Attempting a grab, in the given phase; only the `Active` phase can connect.
     Grabbing(AttackPhase),
     /// Attempting a judo technique, in the given phase; only the `Active` phase can connect.
@@ -121,10 +125,17 @@ impl HitTargets {
     }
 }
 
+/// What a strike throws: one of the six attacks, or the character's special move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Move {
+    Attack(Attack),
+    Special,
+}
+
 /// A strike in progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Strike {
-    attack: Attack,
+    kind: Move,
     /// The step of the attack just completed (1-based).
     frame: u32,
     /// The fighters the attack already struck.
@@ -135,10 +146,10 @@ struct Strike {
 }
 
 impl Strike {
-    /// The first step of `attack`.
-    fn new(attack: Attack) -> Self {
+    /// The first step of `kind`.
+    fn new(kind: Move) -> Self {
         Strike {
-            attack,
+            kind,
             frame: 1,
             hit: HitTargets::NONE,
             connected: false,
@@ -219,13 +230,22 @@ pub struct Fighter {
     /// Hits of the combo the fighter is caught in: unblocked hits taken in a row, each inside
     /// the stun of the previous one; back to zero when the stun ends.
     combo_hits: u32,
+    /// Ticks before the special move can be started again.
+    cooldown: u32,
+    /// The projectile the special move threw during the last update, if any.
+    launched: Option<ProjectileData>,
+    /// Whether high attacks from the floor pass over the special move (from the rules).
+    low_profile: bool,
+    /// Whether hits taken during the special move's start-up neither stun nor push.
+    armored: bool,
     action: Action,
     state: FighterState,
 }
 
 impl Fighter {
     /// A fighter on the floor, on the middle line, at full health, facing right unless it
-    /// stands strictly right of the arena centre.
+    /// stands strictly right of the arena centre. `config` holds the fighter's own rules
+    /// (see [`MatchConfig::rules_of`]).
     pub(crate) fn spawn(player: PlayerId, x: i32, config: &MatchConfig) -> Self {
         let right_half = 2 * i64::from(x) > i64::from(config.arena_width);
         Fighter {
@@ -247,6 +267,10 @@ impl Fighter {
             held: [0; 6],
             combo: None,
             combo_hits: 0,
+            cooldown: 0,
+            launched: None,
+            low_profile: config.special.low_profile,
+            armored: config.special.armored,
             action: Action::Free,
             state: FighterState::Idle,
         }
@@ -289,12 +313,46 @@ impl Fighter {
         self.facing
     }
 
-    /// The attack in progress, if the fighter is attacking.
+    /// The attack in progress, if the fighter is attacking (a special move is not one of the
+    /// six attacks: see [`Fighter::is_special`]).
     pub fn attack(&self) -> Option<Attack> {
         match self.action {
-            Action::Attacking(strike) => Some(strike.attack),
+            Action::Attacking(Strike {
+                kind: Move::Attack(attack),
+                ..
+            }) => Some(attack),
             _ => None,
         }
+    }
+
+    /// Whether the fighter is in the middle of its special move.
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert!(!m.fighter(PlayerId(0)).unwrap().is_special());
+    /// ```
+    pub fn is_special(&self) -> bool {
+        matches!(
+            self.action,
+            Action::Attacking(Strike {
+                kind: Move::Special,
+                ..
+            })
+        )
+    }
+
+    /// Ticks before the special move can be started again (0: ready).
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert_eq!(m.fighter(PlayerId(0)).unwrap().special_cooldown(), 0);
+    /// ```
+    pub fn special_cooldown(&self) -> u32 {
+        self.cooldown
     }
 
     /// Whether the attack in progress hit a fighter that did not block it: from the next tick
@@ -363,6 +421,8 @@ impl Fighter {
     /// combination they completed, for the grapple.
     pub(crate) fn update(&mut self, input: Input, config: &MatchConfig) {
         self.stride = 0;
+        self.launched = None;
+        self.cooldown = self.cooldown.saturating_sub(1);
         self.fresh = input.pressed_since(self.previous);
         self.previous = input;
         for (held, attack) in self.held.iter_mut().zip(Attack::ALL) {
@@ -425,11 +485,11 @@ impl Fighter {
             self.update_flying_kick(strike, input, config);
             return;
         }
-        let data = config.attack(strike.attack);
+        let data = strike_data(strike.kind, config);
         let active_end = data.startup.saturating_add(data.active);
         let converted = Technique::ALL.into_iter().find(|&technique| {
             strike.frame <= data.startup
-                && technique.buttons().contains(&strike.attack)
+                && matches!(strike.kind, Move::Attack(attack) if technique.buttons().contains(&attack))
                 && self.completes(technique, config)
         });
 
@@ -462,7 +522,7 @@ impl Fighter {
             self.state = self.moving_state(input);
         } else if let Some(next) = self.chained(strike, input) {
             self.set_strike(Strike::new(next), config);
-        } else if strike.frame >= config.attack(strike.attack).total() {
+        } else if strike.frame >= strike_data(strike.kind, config).total() {
             self.action = Action::Free;
             self.fly(input, config);
         } else {
@@ -470,25 +530,50 @@ impl Fighter {
         }
     }
 
-    /// The strike `strike` is cancelled into, if it connected and `input` requests a stronger
-    /// attack (a stronger kick, in the air).
-    fn chained(&self, strike: Strike, input: Input) -> Option<Attack> {
+    /// The move `strike` is cancelled into, if it is an attack that connected and `input`
+    /// requests a stronger attack (a stronger kick, in the air) or, on the floor, the special
+    /// move once it is ready (the special move wins). Nothing chains after a special move.
+    fn chained(&self, strike: Strike, input: Input) -> Option<Move> {
+        let Move::Attack(attack) = strike.kind else {
+            return None;
+        };
         if !strike.connected {
             return None;
+        }
+        if !self.airborne && input.special && self.cooldown == 0 {
+            return Some(Move::Special);
         }
         let next = if self.airborne {
             input.kick()
         } else {
             input.attack()
         };
-        next.filter(|next| next.strength > strike.attack.strength)
+        next.filter(|next| next.strength > attack.strength)
+            .map(Move::Attack)
     }
 
-    /// Puts the fighter at the step of `strike`.
+    /// Puts the fighter at the step of `strike`. A special move starts its cooldown on its
+    /// first step, rushes forward by its lunge on every start-up and active step, and throws
+    /// its projectile on its first active step.
     fn set_strike(&mut self, strike: Strike, config: &MatchConfig) {
-        let data = config.attack(strike.attack);
+        let data = strike_data(strike.kind, config);
+        let phase = phase_at(strike.frame, data.startup, data.active);
         self.action = Action::Attacking(strike);
-        self.state = FighterState::Attacking(phase_at(strike.frame, data.startup, data.active));
+        let Move::Special = strike.kind else {
+            self.state = FighterState::Attacking(phase);
+            return;
+        };
+        self.state = FighterState::Special(phase);
+        let special = &config.special;
+        if strike.frame == 1 {
+            self.cooldown = special.cooldown;
+        }
+        if phase != AttackPhase::Recovery {
+            self.walk_by(self.facing.sign() * special.lunge, config);
+        }
+        self.launched = special
+            .projectile
+            .filter(|_| strike.frame == data.startup.saturating_add(1));
     }
 
     /// Unlike an attack, a grab's recovery cannot be cancelled: a whiffed grab is punishable.
@@ -547,8 +632,10 @@ impl Fighter {
         }
         if let Some(technique) = self.combo {
             self.start_technique(technique, 1, config);
+        } else if input.special && self.cooldown == 0 {
+            self.set_strike(Strike::new(Move::Special), config);
         } else if let Some(attack) = input.attack() {
-            self.set_strike(Strike::new(attack), config);
+            self.set_strike(Strike::new(Move::Attack(attack)), config);
         } else if input.grab {
             self.start_grab(1, config);
         } else if input.jump {
@@ -603,7 +690,7 @@ impl Fighter {
     /// otherwise the fighter just flies.
     fn fly(&mut self, input: Input, config: &MatchConfig) {
         match input.kick() {
-            Some(kick) => self.set_strike(Strike::new(kick), config),
+            Some(kick) => self.set_strike(Strike::new(Move::Attack(kick)), config),
             None => self.state = FighterState::Airborne,
         }
     }
@@ -633,10 +720,12 @@ impl Fighter {
 
     /// Moves without turning: only down + a direction changes the facing.
     fn walk(&mut self, direction: i32, config: &MatchConfig) {
-        self.x = self
-            .x
-            .saturating_add(direction * config.walk_speed)
-            .clamp(0, config.arena_width);
+        self.walk_by(direction.saturating_mul(config.walk_speed), config);
+    }
+
+    /// Moves by `distance` along the arena, staying inside it.
+    fn walk_by(&mut self, distance: i32, config: &MatchConfig) {
+        self.x = self.x.saturating_add(distance).clamp(0, config.arena_width);
     }
 
     /// Moves across the arena, towards the wall for a positive `direction`.
@@ -674,8 +763,23 @@ impl Fighter {
     // Combat
     // ----------------------------------------------------------------------------------------
 
-    pub(crate) fn is_attack_active(&self) -> bool {
-        self.state == FighterState::Attacking(AttackPhase::Active)
+    /// The hit of the strike in progress when it can hit with the fighter's body: an attack,
+    /// or a special move that throws no projectile, in its active phase.
+    pub(crate) fn active_hit(&self, config: &MatchConfig) -> Option<AttackData> {
+        let Action::Attacking(strike) = self.action else {
+            return None;
+        };
+        let body = match self.state {
+            FighterState::Attacking(AttackPhase::Active) => true,
+            FighterState::Special(AttackPhase::Active) => config.special.projectile.is_none(),
+            _ => false,
+        };
+        body.then(|| *strike_data(strike.kind, config))
+    }
+
+    /// The projectile the special move threw during the last update, if any.
+    pub(crate) fn launched(&self) -> Option<ProjectileData> {
+        self.launched
     }
 
     pub(crate) fn is_grab_active(&self) -> bool {
@@ -742,15 +846,26 @@ impl Fighter {
 
     /// Whether `target` is inside the box of the current attack: in front (or on the same x),
     /// within the attack's range horizontally, within `attack_height` vertically and within
-    /// `attack_depth` across, all bounds inclusive; high attacks pass over a crouching target,
-    /// unless they come down from the air. Always false when the fighter is not attacking.
+    /// `attack_depth` across, all bounds inclusive; high attacks pass over a crouching target
+    /// (or one sliding under them, see [`Fighter::ducks`]), unless they come down from the air.
+    /// Always false when the fighter is not striking.
     pub(crate) fn reaches(&self, target: &Fighter, config: &MatchConfig) -> bool {
-        self.attack().is_some_and(|attack| {
-            let over_the_head = attack.strength == Strength::High
-                && !self.airborne
-                && target.state == FighterState::Crouching;
-            !over_the_head && self.in_box(target, config.attack(attack).range, config)
+        matches!(self.action, Action::Attacking(strike) if {
+            let high = matches!(strike.kind, Move::Attack(attack) if attack.strength == Strength::High);
+            let over_the_head = high && !self.airborne && target.ducks();
+            !over_the_head && self.in_box(target, strike_data(strike.kind, config).range, config)
         })
+    }
+
+    /// Whether high attacks thrown from the floor pass over the fighter: it crouches, or its
+    /// special move is low (a slide) and not recovering yet.
+    pub(crate) fn ducks(&self) -> bool {
+        self.state == FighterState::Crouching
+            || (self.low_profile
+                && matches!(
+                    self.state,
+                    FighterState::Special(AttackPhase::Startup | AttackPhase::Active)
+                ))
     }
 
     fn in_box(&self, target: &Fighter, range: i32, config: &MatchConfig) -> bool {
@@ -781,6 +896,8 @@ impl Fighter {
     }
 
     /// Applies one hit of an attack with frame data `data`, travelling in `direction`.
+    /// `config` holds the fighter's own rules. During the start-up of an armored special move
+    /// the hit only hurts: no push, no stun, no combo.
     pub(crate) fn take_hit(
         &mut self,
         data: &AttackData,
@@ -796,18 +913,17 @@ impl Fighter {
             data.damage
         };
         self.health = self.health.saturating_sub(damage).max(0);
+        let flinches = !blocked
+            && !(self.armored && self.state == FighterState::Special(AttackPhase::Startup));
 
-        if !blocked {
-            self.x = self
-                .x
-                .saturating_add(direction.sign() * data.knockback)
-                .clamp(0, config.arena_width);
+        if flinches {
+            self.walk_by(direction.sign().saturating_mul(data.knockback), config);
             self.combo_hits = self.combo_hits.saturating_add(1);
         }
 
         if self.health == 0 {
             self.knock_out();
-        } else if !blocked {
+        } else if flinches {
             // Being hit cancels whatever the fighter was doing, including its own attack, grab
             // or grapple.
             self.stun(data.hitstun);
@@ -898,6 +1014,14 @@ impl Fighter {
     }
 }
 
+/// The timeline and hit of `kind`: the attack's frame data, or the special move's.
+fn strike_data(kind: Move, config: &MatchConfig) -> &AttackData {
+    match kind {
+        Move::Attack(attack) => config.attack(attack),
+        Move::Special => &config.special.attack,
+    }
+}
+
 /// The index of `attack`'s button in `Fighter::held`: [`Attack::ALL`] order.
 fn slot(attack: Attack) -> usize {
     let limb = match attack.limb {
@@ -951,6 +1075,27 @@ mod tests {
             fighter.state(),
             FighterState::Grappling(GrappleRole::Bottom, hold.position()),
             "a grappling fighter switches sides"
+        );
+    }
+
+    #[test]
+    fn in_the_air_a_connected_kick_never_cancels_into_the_special_move() {
+        let config = MatchConfig::default();
+        let mut fighter = Fighter::spawn(PlayerId(0), 100, &config);
+        fighter.airborne = true;
+        let strike = Strike {
+            connected: true,
+            ..Strike::new(Move::Attack(Attack::kick(Strength::Low)))
+        };
+        let special = Input {
+            special: true,
+            ..Input::NONE
+        };
+        assert_eq!(fighter.chained(strike, special), None);
+        let stronger = Input::pressing(Attack::kick(Strength::High));
+        assert_eq!(
+            fighter.chained(strike, stronger),
+            Some(Move::Attack(Attack::kick(Strength::High)))
         );
     }
 

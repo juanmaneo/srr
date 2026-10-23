@@ -324,10 +324,11 @@ fn a_technique_wins_over_everything_else() {
 }
 
 #[test]
-fn attack_wins_over_everything_else_but_a_technique() {
+fn attack_wins_over_everything_else_but_a_technique_and_the_special_move() {
     let mut m = far_apart(cfg());
     let everything_but_the_high_kick = Input {
         kick_high: false,
+        special: false,
         ..Input::from_bits(u16::MAX)
     };
     m.step(&only(0, everything_but_the_high_kick));

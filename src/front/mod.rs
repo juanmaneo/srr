@@ -11,10 +11,12 @@
 //!
 //! 1. [`Screen::Intro`]: the graffiti title ([`intro`]), until Enter or Escape is pressed;
 //!    `C` opens the controls page, `T` ([`PRACTICE_KEY`]) goes practising;
-//! 2. [`Screen::Controls`]: choose a keyboard preset, remap any action or choose who to
-//!    practise against ([`controls`]); it is also the pause menu of the fight screen (`P`),
-//!    going back to the fight;
-//! 3. [`Screen::Fight`]: the arena ([`arena`]) under the versus HUD ([`hud`]): health bars with
+//! 2. [`Screen::Select`]: choose your [`Character`] ([`select`]), then Enter goes to the
+//!    fight (practising, after `T`) and Escape back to the title;
+//! 3. [`Screen::Controls`]: choose a keyboard preset, remap any action, change character or
+//!    choose who to practise against ([`controls`]); it is also the pause menu of the fight
+//!    screen (`P`), going back to the fight;
+//! 4. [`Screen::Fight`]: the arena ([`arena`]) under the versus HUD ([`hud`]): health bars with
 //!    the red "recoverable damage" trail and the combo counter, round wins, timer, grapple
 //!    meter and banners. `Tab`
 //!    ([`VIEW_KEY`]) switches the arena between the side view and the third-person 3D view
@@ -40,7 +42,8 @@ use std::collections::HashSet;
 
 use crate::audio::{Mood, MusicControl};
 use crate::game::{
-    GrapplePosition, Input, Key, KeyBindings, Match, Phase, PlayerId, Rival, TICKS_PER_SECOND,
+    Character, GrapplePosition, Input, Key, KeyBindings, Match, Phase, PlayerId, Rival,
+    TICKS_PER_SECOND,
 };
 use crate::net::{Client, MAX_PLAYERS, Status};
 use space::Camera;
@@ -53,6 +56,7 @@ pub mod hud;
 pub mod intro;
 pub mod render;
 mod scene;
+pub mod select;
 pub mod space;
 pub mod stick;
 pub mod tps;
@@ -64,6 +68,7 @@ pub use intro::Intro;
 pub use scene::{
     Align, Frame, Label, MONO_ADVANCE, Rect, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH, Viewport,
 };
+pub use select::{Choice, SelectPage};
 
 /// Whether the music reaches the speakers, as reported by the platform layer (the [`Game`]
 /// itself never touches a sound card).
@@ -117,6 +122,8 @@ pub const PRACTICE_KEY: Key = Key::T;
 pub enum Screen {
     /// The graffiti title.
     Intro,
+    /// The character select screen.
+    Select,
     /// The keyboard layout.
     Controls,
     /// The arena and the HUD.
@@ -163,12 +170,14 @@ pub fn seconds(ticks: u32) -> u32 {
 /// assert_eq!(intensity(&fresh), 0.0);
 /// ```
 pub fn intensity(current: &Match) -> f32 {
-    let max = current.config().max_health.max(1) as f32;
     let danger = current
         .fighters()
         .iter()
         .filter(|f| !f.is_knocked_out())
-        .map(|f| 1.0 - f.health() as f32 / max)
+        .map(|f| {
+            let max = arena::rules_of(current, f).max_health.max(1) as f32;
+            1.0 - f.health() as f32 / max
+        })
         .fold(0.0_f32, f32::max);
     let grapple = current
         .fighters()
@@ -213,13 +222,17 @@ pub struct Game {
     view: View,
     /// The camera of the third-person view, gliding towards [`tps::aim`] on every fight tick.
     camera: Camera,
+    select: SelectPage,
+    /// Whether the select screen was opened with [`PRACTICE_KEY`]: the fight then starts with
+    /// a practice fight, online.
+    practise_after_select: bool,
 }
 
 impl Game {
     /// A game starting on the intro, playing with `client`.
     pub fn new(client: Client) -> Self {
+        let character = client.character();
         let game = Game {
-            client,
             practice: None,
             screen: Screen::Intro,
             intro: Intro::new(),
@@ -232,6 +245,9 @@ impl Game {
             controls: ControlsPage::new(),
             view: View::Side,
             camera: tps::overview(),
+            select: SelectPage::new(character),
+            practise_after_select: false,
+            client,
         };
         game.music.set_mood(Mood::Intro);
         game
@@ -284,11 +300,33 @@ impl Game {
             Practice::WhileWaiting(rival) => match &mut self.practice {
                 Some(client) => client.set_rival(rival),
                 None => {
-                    self.practice = Some(Client::versus(self.client.config().clone(), rival));
+                    let mut client = Client::versus(self.client.config().clone(), rival);
+                    client.set_character(self.client.character());
+                    self.practice = Some(client);
                 }
             },
             Practice::Off | Practice::Unavailable => self.practice = None,
         }
+    }
+
+    /// The character the player fights as ([`Character::Chalk`] until picked).
+    pub fn character(&self) -> Character {
+        self.client.character()
+    }
+
+    /// Fights as `character` from now on: alone (or in a practice fight) the round restarts
+    /// with it at once; online it is used for the next match (see [`Client::set_character`]).
+    /// Returns the frames to send to the server.
+    pub fn set_character(&mut self, character: Character) -> Vec<Vec<u8>> {
+        if let Some(practice) = &mut self.practice {
+            practice.set_character(character);
+        }
+        self.client.set_character(character).into_iter().collect()
+    }
+
+    /// The select screen's state.
+    pub fn select(&self) -> &SelectPage {
+        &self.select
     }
 
     /// The handle steering the music; give a clone to the audio output.
@@ -360,9 +398,12 @@ impl Game {
     /// order.
     ///
     /// On the intro, a fresh press of Enter or Escape (once [`Intro::can_skip`]) goes to the
-    /// fight screen, a fresh `T` ([`PRACTICE_KEY`]) too but practising (online: a practice
-    /// fight starts if one can), and a fresh `C` goes to the controls page (see
-    /// [`ControlsPage::tick`]), which comes back to the intro.
+    /// select screen, a fresh `T` ([`PRACTICE_KEY`]) too but to go practising afterwards
+    /// (online: a practice fight starts if one can), and a fresh `C` goes to the controls page
+    /// (see [`ControlsPage::tick`]), which comes back to the intro.
+    ///
+    /// On the select screen (see [`SelectPage::tick`]), Enter picks the character
+    /// ([`Game::set_character`]) and goes to the fight screen, Escape back to the intro.
     ///
     /// On the fight screen, a fresh `Tab` ([`VIEW_KEY`]) switches the [`View`] (the fight goes
     /// on). A fresh `P` ([`PAUSE_KEY`]) pauses: the controls page opens as the
@@ -381,23 +422,34 @@ impl Game {
             Screen::Intro => {
                 self.intro.tick();
                 if fresh.contains(&Key::C) {
-                    self.controls = ControlsPage::new().with_practice(self.practice());
+                    self.controls = self.controls_page(ControlsPage::new());
                     self.screen = Screen::Controls;
                 } else if self.intro.can_skip() && fresh.contains(&PRACTICE_KEY) {
-                    if self.practice() == Practice::Off {
-                        self.set_practice(Practice::Off.next());
-                    }
-                    self.screen = Screen::Fight;
+                    self.open_select(true);
                 } else if self.intro.can_skip()
                     && (fresh.contains(&Key::Enter) || fresh.contains(&Key::Escape))
                 {
-                    self.screen = Screen::Fight;
+                    self.open_select(false);
                 }
             }
+            Screen::Select => match self.select.tick(&fresh) {
+                Choice::Browsing => {}
+                Choice::Back => self.screen = Screen::Intro,
+                Choice::Picked(character) => {
+                    outgoing.extend(self.set_character(character));
+                    if self.practise_after_select && self.practice() == Practice::Off {
+                        self.set_practice(Practice::Off.next());
+                    }
+                    self.screen = Screen::Fight;
+                }
+            },
             Screen::Controls => {
                 let paused = self.controls.is_paused();
                 if self.controls.tick(&fresh, &mut self.bindings) {
                     self.screen = if paused { Screen::Fight } else { Screen::Intro };
+                }
+                if self.controls.character() != self.character() {
+                    outgoing.extend(self.set_character(self.controls.character()));
                 }
                 if self.controls.practice() != self.practice() {
                     self.set_practice(self.controls.practice());
@@ -411,7 +463,7 @@ impl Game {
                     self.view = self.view.next();
                 }
                 if fresh.contains(&PAUSE_KEY) {
-                    self.controls = ControlsPage::paused().with_practice(self.practice());
+                    self.controls = self.controls_page(ControlsPage::paused());
                     self.screen = Screen::Controls;
                     self.stand_still(&mut outgoing);
                 } else {
@@ -428,6 +480,20 @@ impl Game {
         self.update_bars();
         self.update_music();
         outgoing
+    }
+
+    /// `page` showing the current character and practice choice.
+    fn controls_page(&self, page: ControlsPage) -> ControlsPage {
+        page.with_practice(self.practice())
+            .with_character(self.character())
+    }
+
+    /// Opens the select screen on the current character; `practise` remembers that it was
+    /// opened with [`PRACTICE_KEY`].
+    fn open_select(&mut self, practise: bool) {
+        self.select = SelectPage::new(self.character());
+        self.practise_after_select = practise;
+        self.screen = Screen::Select;
     }
 
     fn fight(&mut self, pressed: &HashSet<Key>, fresh: &[Key], outgoing: &mut Vec<Vec<u8>>) {
@@ -494,7 +560,7 @@ impl Game {
         let status = self.active_client().status();
         let (mood, tension) = match (self.screen, status, self.shown_match()) {
             (Screen::Controls, _, _) if self.controls.is_paused() => (Mood::Breakdown, 0.0),
-            (Screen::Intro | Screen::Controls, _, _) => (Mood::Intro, 0.0),
+            (Screen::Intro | Screen::Select | Screen::Controls, _, _) => (Mood::Intro, 0.0),
             (Screen::Fight, Status::Playing, Some(current)) => match current.phase() {
                 Phase::Countdown { .. } => (Mood::Fight, 0.0),
                 Phase::Fighting => (Mood::Fight, intensity(current)),
@@ -595,6 +661,11 @@ impl Game {
                     Align::Left,
                 );
                 self.intro.draw(&mut frame, &self.status_line());
+                frame
+            }
+            Screen::Select => {
+                let mut frame = Frame::new(intro::BACKGROUND);
+                self.select.draw(&mut frame);
                 frame
             }
             Screen::Controls => {

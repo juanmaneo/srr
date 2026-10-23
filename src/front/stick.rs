@@ -5,8 +5,9 @@
 //!
 //! A [`Figure`] is a skeleton in screen coordinates, posed from the fighter's state: guard,
 //! walk cycle, crouch, tucked jump, strikes (the striking limb stretches to the attack's range, in the
-//! strength's colour; a flying kick shoots the leg out downwards), grabs, the judo techniques
-//! and every grapple position. The geometry is
+//! strength's colour; a flying kick shoots the leg out downwards), the special moves (a
+//! shoulder charge, a two-palm fireball throw, an armored palm, a low slide: see
+//! [`special`]), grabs, the judo techniques and every grapple position. The geometry is
 //! pure and tested; [`Figure::draw`] then inks it with the pen functions [`stroke`] and
 //! [`ring`], which only emit axis-aligned rectangles, so every engine (and the headless
 //! renderer) draws the lines without knowing about them.
@@ -17,7 +18,7 @@ use super::arena::{body_color, feet, player_color, scale, strength_color};
 use super::scene::{Frame, Rgba};
 use crate::game::{
     Attack, AttackPhase, Fighter, FighterState, GrapplePosition, GrappleRole, Limb, MatchConfig,
-    PlayerId, Strength, Technique,
+    PlayerId, SpecialData, Strength, Technique,
 };
 
 /// The chalk the figures are drawn with.
@@ -34,6 +35,12 @@ pub const JUDO: Rgba = Rgba::hex(0x3fc8ff);
 pub const SUBMISSION: Rgba = Rgba::hex(0xff3a4a);
 /// The stars around a stunned head.
 pub const SPARK: Rgba = Rgba::hex(0xfff35c);
+/// The limb of a special move (a shoulder charge, a palm, a slide).
+pub const POWER: Rgba = Rgba::hex(0xff5fd2);
+/// The hands throwing a fireball, and the fireball itself.
+pub const FIRE: Rgba = Rgba::hex(0xff8a1e);
+/// The arms of an armored special move while it winds up.
+pub const ARMOR: Rgba = Rgba::hex(0x9fc4ff);
 
 /// How high the top flies during the sweep's projection.
 pub const SWEEP_LIFT: f32 = 40.0;
@@ -285,6 +292,24 @@ impl Figure {
         }
     }
 
+    /// The figure moved `dx` pixels to the right (left when negative), e.g. onto a card of
+    /// the character select screen.
+    pub fn shifted(mut self, dx: f32) -> Figure {
+        for point in [
+            &mut self.head,
+            &mut self.neck,
+            &mut self.shoulder,
+            &mut self.hip,
+        ] {
+            point.x += dx;
+        }
+        for bone in self.arms.iter_mut().chain(&mut self.legs) {
+            bone.joint.x += dx;
+            bone.end.x += dx;
+        }
+        self
+    }
+
     /// The figure moved `rise` pixels up the screen (down when negative): how the side view
     /// shows a fighter standing deeper in the alley.
     pub fn raised(mut self, rise: f32) -> Figure {
@@ -463,6 +488,9 @@ fn pose(fighter: &Fighter, config: &MatchConfig, fight_ticks: u32, screen_x: f32
         (FighterState::Attacking(phase), Some(attack)) => {
             strike(attack, phase, reach(config.attack(attack).range))
         }
+        (FighterState::Special(phase), _) => {
+            special(&config.special, phase, reach(config.special.attack.range))
+        }
         (FighterState::Grabbing(phase), _) => reaching(phase, reach(config.grapple.range), GRAB),
         (FighterState::Technique(Technique::Throw, phase), _) => {
             reaching(phase, reach(config.technique(Technique::Throw).range), JUDO)
@@ -564,6 +592,102 @@ fn flying_kick(attack: Attack, phase: AttackPhase, reach: f32) -> Pose {
         [foot, p(-12.0, 30.0)],
     )
     .ink(FRONT_LEG, strength_color(attack.strength))
+}
+
+/// What a special move looks like: `config` holds the fighter's own rules (see
+/// [`MatchConfig::rules_of`]).
+///
+/// * a projectile (the fireball): both palms drawn back to the hip, then thrust forward
+///   together at chest height, in [`FIRE`];
+/// * a low move (the slide): leaning back, almost lying, the front leg shooting out along the
+///   floor to `reach`, in [`POWER`];
+/// * an armored move (the palm): a wide stance, the arms in [`ARMOR`] while it winds up, then
+///   the palm stretched to `reach`, in [`POWER`];
+/// * otherwise (the shoulder charge): bent forward, the front shoulder and arm leading.
+///
+/// ```
+/// use srr::front::stick::{FIRE, special_ink};
+/// use srr::game::{AttackPhase, Character, MatchConfig};
+///
+/// let torch = Character::Torch.rules(&MatchConfig::default());
+/// assert_eq!(special_ink(&torch.special, AttackPhase::Active), [Some(FIRE), Some(FIRE)]);
+/// ```
+fn special(data: &SpecialData, phase: AttackPhase, reach: f32) -> Pose {
+    let [front, back] = special_ink(data, phase);
+    let pose = if data.projectile.is_some() {
+        let (neck, hands) = match phase {
+            AttackPhase::Startup => (p(-6.0, 78.0), [p(-4.0, 58.0), p(-10.0, 56.0)]),
+            _ => (p(8.0, 80.0), [p(40.0, 74.0), p(34.0, 68.0)]),
+        };
+        Pose::new(p(0.0, 46.0), neck, hands, [p(20.0, 0.0), p(-22.0, 0.0)])
+    } else if data.low_profile {
+        match phase {
+            AttackPhase::Recovery => Pose::new(
+                p(-6.0, 28.0),
+                p(4.0, 58.0),
+                [p(20.0, 54.0), p(12.0, 50.0)],
+                [p(18.0, 0.0), p(-20.0, 0.0)],
+            ),
+            _ => Pose::new(
+                p(-6.0, 16.0),
+                p(-36.0, 36.0),
+                [p(-46.0, 8.0), p(-20.0, 30.0)],
+                [p(reach.min(LEG * 1.8), 6.0), p(12.0, 2.0)],
+            ),
+        }
+    } else if data.armored {
+        let palm = match phase {
+            AttackPhase::Startup => p(-18.0, 70.0),
+            AttackPhase::Active => p(reach, 78.0),
+            AttackPhase::Recovery => p(reach * 0.5, 76.0),
+        };
+        Pose::new(
+            p(-2.0, 44.0),
+            p(2.0, 78.0),
+            [palm, p(-10.0, 60.0)],
+            [p(26.0, 0.0), p(-26.0, 0.0)],
+        )
+    } else {
+        match phase {
+            AttackPhase::Recovery => Pose::new(
+                p(0.0, 50.0),
+                p(6.0, 82.0),
+                [p(20.0, 70.0), p(12.0, 68.0)],
+                [p(16.0, 0.0), p(-16.0, 0.0)],
+            ),
+            _ => Pose::new(
+                p(2.0, 48.0),
+                p(24.0, 76.0),
+                [p(34.0, 70.0), p(14.0, 60.0)],
+                [p(22.0, 0.0), p(-26.0, 4.0)],
+            ),
+        }
+    };
+    let limbs = if data.low_profile {
+        [FRONT_LEG, BACK_LEG]
+    } else {
+        [FRONT_ARM, BACK_ARM]
+    };
+    let pose = match front {
+        Some(color) => pose.ink(limbs[0], color),
+        None => pose,
+    };
+    match back {
+        Some(color) => pose.ink(limbs[1], color),
+        None => pose,
+    }
+}
+
+/// The colours of the front and back limbs of a special move in `phase` (the arms, or the legs
+/// of a slide); `None` keeps the chalk.
+pub fn special_ink(data: &SpecialData, phase: AttackPhase) -> [Option<Rgba>; 2] {
+    match phase {
+        AttackPhase::Recovery => [None, None],
+        _ if data.projectile.is_some() => [Some(FIRE), Some(FIRE)],
+        AttackPhase::Startup if data.armored => [Some(ARMOR), Some(ARMOR)],
+        AttackPhase::Startup => [None, None],
+        AttackPhase::Active => [Some(POWER), None],
+    }
 }
 
 /// Both arms reaching out to `reach` (a grab, or the throw going for the collar and the

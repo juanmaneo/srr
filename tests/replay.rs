@@ -91,14 +91,15 @@ fn playing_a_replay_rebuilds_the_match_exactly() {
 fn stepping_a_replay_tick_by_tick_rebuilds_the_match_exactly() {
     let (replay, game) = recorded(4, 300, 4);
     let mut again = Match::new(Roster::free_for_all(4).unwrap(), cfg()).unwrap();
+    // The original match, played again from the same random inputs, tick by tick.
+    let mut original = Match::new(Roster::free_for_all(4).unwrap(), cfg()).unwrap();
+    let mut rng = Lcg(4);
     for tick in 0..replay.len() {
         // A replay plays through `Match::step`, one recorded frame per tick.
         again.step(replay.frame(tick as u32).unwrap());
-        assert_eq!(
-            again.fighter(PlayerId(0)).unwrap().x(),
-            game.fighter(PlayerId(0)).unwrap().x(),
-            "same place at tick {tick}"
-        );
+        let inputs: Inputs = (0..4u8).map(|id| (PlayerId(id), rng.input())).collect();
+        original.step(&inputs);
+        assert_eq!(again, original, "same match at tick {tick}");
     }
     assert_eq!(replay.frame(300), None, "the recording is over");
     assert_eq!(again, game);

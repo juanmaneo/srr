@@ -19,7 +19,7 @@ use srr::front::controls::{
     controls_lines, preset_name, technique_keys,
 };
 use srr::front::{Align, Frame, Rgba, SCREEN_HEIGHT};
-use srr::game::{Input, Key, KeyBindings, Rival, Technique};
+use srr::game::{Character, Input, Key, KeyBindings, Rival, Technique};
 
 const WAITING: Rgba = Rgba::hex(0xffe14a);
 const HIGHLIGHT: Rgba = Rgba::hex(0x3a1430);
@@ -50,12 +50,13 @@ fn page_on(row: usize) -> ControlsPage {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn the_rows_are_the_preset_the_actions_the_practice_and_back() {
-    assert_eq!(ROWS, Input::BITS as usize + 3);
+fn the_rows_are_the_preset_the_actions_the_character_the_practice_and_back() {
+    assert_eq!(ROWS, Input::BITS as usize + 4);
     assert_eq!(Row::at(0), Row::Preset);
     for action in 0..KeyBindings::ACTIONS.len() {
         assert_eq!(Row::at(action + 1), Row::Action(action));
     }
+    assert_eq!(Row::at(ROWS - 3), Row::Character);
     assert_eq!(Row::at(ROWS - 2), Row::Practice);
     assert_eq!(Row::at(ROWS - 1), Row::Back);
 }
@@ -90,8 +91,8 @@ fn the_controls_lines_follow_the_layout() {
         [
             "Move: Left / Right   Sidestep: 7 / 2   Jump: Up   Crouch: Down   \
              Turn: Down+Left / Down+Right   Block: step back",
-            "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Enter: ready   P: pause   \
-             Tab: view",
+            "Punch: 1 5 6   Kick: 4 8 9   Grab: 0   Judo: 5+9, 8+9   Special: 3   Enter: ready   \
+             P: pause   Tab: view",
         ]
     );
     assert_eq!(
@@ -99,8 +100,8 @@ fn the_controls_lines_follow_the_layout() {
         [
             "Move: A / D   Sidestep: Q / E   Jump: W   Crouch: S   Turn: S+A / S+D   \
              Block: step back",
-            "Punch: B H J   Kick: G Y U   Grab: Space   Judo: H+U, Y+U   Enter: ready   \
-             P: pause   Tab: view",
+            "Punch: B H J   Kick: G Y U   Grab: Space   Judo: H+U, Y+U   Special: F   \
+             Enter: ready   P: pause   Tab: view",
         ]
     );
 }
@@ -195,8 +196,10 @@ fn up_and_down_move_the_selection_and_wrap() {
     press(&mut page, &mut bindings, Key::ArrowUp);
     assert_eq!(page.selected(), Row::Practice);
     press(&mut page, &mut bindings, Key::ArrowUp);
+    assert_eq!(page.selected(), Row::Character);
+    press(&mut page, &mut bindings, Key::ArrowUp);
     assert_eq!(page.selected(), Row::Action(Input::BITS as usize - 1));
-    for _ in 0..3 {
+    for _ in 0..4 {
         press(&mut page, &mut bindings, Key::ArrowDown);
     }
     assert_eq!(page.selected(), Row::Preset);
@@ -348,7 +351,38 @@ fn the_practice_row_reads_the_choice() {
             .contains("< the computer - the room stays open >")
     );
     assert!(text_of(Practice::Alone(Rival::Dummy)).contains("< the training dummy >"));
-    assert!(plain.contains("Left / Right: preset, practice"), "{plain}");
+    assert!(
+        plain.contains("Left / Right: preset, character, practice"),
+        "{plain}"
+    );
+}
+
+#[test]
+fn the_character_row_goes_round_the_characters() {
+    let mut bindings = KeyBindings::STANDARD;
+    let mut page = page_on(ROWS - 3);
+    assert_eq!(page.selected(), Row::Character);
+    assert_eq!(page.character(), Character::Chalk);
+    press(&mut page, &mut bindings, Key::ArrowRight);
+    assert_eq!(page.character(), Character::Torch);
+    press(&mut page, &mut bindings, Key::Enter);
+    assert_eq!(page.character(), Character::Brick);
+    press(&mut page, &mut bindings, Key::ArrowLeft);
+    press(&mut page, &mut bindings, Key::ArrowLeft);
+    press(&mut page, &mut bindings, Key::ArrowLeft);
+    assert_eq!(page.character(), Character::Zip, "wraps around");
+    assert_eq!(bindings, KeyBindings::STANDARD);
+    assert!(!page.is_waiting(), "no key to bind");
+
+    let text = draw(&page, &bindings).text();
+    assert!(text.contains("Character"), "{text}");
+    assert!(text.contains("< Zip - Slide Tackle >"), "{text}");
+    let torch = ControlsPage::new().with_character(Character::Torch);
+    assert!(
+        draw(&torch, &bindings)
+            .text()
+            .contains("< Torch - Fireball >")
+    );
 }
 
 #[test]

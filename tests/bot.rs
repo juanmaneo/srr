@@ -11,9 +11,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use srr::game::{
-    Attack, AttackData, Bot, Brawler, BrawlerConfig, Dummy, Facing, FighterState, GlitchSet,
-    GrapplePosition, GrappleRole, Input, Limb, Match, MatchConfig, Outcome, Phase, PlayerId, Rival,
-    Roster, Strength, TeamId, Technique,
+    Attack, AttackData, Bot, Brawler, BrawlerConfig, Character, Dummy, Facing, FighterState,
+    GlitchSet, GrapplePosition, GrappleRole, Input, Limb, Match, MatchConfig, Outcome, Phase,
+    PlayerId, Rival, Roster, Strength, TeamId, Technique,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -882,12 +882,16 @@ fn up_close_the_bot_uses_every_move() {
 }
 
 #[test]
-fn at_kick_range_the_bot_kicks_steps_in_or_backs_off() {
+fn at_kick_range_the_bot_kicks_rushes_steps_in_or_backs_off() {
     let config = config();
     let game = duel_at(config.clone(), 600, 700);
     let mut bot = Brawler::new(CPU, 12);
     let inputs = answers(&mut bot, &game, 3000);
-    let mut kinds = [0; 3];
+    let mut kinds = [0; 4];
+    let special = Input {
+        special: true,
+        ..Input::NONE
+    };
     for input in &inputs {
         if let Some(attack) = input.attack() {
             assert!(config.attack(attack).range >= 100, "{attack} cannot reach");
@@ -897,13 +901,16 @@ fn at_kick_range_the_bot_kicks_steps_in_or_backs_off() {
             kinds[1] += 1;
         } else if *input == walking(false) {
             kinds[2] += 1;
+        } else if *input == special {
+            // The shoulder rush lunges far enough to reach from there.
+            kinds[3] += 1;
         } else {
             assert_eq!(*input, Input::NONE);
         }
     }
     assert!(
         kinds.iter().all(|&k| k > 20),
-        "kicks, steps in, steps back: {kinds:?}"
+        "kicks, steps in, steps back, shoulder rushes: {kinds:?}"
     );
 }
 
@@ -1042,4 +1049,84 @@ fn thrown_the_bot_sometimes_counters_with_the_same_technique() {
         }
     }
     assert!((5..28).contains(&countered), "{countered} counters in 30");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Characters and special moves
+// ---------------------------------------------------------------------------------------------
+
+fn special() -> Input {
+    Input {
+        special: true,
+        ..Input::NONE
+    }
+}
+
+#[test]
+fn a_fireball_thrower_throws_from_afar_when_ready() {
+    let torch = config().with_character(CPU, Character::Torch);
+    let game = duel_at(torch.clone(), 100, 1100);
+    let mut bot = Brawler::new(CPU, 7);
+    let inputs = answers(&mut bot, &game, 1000);
+    let thrown = inputs.iter().filter(|&&input| input == special()).count();
+    assert!(
+        (10..=100).contains(&thrown),
+        "about 4 % of the ticks: {thrown}"
+    );
+    assert!(
+        inputs.iter().all(|&input| input == special() || input.left),
+        "otherwise it walks in"
+    );
+
+    // Out of the enemy's line, it does not waste them.
+    let mut game = duel_at(torch.clone(), 100, 1100);
+    let sidestep = Input {
+        sidestep_in: true,
+        ..Input::NONE
+    };
+    for _ in 0..30 {
+        step(&mut game, sidestep, Input::NONE);
+    }
+    let mut bot = Brawler::new(CPU, 7);
+    assert!(!answers(&mut bot, &game, 1000).contains(&special()));
+
+    // Played for real, fireballs fly; and a bot that is not Torch never throws from afar.
+    let mut game = duel_at(torch, 100, 1100);
+    let mut bot = Brawler::new(CPU, 7);
+    let mut seen = false;
+    for _ in 0..300 {
+        let input = bot.think(&game);
+        step(&mut game, Input::NONE, input);
+        seen |= !game.projectiles().is_empty();
+    }
+    assert!(seen, "a fireball flew");
+    let game = duel_at(config(), 100, 1100);
+    let mut bot = Brawler::new(CPU, 7);
+    assert!(!answers(&mut bot, &game, 1000).contains(&special()));
+}
+
+#[test]
+fn up_close_a_ready_bot_picks_its_special_move_now_and_then() {
+    for character in Character::ALL {
+        let game = duel_at(config().with_character(CPU, character), 600, 640);
+        let mut bot = Brawler::new(CPU, 3);
+        let inputs = answers(&mut bot, &game, 3000);
+        let specials = inputs.iter().filter(|&&input| input == special()).count();
+        assert!(specials > 10, "{character}: {specials}");
+    }
+}
+
+#[test]
+fn a_cooling_bot_never_presses_its_special_move() {
+    let torch = config().with_character(CPU, Character::Torch);
+    let mut game = duel_at(torch, 100, 1100);
+    step(&mut game, Input::NONE, special());
+    assert!(game.fighter(CPU).unwrap().special_cooldown() > 0);
+    // Let the throw end, still cooling down.
+    for _ in 0..40 {
+        step(&mut game, Input::NONE, Input::NONE);
+    }
+    assert!(game.fighter(CPU).unwrap().special_cooldown() > 0);
+    let mut bot = Brawler::new(CPU, 7);
+    assert!(!answers(&mut bot, &game, 500).contains(&special()));
 }
