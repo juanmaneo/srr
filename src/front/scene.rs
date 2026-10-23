@@ -267,4 +267,28 @@ impl Viewport {
             self.offset_y + y * self.scale,
         )
     }
+
+    /// The virtual point under the window point `(x, y)`: the inverse of
+    /// [`Viewport::to_window`] (a touch on the screen, in the game's coordinates). A degenerate
+    /// viewport maps everything to the origin.
+    ///
+    /// ```
+    /// use srr::front::Viewport;
+    ///
+    /// let viewport = Viewport::fit(2560.0, 1000.0);
+    /// let (x, y) = viewport.to_window(100.0, 200.0);
+    /// let back = viewport.to_virtual(x, y);
+    /// assert!((back.0 - 100.0).abs() < 1e-3 && (back.1 - 200.0).abs() < 1e-3);
+    /// assert_eq!(Viewport::fit(0.0, 0.0).to_virtual(5.0, 5.0), (0.0, 0.0));
+    /// ```
+    pub fn to_virtual(&self, x: f32, y: f32) -> (f32, f32) {
+        if self.scale > 0.0 {
+            (
+                (x - self.offset_x) / self.scale,
+                (y - self.offset_y) / self.scale,
+            )
+        } else {
+            (0.0, 0.0)
+        }
+    }
 }

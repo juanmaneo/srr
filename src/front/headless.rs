@@ -101,6 +101,27 @@ impl Headless {
         self.hold(&[], ticks)
     }
 
+    /// One fixed tick with fingers on `touches` (virtual screen points) and no key held.
+    /// Returns the frames the client wants to send.
+    pub fn touch(&mut self, touches: &[(f32, f32)]) -> Vec<Vec<u8>> {
+        self.game.set_touches(touches);
+        let sent = self.press(&[]);
+        self.game.set_touches(&[]);
+        sent
+    }
+
+    /// `ticks` fixed ticks with fingers on `touches`; returns every frame to send, in order.
+    pub fn hold_touch(&mut self, touches: &[(f32, f32)], ticks: u32) -> Vec<Vec<u8>> {
+        (0..ticks).flat_map(|_| self.touch(touches)).collect()
+    }
+
+    /// Touches `point` for one tick, then lifts the finger for one tick.
+    pub fn tap_at(&mut self, point: (f32, f32)) -> Vec<Vec<u8>> {
+        let mut sent = self.touch(&[point]);
+        sent.extend(self.idle(1));
+        sent
+    }
+
     /// Presses `keys` for one tick, then releases them for one tick.
     pub fn tap(&mut self, keys: &[Key]) -> Vec<Vec<u8>> {
         let mut sent = self.hold(keys, 1);
