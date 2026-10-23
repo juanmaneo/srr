@@ -295,8 +295,8 @@ fn opposite_directions_cancel_out() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn inputs_pack_into_thirteen_bits() {
-    assert_eq!(Input::BITS, 13);
+fn inputs_pack_into_fourteen_bits() {
+    assert_eq!(Input::BITS, 14);
     assert_eq!(Input::NONE.to_bits(), 0);
     assert_eq!(Input::from_bits(0), Input::NONE);
 }
@@ -334,6 +334,10 @@ fn bits_follow_the_documented_order() {
         },
         Input {
             sidestep_out: true,
+            ..Input::NONE
+        },
+        Input {
+            special: true,
             ..Input::NONE
         },
     ]);
@@ -436,15 +440,35 @@ fn keys_are_listed_in_bit_order() {
             b.grab,
             b.down,
             b.sidestep_in,
-            b.sidestep_out
+            b.sidestep_out,
+            b.special
         ]
     );
 }
 
 #[test]
-fn the_layout_binds_thirteen_distinct_keys() {
+fn the_layout_binds_fourteen_distinct_keys() {
     let distinct: HashSet<Key> = KeyBindings::STANDARD.keys().into_iter().collect();
-    assert_eq!(distinct.len(), 13);
+    assert_eq!(distinct.len(), 14);
+}
+
+#[test]
+fn keypad_three_is_the_special_move() {
+    let b = KeyBindings::STANDARD;
+    assert_eq!(b.special, Key::Numpad3);
+    assert_eq!(
+        b.to_input(&pressed(&[Key::Numpad3])),
+        Input {
+            special: true,
+            ..Input::NONE
+        }
+    );
+    let special = Input {
+        special: true,
+        ..Input::NONE
+    };
+    assert_eq!(special.to_bits(), 1 << 13, "the last bit");
+    assert_eq!(Input::from_bits(1 << 13), special);
 }
 
 #[test]
@@ -486,7 +510,7 @@ fn nothing_pressed_gives_no_input() {
 
 #[test]
 fn unbound_keys_are_ignored() {
-    let unbound = pressed(&[Key::Numpad3, Key::Q, Key::E, Key::Enter, Key::Escape]);
+    let unbound = pressed(&[Key::K, Key::Q, Key::E, Key::Enter, Key::Escape]);
     assert_eq!(KeyBindings::STANDARD.to_input(&unbound), Input::NONE);
 }
 
@@ -498,7 +522,7 @@ fn several_keys_combine_into_one_input() {
         Key::ArrowUp,
         Key::Numpad5,
         Key::Numpad2,
-        Key::Numpad3,
+        Key::K,
     ]));
     assert_eq!(
         input,
@@ -533,12 +557,12 @@ fn bindings_can_be_customised_copied_and_compared() {
     let b = a;
     assert_eq!(a, b);
     let swapped = KeyBindings {
-        jump: Key::Numpad3,
+        jump: Key::K,
         ..KeyBindings::STANDARD
     };
     assert_ne!(a, swapped);
     assert_eq!(
-        swapped.to_input(&pressed(&[Key::Numpad3])),
+        swapped.to_input(&pressed(&[Key::K])),
         Input {
             jump: true,
             ..Input::NONE
@@ -662,11 +686,12 @@ fn the_wasd_preset_puts_the_layout_on_the_letters() {
             Key::Space,
             Key::S,
             Key::Q,
-            Key::E
+            Key::E,
+            Key::F
         ]
     );
     let distinct: HashSet<Key> = b.keys().into_iter().collect();
-    assert_eq!(distinct.len(), 13);
+    assert_eq!(distinct.len(), 14);
     assert!(b.keys().into_iter().all(Key::is_bindable));
     assert_eq!(
         b.to_input(&pressed(&[Key::S, Key::A])),
@@ -713,6 +738,7 @@ fn every_action_has_a_name_in_key_order() {
             "Crouch / turn",
             "Sidestep to the wall",
             "Sidestep to the street",
+            "Special move",
         ]
     );
 }
@@ -725,8 +751,8 @@ fn from_keys_is_the_inverse_of_keys() {
     let mut keys = KeyBindings::STANDARD.keys();
     keys.reverse();
     let reversed = KeyBindings::from_keys(keys);
-    assert_eq!(reversed.left, Key::Numpad2);
-    assert_eq!(reversed.sidestep_out, Key::ArrowLeft);
+    assert_eq!(reversed.left, Key::Numpad3);
+    assert_eq!(reversed.special, Key::ArrowLeft);
     assert_eq!(reversed.keys(), keys);
 }
 
@@ -772,7 +798,7 @@ fn binding_a_used_key_swaps_the_two_actions() {
     assert!(b.bind(0, Key::ArrowRight));
     assert_eq!((b.left, b.right), (Key::ArrowRight, Key::ArrowLeft));
     let distinct: HashSet<Key> = b.keys().into_iter().collect();
-    assert_eq!(distinct.len(), 13, "no key does two things");
+    assert_eq!(distinct.len(), 14, "no key does two things");
 
     let mut same = KeyBindings::WASD;
     assert!(same.bind(9, Key::Space), "rebinding its own key");

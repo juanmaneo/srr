@@ -13,9 +13,10 @@ use std::cmp::Reverse;
 use super::ascii::{block_pixels, hash};
 use super::hud::tag;
 use super::scene::{Align, Frame, Rgba, SCREEN_WIDTH};
-use super::stick::Figure;
+use super::stick::{FIRE, Figure, Point, ring};
 use crate::game::{
-    Fighter, FighterState, GrapplePosition, GrappleRole, MatchConfig, PlayerId, Strength,
+    Facing, Fighter, FighterState, GrapplePosition, GrappleRole, Match, MatchConfig, PlayerId,
+    Projectile, Strength,
 };
 use crate::net::Client;
 
@@ -29,8 +30,13 @@ pub const ARENA_LEFT: f32 = 90.0;
 pub const ARENA_PIXELS: f32 = 1100.0;
 /// Where the name tag of a fighter lying on the floor goes: on the street, under it.
 pub const LYING_TAG_Y: f32 = FLOOR_Y + 12.0;
-/// How far above the top of a standing figure its name tag floats.
-pub const TAG_ABOVE: f32 = 30.0;
+/// How far above the top of a standing figure its name tag floats: clear of the local
+/// player's marker.
+pub const TAG_ABOVE: f32 = 36.0;
+/// Screen pixels above the floor a fireball flies at: chest height, where it leaves the hands.
+pub const FIREBALL_HEIGHT: f32 = 72.0;
+/// Radius of a fireball on screen.
+pub const FIREBALL_RADIUS: f32 = 13.0;
 /// Screen pixels a fighter rises per pixel it stands towards the wall: the depth of the alley,
 /// squashed.
 pub const DEPTH_RISE: f32 = 0.25;
@@ -133,6 +139,84 @@ pub fn body_color(base: Rgba, state: FighterState) -> Rgba {
     }
 }
 
+/// The rules `fighter` of `current` follows (its character's, see
+/// [`Match::rules`](crate::game::Match::rules)).
+pub fn rules_of<'a>(current: &'a Match, fighter: &Fighter) -> &'a MatchConfig {
+    current.rules(fighter.player()).unwrap_or(current.config())
+}
+
+/// The name tag over a fighter: its player's [`tag`] and its character, e.g. `"P1 Torch"`.
+pub fn figure_tag(client: &Client, current: &Match, player: PlayerId) -> String {
+    format!(
+        "{} {}",
+        tag(client, player),
+        current.config().character(player)
+    )
+}
+
+/// Screen centre of `shot` in the side view (depth included, like the fighters).
+///
+/// ```
+/// use srr::front::arena::{ARENA_LEFT, FIREBALL_HEIGHT, FLOOR_Y, shot_center};
+/// use srr::game::{Character, Input, Match, MatchConfig, PlayerId, Roster};
+/// use std::collections::HashMap;
+///
+/// let config = MatchConfig { countdown_ticks: 0, ..MatchConfig::default() }
+///     .with_character(PlayerId(0), Character::Torch);
+/// let mut m = Match::new(Roster::duel(), config).unwrap();
+/// let fireball = HashMap::from([(PlayerId(0), Input { special: true, ..Input::NONE })]);
+/// for _ in 0..13 {
+///     m.step(&fireball);
+/// }
+/// let center = shot_center(&m.projectiles()[0], m.config());
+/// assert!(center.x > ARENA_LEFT);
+/// assert_eq!(center.y, FLOOR_Y - FIREBALL_HEIGHT);
+/// ```
+pub fn shot_center(shot: &Projectile, config: &MatchConfig) -> Point {
+    let scale = scale(config);
+    Point {
+        x: ARENA_LEFT + shot.x() as f32 * scale,
+        y: FLOOR_Y
+            - shot.y() as f32 * scale
+            - FIREBALL_HEIGHT
+            - shot.z() as f32 * scale * DEPTH_RISE,
+    }
+}
+
+/// A fireball centred on `center`, flying towards `facing`: a flickering trail of flames
+/// behind it, then glowing rings from the red rim to the white-hot core.
+pub fn draw_fireball(frame: &mut Frame, center: Point, facing: Facing, fight_ticks: u32) {
+    let behind = -facing.sign() as f32;
+    for (index, color) in [Rgba::hex(0xff3a1e), FIRE, Rgba::hex(0xffd24a)]
+        .into_iter()
+        .enumerate()
+    {
+        let flicker = ((fight_ticks + index as u32 * 3) % 6) as f32;
+        let length = 18.0 + 8.0 * index as f32 + flicker;
+        let height = 10.0 - 3.0 * index as f32;
+        let start = if behind < 0.0 {
+            center.x - FIREBALL_RADIUS * 0.5 - length
+        } else {
+            center.x + FIREBALL_RADIUS * 0.5
+        };
+        frame.rect(
+            start,
+            center.y - height / 2.0,
+            length,
+            height,
+            color.scaled(0.8),
+        );
+    }
+    for (radius, color) in [
+        (FIREBALL_RADIUS, Rgba::hex(0xff3a1e)),
+        (FIREBALL_RADIUS * 0.75, FIRE),
+        (FIREBALL_RADIUS * 0.5, Rgba::hex(0xffd24a)),
+        (FIREBALL_RADIUS * 0.25, Rgba::hex(0xfff6d8)),
+    ] {
+        ring(frame, center, radius * 0.6, radius * 0.8, color);
+    }
+}
+
 /// The colour of an attack of `strength`.
 pub fn strength_color(strength: Strength) -> Rgba {
     match strength {
@@ -150,8 +234,9 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
     };
     let current = session.current();
     let config = current.config();
-    let figure =
-        |fighter: &Fighter| Figure::of(fighter, config, fight_ticks).raised(rise(fighter, config));
+    let figure = |fighter: &Fighter| {
+        Figure::of(fighter, rules_of(current, fighter), fight_ticks).raised(rise(fighter, config))
+    };
     for fighter in current.fighters() {
         let (x, _) = feet(fighter, config);
         let width = if fighter.y() > 0 { 36.0 } else { 64.0 };
@@ -168,6 +253,7 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
             FighterState::Grappling(GrappleRole::Bottom, GrapplePosition::Throw) => 3,
             FighterState::Grappling(GrappleRole::Bottom, _) => 1,
             FighterState::Attacking(_)
+            | FighterState::Special(_)
             | FighterState::Grabbing(_)
             | FighterState::Technique(..) => 3,
             _ => 2,
@@ -176,6 +262,9 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
     });
     for fighter in order {
         figure(fighter).draw(frame);
+    }
+    for shot in current.projectiles() {
+        draw_fireball(frame, shot_center(shot, config), shot.facing(), fight_ticks);
     }
     // A session only exists for a local player who is in the match, so there is one fighter.
     current
@@ -202,7 +291,7 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
             figure.top() - TAG_ABOVE
         };
         frame.label(
-            tag(client, fighter.player()),
+            figure_tag(client, current, fighter.player()),
             x,
             tag_y,
             14.0,

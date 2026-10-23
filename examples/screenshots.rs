@@ -2,8 +2,9 @@
 //! the game's "server-side rendering" (see `srr::front::render`). The games: practice against
 //! the training dummy, a round against the computer, an online 1v1v1 and an online brawl of
 //! ten whose other players are simulated by handing the client the frames of inputs the server
-//! would send (one of the ten lagging). The strikes and the free-for-all are shot in both views
-//! (`Tab`: the third-person 3D view).
+//! would send (one of the ten lagging), then the characters: the select screen and each special
+//! move (Torch's fireball, Brick's palm, Zip's slide). The strikes, the free-for-all and the
+//! fireball are shot in both views (`Tab`: the third-person 3D view).
 //!
 //! ```sh
 //! cargo xtask screenshots                       # or:
@@ -20,7 +21,7 @@ use std::process::ExitCode;
 
 use srr::front::intro::{COMPLETE_AT, SHATTER_AT};
 use srr::front::{Game, Headless};
-use srr::game::{Attack, Input, Key, MatchConfig, PlayerId, Strength};
+use srr::game::{Attack, Character, Input, Key, MatchConfig, PlayerId, Strength};
 use srr::net::{Client, PlayerSet, ServerMessage};
 
 /// An online game seated as player 1 in a free-for-all of `count` players that has just
@@ -38,6 +39,7 @@ fn free_for_all(count: usize, width: usize, height: usize) -> Headless {
     client.handle(ServerMessage::Start {
         session: 1,
         players,
+        characters: [Character::Chalk; 10],
     });
     Headless::new(Game::new(client)).with_size(width, height)
 }
@@ -98,6 +100,10 @@ fn main() -> ExitCode {
     shoot(&game, "04-controls");
     game.tap(&[Key::Escape]);
 
+    // Enter: the character select screen, its previews showing the special moves.
+    game.tap(&[Key::Enter]);
+    game.idle(50);
+    shoot(&game, "04-character-select");
     game.tap(&[Key::Enter]);
     // P: the pause menu, with the practice row; P again resumes against the training dummy.
     game.tap(&[Key::P]);
@@ -190,6 +196,38 @@ fn main() -> ExitCode {
         brawl_tick(&mut ten, &[], &[Input::NONE; 9], lagging);
     }
     shoot(&ten, "13-brawl-of-ten-3d");
+
+    // The special moves, against the training dummy (keypad 3).
+    let countdown = MatchConfig::default().countdown_ticks;
+    let mut torch = Headless::practice().with_size(width, height);
+    torch.skip_intro_as(Character::Torch);
+    torch.idle(countdown);
+    torch.hold(&[Key::Numpad3], 1);
+    torch.idle(24);
+    shoot(&torch, "14-torch-fireball");
+    torch.tap(&[Key::Tab]);
+    torch.hold(&[Key::Numpad3], 1);
+    torch.idle(40);
+    torch.idle(37);
+    torch.hold(&[Key::Numpad3], 1);
+    torch.idle(18);
+    shoot(&torch, "14-torch-fireball-3d");
+
+    let mut brick = Headless::practice().with_size(width, height);
+    brick.skip_intro_as(Character::Brick);
+    brick.idle(countdown);
+    brick.hold(&[Key::ArrowRight], 46);
+    brick.hold(&[Key::Numpad3], 1);
+    brick.idle(15);
+    shoot(&brick, "15-brick-iron-palm");
+
+    let mut zip = Headless::practice().with_size(width, height);
+    zip.skip_intro_as(Character::Zip);
+    zip.idle(countdown);
+    zip.hold(&[Key::ArrowRight], 10);
+    zip.hold(&[Key::Numpad3], 1);
+    zip.idle(7);
+    shoot(&zip, "16-zip-slide-tackle");
 
     for (name, image) in &shots {
         let path = out.join(format!("{name}.png"));

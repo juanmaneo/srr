@@ -7,7 +7,7 @@ use std::fmt;
 use std::ops::Range;
 
 use super::players::PlayerSet;
-use super::protocol::FrameInputs;
+use super::protocol::{Characters, FrameInputs};
 use crate::game::{
     Input, Match, MatchConfig, Outcome, PlayerId, PlayerSlot, Roster, RosterError, SetupError,
     TICKS_PER_SECOND, TeamId,
@@ -204,18 +204,34 @@ impl Session {
     /// assert_eq!(second.players(), first.players());
     /// ```
     pub fn next(&self, id: u8) -> Session {
+        self.next_with(id, self.config.characters)
+    }
+
+    /// Like [`Session::next`], with everybody playing the given characters (they may have
+    /// changed between the rounds; the round wins are carried over all the same).
+    ///
+    /// ```
+    /// use srr::game::{Character, MatchConfig, PlayerId};
+    /// use srr::net::{PlayerSet, Session};
+    ///
+    /// let first = Session::new(PlayerId(0), PlayerSet::first(2), 1, MatchConfig::default(), 0)
+    ///     .unwrap();
+    /// let mut characters = [Character::Chalk; 10];
+    /// characters[1] = Character::Torch;
+    /// let second = first.next_with(2, characters);
+    /// assert_eq!(second.current().config().character(PlayerId(1)), Character::Torch);
+    /// ```
+    pub fn next_with(&self, id: u8, characters: Characters) -> Session {
         let mut carried = self.carried;
         if let Some(winner) = winner(&self.confirmed) {
             carried[usize::from(winner.0)] += 1;
         }
-        let fresh = Session::new(
-            self.local,
-            self.players,
-            id,
-            self.config.clone(),
-            self.delay,
-        )
-        .expect("the players and the configuration were validated by Session::new");
+        let config = MatchConfig {
+            characters,
+            ..self.config.clone()
+        };
+        let fresh = Session::new(self.local, self.players, id, config, self.delay)
+            .expect("the players and the configuration were validated by Session::new");
         Session { carried, ..fresh }
     }
 

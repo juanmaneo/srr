@@ -21,13 +21,15 @@
 
 use std::cmp::Reverse;
 
-use super::arena::{ARENA_LEFT, ARENA_PIXELS, FLOOR_Y, feet, player_color, scale};
+use super::arena::{
+    ARENA_LEFT, ARENA_PIXELS, FIREBALL_HEIGHT, FLOOR_Y, feet, figure_tag, player_color, rules_of,
+    scale,
+};
 use super::ascii::{block_pixels, hash};
-use super::hud::tag;
 use super::scene::{Align, Frame, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH};
 use super::space::{Camera, Fx, NEAR, Vec3, div_round, perspective, screen_point};
 use super::stick::{self, Accessory, Figure, HEAD_RADIUS, Mark, Point};
-use crate::game::{Fighter, MatchConfig};
+use crate::game::{Fighter, MatchConfig, Projectile};
 use crate::net::Client;
 
 /// Pixels per grain: the rows of every fill and the runs of every ink line are this thick and
@@ -589,9 +591,15 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
         .fighters()
         .iter()
         .flat_map(|fighter| {
-            let figure = Figure::of(fighter, config, fight_ticks);
+            let figure = Figure::of(fighter, rules_of(current, fighter), fight_ticks);
             mannequin(&figure, depth(fighter, config), camera)
         })
+        .chain(
+            current
+                .projectiles()
+                .iter()
+                .flat_map(|shot| fireball(shot, config, camera)),
+        )
         .collect();
     parts.sort_by_key(|part| Reverse(part.depth));
     for part in parts {
@@ -612,7 +620,7 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
 
     for fighter in current.fighters() {
         let (x, y) = feet(fighter, config);
-        let figure = Figure::of(fighter, config, fight_ticks);
+        let figure = Figure::of(fighter, rules_of(current, fighter), fight_ticks);
         let z = depth(fighter, config);
         // Name tags float over the head, or lie on the pavement in front of a grounded fighter.
         let anchor = if figure.lying {
@@ -635,7 +643,7 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
                 }
             }
             frame.label(
-                tag(client, fighter.player()),
+                figure_tag(client, current, fighter.player()),
                 p.x as f32,
                 (p.y - 46) as f32,
                 14.0,
@@ -851,6 +859,30 @@ impl Sculpt<'_> {
             },
         });
     }
+}
+
+/// A fireball in the 3D view: a ball of fire at chest height on its line, and a smaller,
+/// paler one trailing behind it.
+fn fireball(shot: &Projectile, config: &MatchConfig, camera: &Camera) -> Vec<Part> {
+    let scale = scale(config);
+    let z = (shot.z() as f32 * scale).round() as i32;
+    let at = |offset: f32| {
+        let x = ARENA_LEFT + shot.x() as f32 * scale + offset * shot.facing().sign() as f32;
+        lift(
+            Point {
+                x,
+                y: FLOOR_Y - shot.y() as f32 * scale - FIREBALL_HEIGHT,
+            },
+            z,
+        )
+    };
+    let mut s = Sculpt {
+        camera,
+        parts: Vec::new(),
+    };
+    s.ball(at(0.0), 14, stick::FIRE);
+    s.ball(at(-18.0), 8, Rgba::hex(0xffd24a));
+    s.parts
 }
 
 /// The direction from the neck to the head, and the one the face looks to (see

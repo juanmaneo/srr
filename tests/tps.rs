@@ -15,7 +15,7 @@ use srr::front::{
     Frame, Game, Headless, PAUSE_KEY, Rect, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH, Screen, VIEW_KEY,
     View,
 };
-use srr::game::{FighterState, Key, MatchConfig, PlayerId};
+use srr::game::{Character, FighterState, Key, MatchConfig, PlayerId};
 use srr::net::{Client, PlayerSet, ServerMessage};
 
 const WHITE: Rgba = Rgba::hex(0xffffff);
@@ -525,6 +525,7 @@ fn brawl(local: u8, players: PlayerSet) -> Client {
     client.handle(ServerMessage::Start {
         session: 1,
         players,
+        characters: [Character::Chalk; 10],
     });
     client
 }
@@ -605,7 +606,7 @@ fn a_brawl_draws_every_mannequin_with_its_accessory_and_tag() {
     let mut f = frame();
     tps::draw(&mut f, &client, &tps::aim(&client), 10);
     let tags: Vec<&str> = f.labels.iter().map(|l| l.text.as_str()).collect();
-    assert_eq!(tags, ["P1", "P2", "P3", "P4"]);
+    assert_eq!(tags, ["P1 Chalk", "P2 Chalk", "P3 Chalk", "P4 Chalk"]);
     for (label, player) in f.labels.iter().zip(0..) {
         assert_eq!(label.color, arena::player_color(PlayerId(player)));
     }
@@ -689,8 +690,16 @@ fn the_mannequins_follow_the_fight_into_the_air_the_stun_and_the_floor() {
     assert_eq!(dummy_state(&game), FighterState::Knockout);
     let down = game.frame();
     within_screen(&down.rects);
-    let dummy = down.labels.iter().find(|l| l.text == "P2").expect("tagged");
-    let me = down.labels.iter().find(|l| l.text == "P1").expect("tagged");
+    let dummy = down
+        .labels
+        .iter()
+        .find(|l| l.text == "P2 Chalk")
+        .expect("tagged");
+    let me = down
+        .labels
+        .iter()
+        .find(|l| l.text == "P1 Chalk")
+        .expect("tagged");
     assert!(dummy.y > me.y, "the tag of a fighter on the floor lies low");
     assert_ne!(airborne.rects, down.rects);
 }
@@ -784,6 +793,8 @@ fn the_camera_settles_over_the_shoulder() {
     while !game.intro().can_skip() {
         game.tick(&keys(&[]));
     }
+    game.tick(&keys(&[Key::Enter]));
+    game.tick(&keys(&[Key::N]));
     game.tick(&keys(&[Key::Enter]));
     game.tick(&keys(&[Key::N]));
     game.set_view(View::ThirdPerson);

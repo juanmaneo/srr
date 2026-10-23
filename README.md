@@ -32,7 +32,8 @@ flying kick, grabs, the judo throws and every grapple position).
 ## Current iteration: up to 10 players on the local network
 
 2 to 10 players, each on their own machine, each in a web browser, on the same local network,
-**everybody for themselves** (free-for-all). One machine runs the small SRR server, which
+**everybody for themselves** (free-for-all), each as the [character](#characters) of their
+choice. One machine runs the small SRR server, which
 serves the game and gathers the inputs; every player opens its address in a browser. A match
 starts when everybody in the room has pressed `Enter`: from a 1v1 to a brawl of ten. Online
 play is built to put up with bad connections (Wi-Fi, a far machine, a hidden tab): one bad
@@ -64,6 +65,7 @@ numeric keypad; the **WASD** preset is for keyboards without one.
 | Grab / advance a grapple         | keypad `0`             | `Space`         |
 | Judo sweep → hon-gesa-gatame      | keypad `5` + `9` together | `H` + `U` together |
 | Judo throw → ude-hishigi-juji-gatame | keypad `8` + `9` together | `Y` + `U` together |
+| Special move (your [character](#characters)'s power) | keypad `3`  | `F`             |
 | Counter a judo technique         | the same two keys, while being thrown | same |
 | Escape a grapple                 | mash any key           | same |
 | Controls page (title screen)     | `C`                    | same |
@@ -134,6 +136,43 @@ numeric keypad; the **WASD** preset is for keyboards without one.
   yours. A grab shows as green arms, a judo technique as blue limbs, a submission as a red
   locked limb.
 
+### Characters
+
+Every player picks a character on the **select screen** that follows the title (`Left` /
+`Right` to choose, `Enter` to fight, `Esc` back to the title), and can change it at any time
+from the **Character** row of the controls page / pause menu. Each character has its own
+numbers and one **special move** on keypad `3` (`F` in WASD):
+
+| Character | Health | Speed | Jump | Power | Reach | Grab | Special move |
+| --------- | -----: | ----: | ---: | ----: | ----: | ---: | ------------ |
+| **Chalk**, the all-rounder | 100 | 100 % | 100 % | 100 % | 100 % | 100 % | **Shoulder Rush**: a lunging charge across the alley (12 damage) |
+| **Torch**, the zoner | 90 | 95 % | 100 % | 95 % | 100 % | 100 % | **Fireball**: a flaming shot that flies across the arena (10 damage, one every 1.25 s) |
+| **Brick**, the heavy | 130 | 75 % | 85 % | 115 % | 105 % | 125 % | **Iron Palm**: a slow palm (20 damage) that shrugs off hits while it winds up |
+| **Zip**, the rushdown | 80 | 135 % | 112 % | 85 % | 95 % | 90 % | **Slide Tackle**: a low slide that passes under high attacks |
+
+* A special move works from the floor only, and like a strike it can be **blocked by
+  stepping back** and is **cancelled by a hit** — except the Iron Palm, which takes the
+  hits of its start-up without flinching (they still hurt; a grab still beats it).
+* **Combos**: a strike that connected can be cancelled into the special move, like into a
+  stronger strike (jab → straight → shoulder rush). Nothing chains after a special move.
+* **The fireball** leaves Torch's hands on the 13th tick and flies 11 units a tick for 70
+  ticks, on Torch's line: **step back** to block it, **sidestep** out of its line or
+  **jump** over it. It vanishes on its first hit, and two fireballs meeting head-on put
+  each other out. Torch must wait 75 ticks before the next one: the orange gauge along
+  the bottom of its health bar refills meanwhile.
+* **The slide** keeps Zip under high punches and high kicks until it recovers; low and
+  medium attacks still catch it.
+* The bars, the name tags (`P1 Torch`) and the health count follow each character; at
+  time-up, fighters with different health compare their health *shares*, so a full Brick
+  and a full Zip draw.
+* Online, your pick is sent to the server when you get ready (`Enter`) and every browser
+  plays the characters the match started with; picking another one while ready tells the
+  server at once. In practice the round restarts at once with the new character, and the
+  computer plays another character every round.
+
+The numbers are in the [tuning guide](docs/tuning-guide.md#characters-percentages-and-special-moves).
+A new character is one more entry in `src/game/character.rs`.
+
 ### Keyboard layout
 
 Press `C` on the title screen to open the controls page, or `P` at any time during a fight:
@@ -147,6 +186,9 @@ can be changed whenever you want, not only before playing.
   another action swaps with it, so a key never does two things. `Enter`, `Esc`, `P`, `Tab` and
   `T` cannot be bound (they drive the menus, the readiness for the next match, the pause, the
   view and practice). The preset row then reads **Custom**;
+* on the **Character** row, `←` / `→` (or `Enter`) choose your
+  [character](#characters): alone the round restarts at once with it, online it is used
+  for the next match;
 * on the **Practice** row, `←` / `→` (or `Enter`) choose who to practise against: **the
   computer**, **the patient computer**, **the aggressive computer** or **the training
   dummy** (and, online, **off**: no practice fight, the room only); the change is carried
@@ -170,7 +212,8 @@ The game opens on an animated ASCII-art title: "SHATTERED" and "REALM:" are spra
 cold neon on a basement brick wall, then "RAMPAGE" in hot, slanted, dripping letters, Streets
 of Rage style. The title then *shatters* (flash, glitching rows, chromatic split, cracks that
 stay), the tagline is typed and "PRESS ENTER" blinks; a glitch burst keeps the wall alive
-every few seconds. Press `Enter` or `Esc` to go to the fight, or `C` for the controls page
+every few seconds. Press `Enter` or `Esc` to choose your [character](#characters), then
+the fight, or `C` for the controls page
 (hinted in the top-left corner; the sound status is in the top-right one). Online, a match
 starts once every player in the room is on the fight screen and has pressed `Enter`.
 
@@ -197,8 +240,8 @@ right, both emptying towards the round timer in the middle. In bigger matches th
 thinner and stack, the first half of the players on the left and the rest on the right (up
 to five a side in a brawl of ten, tinier beyond four players). Recent damage stays
 visible as a red trail that drains after half a second, so a combo reads at a glance; the
-bar blinks orange below 25 %. Under each bar: name and HP (`P1 (you)`, `P3`, or `CPU` for
-the computer), round wins as pips, the combo counter (`2 HITS`, `3 HITS`..., hotter with every
+bar blinks orange below 25 %. Under each bar: name, character and HP (`P1 (you) Torch`,
+`P3 Brick`, or `CPU Zip` for the computer), round wins as pips, the combo counter (`2 HITS`, `3 HITS`..., hotter with every
 hit: the hits that fighter took without recovering, kept for three quarters of a second
 after it recovers), and during a grapple either the position ladder
 (`[CLINCH] > mount > submission`, or `[IPPON-SEOI-NAGE] > juji-gatame` for a judo technique)
@@ -296,7 +339,8 @@ Default frame data (60 ticks per second, arena 1200 units wide, 100 health):
 | High kick    | 11       | 4      | 20       | 125   | 17     | 40        | 22       |
 
 Kicks keep their numbers in the air (a flying kick is cut short by the landing). Every strike
-reaches 60 units up or down.
+reaches 60 units up or down. These are Chalk's numbers; the other characters scale damage
+and range (see [Characters](#characters)).
 
 A round lasts 99 seconds after a 2-second countdown. It ends when only one fighter is still
 standing, or at time-up (most health wins). Every player then presses `Enter` to get ready
@@ -444,12 +488,12 @@ players is a `u16`, bit `i` for player `i`):
 | Tag | Message        | Direction        | Fields                                        |
 | --: | -------------- | ---------------- | --------------------------------------------- |
 | 1   | `Welcome`      | server → browser | your seat / player `u8`                       |
-| 2   | `Start`        | server → browser | session `u8`, players (set)                   |
+| 2   | `Start`        | server → browser | session `u8`, players (set), then one character `u8` per player, by id |
 | 3   | `Input`        | browser → server | session `u8`, tick `u32`, input `u16`         |
 | 4   | `PlayerLeft`   | server → browser | player `u8`                                   |
 | 5   | `RoomFull`     | server → browser | –                                             |
 | 6   | `Lobby`        | server → browser | seated (set), ready (set)                     |
-| 7   | `Ready`        | browser → server | –                                             |
+| 7   | `Ready`        | browser → server | character `u8` (0 Chalk, 1 Torch, 2 Brick, 3 Zip) |
 | 8   | `Frame`        | server → browser | session `u8`, tick `u32`, players (set), late (set), then one input `u16` per player, by id |
 | 9   | `Timing`       | server → browser | tick `u32`, lead `i8` (ticks of margin of the input for that tick) |
 
@@ -478,8 +522,9 @@ and the process exits 0.
 
 ### Layout
 
-* `src/game/` – the engine-agnostic rules: roster and alliances, fixed-step deterministic match
-  simulation, the six attacks and their frame data, blocking, crouching, push boxes, manual
+* `src/game/` – the engine-agnostic rules: roster and alliances, the characters and their
+  special moves (`character.rs`) and the fireballs in flight (`projectile.rs`), fixed-step
+  deterministic match simulation, the six attacks and their frame data, blocking, crouching, push boxes, manual
   turning, the key bindings and their presets, grappling, the judo techniques and their counters, intentional glitches,
   the computer opponents (`bot.rs`: the `Bot` trait, the training dummy and the seeded
   brawler behind three tunings, listed by `Rival`) and the replays (`replay.rs`: the input
@@ -491,7 +536,7 @@ and the process exits 0.
   input delay, playing alone against a rival bot); no sockets, so it is fully
   unit-tested.
 * `src/front/` – the screens as a pure state machine (`Game`): the graffiti ASCII intro, the
-  controls page (`controls.rs`), the arena with the XKCD stick figures (`stick.rs`), the
+  character select screen (`select.rs`), the controls page (`controls.rs`), the arena with the XKCD stick figures (`stick.rs`), the
   third-person 3D view (`tps.rs`, on the fixed-point 3D maths of `space.rs`), the
   versus HUD and the music cues. Every frame is described as plain rectangles and
   monospace labels on a 1280×720 virtual screen (`Frame`), so it is fully unit-tested.
@@ -676,10 +721,11 @@ println!("{}", game.text_snapshot(160, 45)); // the same screen as text
 ```
 
 `cargo xtask screenshots` runs `examples/screenshots.rs`. It plays the intro, opens the
-controls page, shows the pause menu, plays a short fight against the dummy (crouch, strikes,
+controls page, shows the character select screen and the pause menu, plays a short fight against the dummy (crouch, strikes,
 a flying kick into a 3-hit combo, ippon-seoi-nage, juji-gatame), a round against the
 computer, an online 1v1v1 and a brawl of
-ten (the other players simulated, one of the ten lagging), headlessly, and writes PNGs to `target/screenshots/`. It is built with `--no-default-features`,
+ten (the other players simulated, one of the ten lagging), then each special move (Torch's
+fireball in both views, Brick's palm, Zip's slide), headlessly, and writes PNGs to `target/screenshots/`. It is built with `--no-default-features`,
 so no engine, window or GPU is needed: it works in CI or over SSH.
 
 ---

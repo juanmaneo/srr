@@ -2,11 +2,13 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use super::config::{AttackData, ConfigError, MatchConfig};
 use super::fighter::{AttackPhase, Facing, Fighter};
 use super::grapple::{GrappleRole, Hold, Turn, separate, snap};
 use super::input::Input;
+use super::projectile::Projectile;
 use super::roster::{PlayerId, Roster, TeamId};
 
 /// How a finished round ended.
@@ -116,7 +118,12 @@ struct Hit {
 pub struct Match {
     roster: Roster,
     config: MatchConfig,
+    /// The rules of each fighter, in roster order: the configuration adjusted by its
+    /// character. Shared by the snapshots of the match, since they never change.
+    rules: Arc<[MatchConfig]>,
     fighters: Vec<Fighter>,
+    /// The shots in flight, oldest first.
+    projectiles: Vec<Projectile>,
     phase: Phase,
     remaining_ticks: u32,
     paused: bool,
@@ -190,12 +197,17 @@ impl Match {
                 actual: spawns.len(),
             });
         }
+        let rules: Arc<[MatchConfig]> = players
+            .iter()
+            .map(|&player| config.rules_of(player))
+            .collect();
         let fighters = players
             .into_iter()
             .zip(spawns)
-            .map(|(player, &x)| {
+            .zip(rules.iter())
+            .map(|((player, &x), rules)| {
                 if (0..=config.arena_width).contains(&x) {
-                    Ok(Fighter::spawn(player, x, &config))
+                    Ok(Fighter::spawn(player, x, rules))
                 } else {
                     Err(SetupError::SpawnOutOfBounds { player, x })
                 }
@@ -209,7 +221,9 @@ impl Match {
             remaining_ticks: config.round_time_ticks,
             roster,
             config,
+            rules,
             fighters,
+            projectiles: Vec::new(),
             phase,
             paused: false,
         })
@@ -228,6 +242,33 @@ impl Match {
     /// Fighters in roster order.
     pub fn fighters(&self) -> &[Fighter] {
         &self.fighters
+    }
+
+    /// The rules the fighter of `player` follows (the configuration adjusted by its
+    /// [`Character`](super::Character)), or `None` when the player is not in the match.
+    ///
+    /// Complexity: O(n) linear scan.
+    ///
+    /// ```
+    /// use srr::game::{Character, Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let config = MatchConfig::default().with_character(PlayerId(1), Character::Brick);
+    /// let m = Match::new(Roster::duel(), config).unwrap();
+    /// let brick = m.rules(PlayerId(1)).unwrap();
+    /// assert_eq!(m.fighter(PlayerId(1)).unwrap().health(), brick.max_health);
+    /// assert!(brick.max_health > m.config().max_health);
+    /// assert!(m.rules(PlayerId(7)).is_none());
+    /// ```
+    pub fn rules(&self, player: PlayerId) -> Option<&MatchConfig> {
+        self.fighters
+            .iter()
+            .position(|f| f.player() == player)
+            .map(|index| &self.rules[index])
+    }
+
+    /// The shots in flight (fireballs), oldest first.
+    pub fn projectiles(&self) -> &[Projectile] {
+        &self.projectiles
     }
 
     /// The fighter of `player`, or `None` when the player is not in the match.
@@ -339,12 +380,25 @@ impl Match {
     }
 
     fn fight(&mut self, inputs: &HashMap<PlayerId, Input>) {
-        for fighter in &mut self.fighters {
+        for (fighter, rules) in self.fighters.iter_mut().zip(self.rules.iter()) {
             let input = inputs.get(&fighter.player()).copied().unwrap_or_default();
-            fighter.update(input, &self.config);
+            fighter.update(input, rules);
+            if let Some(flight) = fighter.launched() {
+                self.projectiles.push(Projectile {
+                    owner: fighter.player(),
+                    x: fighter.x(),
+                    y: fighter.y(),
+                    z: fighter.z(),
+                    facing: fighter.facing(),
+                    remaining: flight.lifetime,
+                    flight,
+                    hit: rules.special.attack,
+                });
+            }
         }
         self.resolve_collisions();
         self.resolve_attacks();
+        self.resolve_projectiles();
         self.release_orphans();
         self.play_grapples();
         self.release_orphans();
@@ -398,7 +452,12 @@ impl Match {
             // An earlier hit of this step may already have knocked the target out.
             let target = &mut self.fighters[hit.target];
             if !target.is_knocked_out() {
-                target.take_hit(&hit.data, hit.direction, hit.blocked, &self.config);
+                target.take_hit(
+                    &hit.data,
+                    hit.direction,
+                    hit.blocked,
+                    &self.rules[hit.target],
+                );
             }
         }
     }
@@ -406,7 +465,8 @@ impl Match {
     fn collect_hits(&self) -> Vec<Hit> {
         let mut hits = Vec::new();
         for (a, attacker) in self.fighters.iter().enumerate() {
-            let Some(attack) = attacker.attack().filter(|_| attacker.is_attack_active()) else {
+            let rules = &self.rules[a];
+            let Some(data) = attacker.active_hit(rules) else {
                 continue;
             };
             let direction = attacker.facing();
@@ -415,13 +475,13 @@ impl Match {
                 if a != t
                     && !target.is_knocked_out()
                     && !attacker.has_hit(t)
-                    && attacker.reaches(target, &self.config)
+                    && attacker.reaches(target, rules)
                     && self.may_hurt(attacker.player(), target.player())
                 {
                     hits.push(Hit {
                         attacker: a,
                         target: t,
-                        data: *self.config.attack(attack),
+                        data,
                         direction,
                         blocked: target.guards_against(direction),
                     });
@@ -429,6 +489,76 @@ impl Match {
             }
         }
         hits
+    }
+
+    /// Fireballs that meet head-on on the same line put each other out; then every shot flies
+    /// on, hitting the first fighter in its way (see [`Match::step`]), or burns out at the end
+    /// of its lifetime or past a wall.
+    fn resolve_projectiles(&mut self) {
+        let shots = std::mem::take(&mut self.projectiles);
+        let mut alive = vec![true; shots.len()];
+        for a in 0..shots.len() {
+            for b in a + 1..shots.len() {
+                if alive[a] && alive[b] && self.collide(&shots[a], &shots[b]) {
+                    alive[a] = false;
+                    alive[b] = false;
+                }
+            }
+        }
+        for (mut shot, _) in shots.into_iter().zip(alive).filter(|(_, alive)| *alive) {
+            if let Some(target) = self.struck_by(&shot) {
+                let blocked = self.fighters[target].guards_against(shot.facing);
+                self.fighters[target].take_hit(
+                    &shot.hit,
+                    shot.facing,
+                    blocked,
+                    &self.rules[target],
+                );
+                continue;
+            }
+            shot.x = shot.next_x();
+            shot.remaining -= 1;
+            if shot.remaining > 0 && (0..=self.config.arena_width).contains(&shot.x) {
+                self.projectiles.push(shot);
+            }
+        }
+    }
+
+    /// Whether two shots flying towards each other on the same line meet during this tick.
+    fn collide(&self, a: &Projectile, b: &Projectile) -> bool {
+        let (left, right) = if a.x <= b.x { (a, b) } else { (b, a) };
+        let (_, left_reach) = left.swept();
+        let (right_reach, _) = right.swept();
+        left.facing == Facing::Right
+            && right.facing == Facing::Left
+            && (i64::from(a.z) - i64::from(b.z)).abs() <= i64::from(self.config.attack_depth)
+            && left_reach >= right_reach
+    }
+
+    /// The fighter `shot` hits during this tick: the first one in its way (the lowest roster
+    /// position among equals) that it crosses, on its line and height, and that its thrower
+    /// may hurt.
+    fn struck_by(&self, shot: &Projectile) -> Option<usize> {
+        let (low, high) = shot.swept();
+        self.fighters
+            .iter()
+            .enumerate()
+            .filter(|(_, target)| {
+                let x = i64::from(target.x());
+                target.player() != shot.owner
+                    && !target.is_knocked_out()
+                    && (low..=high).contains(&x)
+                    && (target.y() - shot.y).abs() <= self.config.attack_height
+                    && (i64::from(target.z()) - i64::from(shot.z)).abs()
+                        <= i64::from(self.config.attack_depth)
+                    && self.may_hurt(shot.owner, target.player())
+            })
+            .min_by_key(|(index, target)| {
+                let ahead =
+                    (i64::from(target.x()) - i64::from(shot.x)) * i64::from(shot.facing.sign());
+                (ahead, *index)
+            })
+            .map(|(index, _)| index)
     }
 
     fn may_hurt(&self, attacker: PlayerId, target: PlayerId) -> bool {
@@ -519,7 +649,7 @@ impl Match {
                 let target = &self.fighters[index];
                 index != attacker
                     && target.is_grabbable()
-                    && me.technique_reaches(target, &self.config)
+                    && me.technique_reaches(target, &self.rules[attacker])
                     && self.may_hurt(me.player(), target.player())
             });
             let Some(target) = target else {
@@ -567,7 +697,7 @@ impl Match {
                 let target = &self.fighters[index];
                 index != grabber
                     && target.is_grabbable()
-                    && me.grab_reaches(target, &self.config)
+                    && me.grab_reaches(target, &self.rules[grabber])
                     && self.may_hurt(me.player(), target.player())
             });
             if let Some(target) = target {
@@ -603,8 +733,8 @@ impl Match {
         self.fighters[caught].pull_to(line);
     }
 
-    /// The last team standing wins; nobody standing is a draw; at time-up the highest total
-    /// team health wins and a tie for the lead is a draw.
+    /// The last team standing wins; nobody standing is a draw; at time-up the highest team
+    /// health wins (see [`Match::team_health`]) and a tie for the lead is a draw.
     fn evaluate(&self) -> Option<Outcome> {
         let mut standing = self
             .fighters
@@ -623,10 +753,10 @@ impl Match {
         }
     }
 
-    /// The team with the highest total health wins; a tie for the lead is a draw.
+    /// The team with the highest health wins; a tie for the lead is a draw.
     fn time_up_outcome(&self) -> Outcome {
         let mut outcome = Outcome::Draw;
-        let mut best = i64::MIN;
+        let mut best = i128::MIN;
         for team in self.roster.teams() {
             let health = self.team_health(team);
             if health > best {
@@ -639,11 +769,64 @@ impl Match {
         outcome
     }
 
-    fn team_health(&self, team: TeamId) -> i64 {
+    /// The health of `team` at time-up: the total health of its fighters when every fighter
+    /// of the match has the same maximum health, otherwise the total of their health shares
+    /// (so a tough character does not win time-ups just for its bigger bar).
+    fn team_health(&self, team: TeamId) -> i128 {
+        let same_max = self
+            .rules
+            .iter()
+            .all(|rules| rules.max_health == self.config.max_health);
         self.fighters
             .iter()
-            .filter(|f| self.roster.team_of(f.player()) == Some(team))
-            .map(|f| i64::from(f.health()))
+            .zip(self.rules.iter())
+            .filter(|(f, _)| self.roster.team_of(f.player()) == Some(team))
+            .map(|(f, rules)| {
+                let health = i128::from(f.health());
+                if same_max {
+                    health
+                } else {
+                    // Shares in units of 2^-40 of a bar: exact enough to order any health.
+                    (health << 40) / i128::from(rules.max_health)
+                }
+            })
             .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::Character;
+
+    fn time_up_duel(first: Character) -> Match {
+        let config = MatchConfig {
+            countdown_ticks: 0,
+            round_time_ticks: 1,
+            ..MatchConfig::default()
+        }
+        .with_character(PlayerId(0), first);
+        Match::new(Roster::duel(), config).unwrap()
+    }
+
+    #[test]
+    fn at_time_up_health_shares_decide_between_different_bars() {
+        let mut m = time_up_duel(Character::Brick);
+        m.fighters[0].suffer(60); // 70 of 130: 53.8 %
+        m.fighters[1].suffer(46); // 54 of 100: 54 %
+        m.step(&HashMap::new());
+        assert_eq!(
+            m.outcome(),
+            Some(Outcome::Winner(TeamId(1))),
+            "more health left, but a smaller share"
+        );
+    }
+
+    #[test]
+    fn at_time_up_equal_bars_compare_plain_health() {
+        let mut m = time_up_duel(Character::Chalk);
+        m.fighters[0].suffer(10);
+        m.step(&HashMap::new());
+        assert_eq!(m.outcome(), Some(Outcome::Winner(TeamId(1))));
     }
 }

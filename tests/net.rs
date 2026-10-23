@@ -7,13 +7,13 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use srr::game::{
-    Attack, ConfigError, Input, Match, MatchConfig, Outcome, Phase, PlayerId, PlayerSlot, Rival,
-    Roster, RosterError, SetupError, Strength, TeamId,
+    Attack, Character, ConfigError, Input, Match, MatchConfig, Outcome, Phase, PlayerId,
+    PlayerSlot, Rival, Roster, RosterError, SetupError, Strength, TeamId,
 };
 use srr::net::{
     Client, ClientError, ClientMessage, DecodeError, FrameInputs, INPUT_DELAY, LAG_MEMORY,
     MAX_PLAYERS, MAX_ROLLBACK, PlayerSet, ServerMessage, Session, SessionError, Status,
-    TARGET_LEAD,
+    TARGET_LEAD, character_at,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -228,7 +228,12 @@ fn decode_sent(frames: &[Vec<u8>]) -> Vec<(u8, u32, Input)> {
 }
 
 fn start(session: u8, players: PlayerSet) -> Vec<u8> {
-    ServerMessage::Start { session, players }.encode()
+    ServerMessage::Start {
+        session,
+        players,
+        characters: [Character::Chalk; 10],
+    }
+    .encode()
 }
 
 /// An online client welcomed as `player` that started session `session` between `players`.
@@ -263,10 +268,12 @@ fn every_server_message_round_trips_through_its_bytes() {
         ServerMessage::Start {
             session: 0,
             players: PlayerSet::first(2),
+            characters: [Character::Chalk; 10],
         },
         ServerMessage::Start {
             session: 255,
             players: set(&[0, 2, 9]),
+            characters: [Character::Chalk; 10],
         },
         frame(
             9,
@@ -307,8 +314,31 @@ fn every_server_message_round_trips_through_its_bytes() {
 #[test]
 fn server_messages_have_the_documented_layout() {
     assert_eq!(ServerMessage::Welcome { player: p(1) }.encode(), [1, 1]);
-    assert_eq!(start(42, PlayerSet::first(3)), [2, 42, 0b111, 0]);
-    assert_eq!(start(1, set(&[0, 9])), [2, 1, 0b1, 0b10]);
+    assert_eq!(start(42, PlayerSet::first(3)), [2, 42, 0b111, 0, 0, 0, 0]);
+    assert_eq!(start(1, set(&[0, 9])), [2, 1, 0b1, 0b10, 0, 0]);
+    let mut characters = [Character::Chalk; 10];
+    characters[0] = Character::Zip;
+    characters[2] = Character::Torch;
+    characters[9] = Character::Brick;
+    let picked = ServerMessage::Start {
+        session: 5,
+        players: set(&[0, 2]),
+        characters,
+    };
+    assert_eq!(
+        picked.encode(),
+        [2, 5, 0b101, 0, 3, 1],
+        "only the players' characters"
+    );
+    characters[9] = Character::Chalk;
+    assert_eq!(
+        ServerMessage::decode(&picked.encode()),
+        Ok(ServerMessage::Start {
+            session: 5,
+            players: set(&[0, 2]),
+            characters,
+        })
+    );
     assert_eq!(ServerMessage::PlayerLeft { player: p(2) }.encode(), [4, 2]);
     assert_eq!(ServerMessage::RoomFull.encode(), [5]);
     assert_eq!(
@@ -364,8 +394,11 @@ fn client_messages_round_trip_with_the_documented_layout() {
     let bits = high_punch().to_bits().to_le_bytes();
     assert_eq!(bytes, [3, 3, 0x04, 0x03, 0x02, 0x01, bits[0], bits[1]]);
     assert_eq!(ClientMessage::decode(&bytes), Ok(message));
-    assert_eq!(ClientMessage::Ready.encode(), [7]);
-    assert_eq!(ClientMessage::decode(&[7]), Ok(ClientMessage::Ready));
+    for character in Character::ALL {
+        let ready = ClientMessage::Ready { character };
+        assert_eq!(ready.encode(), [7, character.index()]);
+        assert_eq!(ClientMessage::decode(&ready.encode()), Ok(ready));
+    }
 
     // The server never sends inputs one by one: only whole frames.
     assert_eq!(
@@ -406,7 +439,16 @@ fn client_messages_reject_empty_unknown_and_malformed_frames() {
         Err(wrong(3, 8, 7))
     );
     assert_eq!(ClientMessage::decode(&[3; 9]), Err(wrong(3, 8, 9)));
-    assert_eq!(ClientMessage::decode(&[7, 0]), Err(wrong(7, 1, 2)));
+    assert_eq!(ClientMessage::decode(&[7]), Err(wrong(7, 2, 1)));
+    assert_eq!(ClientMessage::decode(&[7, 0, 0]), Err(wrong(7, 2, 3)));
+    assert_eq!(
+        ClientMessage::decode(&[7, 4]),
+        Err(DecodeError::UnknownCharacter(4))
+    );
+    assert_eq!(
+        DecodeError::UnknownCharacter(4).to_string(),
+        "unknown character 4"
+    );
 }
 
 #[test]
@@ -426,7 +468,13 @@ fn server_messages_reject_empty_unknown_and_malformed_frames() {
     assert_eq!(ServerMessage::decode(&[1]), Err(wrong(1, 2, 1)));
     assert_eq!(ServerMessage::decode(&[1, 0, 0]), Err(wrong(1, 2, 3)));
     assert_eq!(ServerMessage::decode(&[2, 0, 0]), Err(wrong(2, 4, 3)));
-    assert_eq!(ServerMessage::decode(&[2; 5]), Err(wrong(2, 4, 5)));
+    // Players 1 and 9: two characters expected.
+    assert_eq!(ServerMessage::decode(&[2; 5]), Err(wrong(2, 6, 5)));
+    assert_eq!(ServerMessage::decode(&[2; 7]), Err(wrong(2, 6, 7)));
+    assert_eq!(
+        ServerMessage::decode(&[2, 1, 0b11, 0, 0, 9]),
+        Err(DecodeError::UnknownCharacter(9))
+    );
     assert_eq!(ServerMessage::decode(&[4]), Err(wrong(4, 2, 1)));
     assert_eq!(ServerMessage::decode(&[4, 0, 0]), Err(wrong(4, 2, 3)));
     assert_eq!(ServerMessage::decode(&[5, 5]), Err(wrong(5, 1, 2)));
@@ -1113,7 +1161,7 @@ fn an_online_client_goes_from_the_lobby_to_playing() {
     );
     assert_eq!(client.seated(), PlayerSet::first(3));
     assert_eq!(client.ready_players(), set(&[0]));
-    assert_eq!(client.ready(), Some(vec![7]), "Enter: ready");
+    assert_eq!(client.ready(), Some(vec![7, 0]), "Enter: ready, as Chalk");
     assert_eq!(client.status(), Status::Lobby, "until the server starts");
 
     // A frame or a timing report before any session is dropped silently.
@@ -1372,7 +1420,15 @@ fn ready_is_sent_in_the_lobby_or_once_the_server_says_the_round_is_over() {
             &[(0, high_punch())],
         ));
     }
-    assert_eq!(client.ready(), Some(ClientMessage::Ready.encode()));
+    assert_eq!(
+        client.ready(),
+        Some(
+            ClientMessage::Ready {
+                character: Character::Chalk
+            }
+            .encode()
+        )
+    );
     assert_eq!(client.status(), Status::Playing, "the round stays shown");
 }
 
@@ -1431,7 +1487,7 @@ fn a_player_leaving_a_brawl_does_not_end_it() {
         "the last round stays visible"
     );
     assert!(client.tick(idle()).is_empty());
-    assert_eq!(client.ready(), Some(vec![7]), "ready for the next match");
+    assert_eq!(client.ready(), Some(vec![7, 0]), "ready for the next match");
 
     // Further departures in the lobby keep the last match as it was.
     client.receive(&ServerMessage::PlayerLeft { player: p(2) }.encode());
@@ -1576,6 +1632,7 @@ fn a_start_that_cannot_make_a_match_fails() {
     client.handle(ServerMessage::Start {
         session: 1,
         players: PlayerSet::first(3),
+        characters: [Character::Chalk; 10],
     });
     assert_eq!(
         client.status(),
@@ -1588,6 +1645,7 @@ fn a_start_that_cannot_make_a_match_fails() {
     client.handle(ServerMessage::Start {
         session: 1,
         players: set(&[0]),
+        characters: [Character::Chalk; 10],
     });
     assert_eq!(
         client.status(),
@@ -1605,6 +1663,7 @@ fn a_start_that_cannot_make_a_match_fails() {
     client.handle(ServerMessage::Start {
         session: 1,
         players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
     });
     assert_eq!(
         client.status(),
@@ -1672,7 +1731,9 @@ fn a_practice_client_never_sends_nor_guesses_and_advances_every_tick() {
 #[test]
 fn enter_starts_the_next_local_round_once_the_round_is_over() {
     let config = one_punch_config();
-    let fresh = Match::new(Roster::duel(), config.clone()).unwrap();
+    // The rival plays the next character every round.
+    let next_round = config.clone().with_character(p(1), Character::Torch);
+    let fresh = Match::new(Roster::duel(), next_round).unwrap();
     let mut client = Client::practice(config);
     assert_eq!(client.ready(), None);
     assert_eq!(client.session().unwrap().id(), 0, "not during the round");
@@ -1804,4 +1865,159 @@ fn a_local_client_still_obeys_the_connection_state() {
     assert_eq!(client.status(), Status::Disconnected);
     assert!(client.tick(idle()).is_empty());
     assert_eq!(client.session().unwrap().tick(), 0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Characters
+// ---------------------------------------------------------------------------------------------
+
+/// A start of session `session` between `players` with the given characters.
+fn start_as(session: u8, players: PlayerSet, picks: &[(u8, Character)]) -> Vec<u8> {
+    let mut characters = [Character::Chalk; 10];
+    for &(player, character) in picks {
+        characters[usize::from(player)] = character;
+    }
+    ServerMessage::Start {
+        session,
+        players,
+        characters,
+    }
+    .encode()
+}
+
+#[test]
+fn every_browser_plays_the_characters_the_server_announced() {
+    let players = PlayerSet::first(2);
+    let mut client = Client::online(MatchConfig::default(), INPUT_DELAY);
+    client.receive(&ServerMessage::Welcome { player: p(1) }.encode());
+    client.receive(&start_as(
+        1,
+        players,
+        &[(0, Character::Brick), (1, Character::Zip)],
+    ));
+    let current = client.session().unwrap().current();
+    assert_eq!(current.config().character(p(0)), Character::Brick);
+    assert_eq!(health_of(current, 0), 130);
+    assert_eq!(health_of(current, 1), 80);
+    assert_eq!(
+        client.config(),
+        &MatchConfig::default(),
+        "the base rules stay"
+    );
+}
+
+#[test]
+fn changing_character_between_matches_keeps_the_score() {
+    let players = PlayerSet::first(2);
+    let mut client = playing_client(one_punch_config(), 0, 0, 1, players);
+    let mut ticks = 0;
+    while !client.session().unwrap().is_finished() {
+        let tick = client.session().unwrap().confirmed_tick();
+        let punch = [(0, high_punch())];
+        client.receive(&frame(1, tick, players, PlayerSet::EMPTY, &punch).encode());
+        client.tick(high_punch());
+        ticks += 1;
+        assert!(ticks < 200, "the punch must land");
+    }
+    client.tick(idle());
+    client.receive(&start_as(2, players, &[(0, Character::Torch)]));
+    let session = client.session().unwrap();
+    assert_eq!(session.current().config().character(p(0)), Character::Torch);
+    assert_eq!(session.wins(p(0)), 1, "same players: the score goes on");
+}
+
+#[test]
+fn an_online_pick_is_sent_with_readiness() {
+    let mut client = Client::online(MatchConfig::default(), INPUT_DELAY);
+    assert_eq!(client.character(), Character::Chalk);
+    assert_eq!(client.set_character(Character::Chalk), None, "no change");
+    assert_eq!(client.set_character(Character::Zip), None, "no seat yet");
+    client.receive(&ServerMessage::Welcome { player: p(2) }.encode());
+    assert_eq!(
+        client.set_character(Character::Torch),
+        None,
+        "not ready yet"
+    );
+    assert_eq!(client.ready(), Some(vec![7, 1]), "ready as Torch");
+    client.receive(
+        &ServerMessage::Lobby {
+            seated: PlayerSet::first(3),
+            ready: set(&[2]),
+        }
+        .encode(),
+    );
+    assert_eq!(
+        client.set_character(Character::Brick),
+        Some(vec![7, 2]),
+        "already ready: the server hears about the change"
+    );
+    assert_eq!(client.character(), Character::Brick);
+}
+
+#[test]
+fn a_new_pick_restarts_a_practice_round_at_once() {
+    let mut client = Client::versus(no_countdown(), Rival::Brawler);
+    for _ in 0..10 {
+        client.tick(walk_right());
+    }
+    assert_eq!(
+        client.set_character(Character::Zip),
+        None,
+        "nothing to send"
+    );
+    let session = client.session().unwrap();
+    assert_eq!(session.id(), 1);
+    assert_eq!(session.tick(), 0, "a fresh round");
+    assert_eq!(session.current().config().character(p(0)), Character::Zip);
+    assert_eq!(
+        session.current().config().character(p(1)),
+        Client::rival_character(0),
+        "the rival keeps its character"
+    );
+    assert!(client.bot_player().is_some(), "the computer is still there");
+}
+
+#[test]
+fn the_practice_rival_changes_character_every_round() {
+    let rivals: Vec<Character> = (0..5).map(Client::rival_character).collect();
+    assert_eq!(
+        rivals,
+        [
+            Character::Chalk,
+            Character::Torch,
+            Character::Brick,
+            Character::Zip,
+            Character::Chalk
+        ]
+    );
+    let client = Client::practice(no_countdown());
+    let config = client.session().unwrap().current().config();
+    assert_eq!(config.character(p(1)), Character::Chalk, "round 0");
+}
+
+#[test]
+fn characters_beyond_the_seats_are_ignored() {
+    let mut characters = [Character::Chalk; 10];
+    characters[9] = Character::Zip;
+    assert_eq!(character_at(&characters, p(9)), Character::Zip);
+    assert_eq!(character_at(&characters, p(12)), Character::Chalk);
+    // A start naming player 12 carries a byte for it, which has nowhere to go.
+    let start = ServerMessage::Start {
+        session: 1,
+        players: set(&[0, 12]),
+        characters,
+    };
+    assert_eq!(start.encode(), [2, 1, 1, 0b1_0000, 0, 0]);
+    assert_eq!(
+        ServerMessage::decode(&[2, 1, 1, 0b1_0000, 1, 3]),
+        Ok(ServerMessage::Start {
+            session: 1,
+            players: set(&[0, 12]),
+            characters: {
+                let mut expected = [Character::Chalk; 10];
+                expected[0] = Character::Torch;
+                expected
+            },
+        })
+    );
 }

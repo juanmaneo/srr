@@ -8,7 +8,8 @@ mod common;
 use common::{DATA, GRAPPLE, SWEEP, THROW, cfg};
 use srr::game::{
     Attack, AttackData, ConfigError, Glitch, GlitchSet, GrappleData, GrapplePosition, Limb,
-    MatchConfig, Strength, TICKS_PER_SECOND, Technique, TechniqueData,
+    MatchConfig, ProjectileData, SHOULDER_RUSH, SpecialData, Strength, TICKS_PER_SECOND, Technique,
+    TechniqueData,
 };
 
 /// Applies `change` to the test config and validates the result.
@@ -296,6 +297,22 @@ fn validation_reports_the_first_problem_in_the_documented_order() {
             submission_damage: -1,
             ..GRAPPLE
         },
+        special: SpecialData {
+            attack: AttackData {
+                active: 0,
+                range: -1,
+                damage: -1,
+                knockback: -1,
+                ..DATA
+            },
+            lunge: -1,
+            projectile: Some(ProjectileData {
+                speed: -1,
+                lifetime: 0,
+                size: -1,
+            }),
+            ..SHOULDER_RUSH
+        },
         ..cfg()
     };
     for attack in Attack::ALL {
@@ -353,6 +370,18 @@ fn validation_reports_the_first_problem_in_the_documented_order() {
             expected.push(ConfigError::NegativeValue { field, value: -1 });
         }
     }
+    expected.push(ConfigError::ZeroSpecialActiveFrames);
+    expected.push(ConfigError::ZeroProjectileLifetime);
+    for field in [
+        "special.range",
+        "special.damage",
+        "special.knockback",
+        "special.lunge",
+        "special.projectile.speed",
+        "special.projectile.size",
+    ] {
+        expected.push(ConfigError::NegativeValue { field, value: -1 });
+    }
 
     let mut reported = Vec::new();
     while let Err(error) = config.validate() {
@@ -389,7 +418,17 @@ fn fix(config: &mut MatchConfig, error: ConfigError) {
             Some(technique) => config.techniques[technique.index()].escape_presses = 3,
             None => config.grapple.escape_presses[position.index()] = 3,
         },
+        ConfigError::ZeroSpecialActiveFrames => config.special.attack.active = 1,
+        ConfigError::ZeroProjectileLifetime => projectile_mut(config).lifetime = 30,
     }
+}
+
+fn projectile_mut(config: &mut MatchConfig) -> &mut ProjectileData {
+    config
+        .special
+        .projectile
+        .as_mut()
+        .expect("the broken config throws a projectile")
 }
 
 /// The rules [`cfg`] gives to `technique`.
@@ -421,7 +460,6 @@ const GRAPPLE_FIELDS: [&str; 7] = [
 
 /// The field a `NegativeValue` error names.
 fn non_negative_mut<'a>(config: &'a mut MatchConfig, field: &str) -> &'a mut i32 {
-    let grapple = &mut config.grapple;
     match field {
         "walk_speed" => &mut config.walk_speed,
         "attack_height" => &mut config.attack_height,
@@ -436,13 +474,19 @@ fn non_negative_mut<'a>(config: &'a mut MatchConfig, field: &str) -> &'a mut i32
         "sweep.damage" => &mut config.techniques[0].damage,
         "throw.range" => &mut config.techniques[1].range,
         "throw.damage" => &mut config.techniques[1].damage,
-        "grapple.range" => &mut grapple.range,
-        "grapple.grapple_distance" => &mut grapple.grapple_distance,
-        "grapple.break_distance" => &mut grapple.break_distance,
-        "grapple.clinch_strike_damage" => &mut grapple.clinch_strike_damage,
-        "grapple.ground_strike_damage" => &mut grapple.ground_strike_damage,
-        "grapple.takedown_damage" => &mut grapple.takedown_damage,
-        "grapple.submission_damage" => &mut grapple.submission_damage,
+        "grapple.range" => &mut config.grapple.range,
+        "grapple.grapple_distance" => &mut config.grapple.grapple_distance,
+        "grapple.break_distance" => &mut config.grapple.break_distance,
+        "grapple.clinch_strike_damage" => &mut config.grapple.clinch_strike_damage,
+        "grapple.ground_strike_damage" => &mut config.grapple.ground_strike_damage,
+        "grapple.takedown_damage" => &mut config.grapple.takedown_damage,
+        "grapple.submission_damage" => &mut config.grapple.submission_damage,
+        "special.range" => &mut config.special.attack.range,
+        "special.damage" => &mut config.special.attack.damage,
+        "special.knockback" => &mut config.special.attack.knockback,
+        "special.lunge" => &mut config.special.lunge,
+        "special.projectile.speed" => &mut config.special.projectile.as_mut().unwrap().speed,
+        "special.projectile.size" => &mut config.special.projectile.as_mut().unwrap().size,
         other => panic!("unknown field {other}"),
     }
 }

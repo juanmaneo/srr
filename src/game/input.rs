@@ -149,6 +149,9 @@ pub struct Input {
     pub sidestep_in: bool,
     /// Sidestep into the foreground, towards the street.
     pub sidestep_out: bool,
+    /// The special move of the fighter's [`Character`](super::Character): one power per
+    /// character, on the floor only (see [`SpecialData`](super::SpecialData)).
+    pub special: bool,
 }
 
 impl Input {
@@ -167,10 +170,11 @@ impl Input {
         down: false,
         sidestep_in: false,
         sidestep_out: false,
+        special: false,
     };
 
     /// Number of bits used by [`Input::to_bits`].
-    pub const BITS: u32 = 13;
+    pub const BITS: u32 = 14;
 
     /// Only the button of `attack` is held.
     pub fn pressing(attack: Attack) -> Input {
@@ -272,7 +276,8 @@ impl Input {
     }
 
     /// Packs the input into the low [`Input::BITS`] bits: left, right, jump, the attack
-    /// buttons in [`Attack::ALL`] order, grab, down, then the sidesteps in and out.
+    /// buttons in [`Attack::ALL`] order, grab, down, the sidesteps in and out, then the
+    /// special move.
     ///
     /// ```
     /// use srr::game::Input;
@@ -304,6 +309,7 @@ impl Input {
             down: held(10),
             sidestep_in: held(11),
             sidestep_out: held(12),
+            special: held(13),
         }
     }
 
@@ -322,6 +328,7 @@ impl Input {
             self.down,
             self.sidestep_in,
             self.sidestep_out,
+            self.special,
         ]
     }
 }
@@ -472,9 +479,10 @@ impl Key {
 /// [`KeyBindings::STANDARD`] (also the `Default`) is the game's layout: arrows to move and
 /// jump, the down arrow to crouch (down + left / right to turn around), keypad `1`/`5`/`6`
 /// for the low/medium/high punch, keypad `4`/`8`/`9` for the low/medium/high kick, keypad
-/// `0` to grab and keypad `7` / `2` to sidestep towards the wall / the street (the upper and
-/// the lower row, like the wall above the street in the side view). The judo techniques are
-/// two keys pressed together: `5` + `9` and `8` + `9` (see [`Technique`](super::Technique)).
+/// `0` to grab, keypad `7` / `2` to sidestep towards the wall / the street (the upper and
+/// the lower row, like the wall above the street in the side view) and keypad `3` for the
+/// character's special move. The judo techniques are two keys pressed together: `5` + `9`
+/// and `8` + `9` (see [`Technique`](super::Technique)).
 ///
 /// [`KeyBindings::WASD`] is the same layout for keyboards without a keypad, and
 /// [`KeyBindings::bind`] remaps one action at a time.
@@ -506,6 +514,8 @@ pub struct KeyBindings {
     pub sidestep_in: Key,
     /// Key bound to the sidestep out, towards the street.
     pub sidestep_out: Key,
+    /// Key bound to the character's special move.
+    pub special: Key,
 }
 
 impl KeyBindings {
@@ -524,12 +534,14 @@ impl KeyBindings {
         down: Key::ArrowDown,
         sidestep_in: Key::Numpad7,
         sidestep_out: Key::Numpad2,
+        special: Key::Numpad3,
     };
 
     /// The standard layout on the left hand and the letters: `W` `A` `S` `D` for the arrows,
     /// `B` `H` `J` for the punches (keypad `1` `5` `6`), `G` `Y` `U` for the kicks (keypad
-    /// `4` `8` `9`), `Space` to grab (keypad `0`) and `Q` / `E` to sidestep (keypad `7` / `2`).
-    /// The judo techniques become `H` + `U` and `Y` + `U`.
+    /// `4` `8` `9`), `Space` to grab (keypad `0`), `Q` / `E` to sidestep (keypad `7` / `2`)
+    /// and `F` for the special move (keypad `3`). The judo techniques become `H` + `U` and
+    /// `Y` + `U`.
     pub const WASD: KeyBindings = KeyBindings {
         left: Key::A,
         right: Key::D,
@@ -544,6 +556,7 @@ impl KeyBindings {
         down: Key::S,
         sidestep_in: Key::Q,
         sidestep_out: Key::E,
+        special: Key::F,
     };
 
     /// The presets offered on the controls page, with their names; the first is the default.
@@ -567,6 +580,7 @@ impl KeyBindings {
         "Crouch / turn",
         "Sidestep to the wall",
         "Sidestep to the street",
+        "Special move",
     ];
 
     /// The layout binding [`KeyBindings::keys`] order: the inverse of `keys`.
@@ -592,6 +606,7 @@ impl KeyBindings {
             down,
             sidestep_in,
             sidestep_out,
+            special,
         ] = keys;
         KeyBindings {
             left,
@@ -607,6 +622,7 @@ impl KeyBindings {
             down,
             sidestep_in,
             sidestep_out,
+            special,
         }
     }
 
@@ -646,7 +662,7 @@ impl KeyBindings {
     }
 
     /// The bound keys in the bit order of [`Input::to_bits`]: left, right, jump, the attacks
-    /// in [`Attack::ALL`] order, grab, down, then the sidesteps in and out.
+    /// in [`Attack::ALL`] order, grab, down, the sidesteps in and out, then the special move.
     pub fn keys(&self) -> [Key; Input::BITS as usize] {
         [
             self.left,
@@ -662,6 +678,7 @@ impl KeyBindings {
             self.down,
             self.sidestep_in,
             self.sidestep_out,
+            self.special,
         ]
     }
 
@@ -670,7 +687,7 @@ impl KeyBindings {
     /// Unbound keys are ignored. Pressing both directions reports both, and
     /// [`Input::horizontal`] then cancels them out.
     ///
-    /// Complexity: O(1) (thirteen hash lookups).
+    /// Complexity: O(1) (fourteen hash lookups).
     ///
     /// ```
     /// use std::collections::HashSet;
@@ -696,6 +713,7 @@ impl KeyBindings {
             down,
             sidestep_in,
             sidestep_out,
+            special,
         ] = self.keys().map(|key| pressed.contains(&key));
         Input {
             left,
@@ -711,6 +729,7 @@ impl KeyBindings {
             down,
             sidestep_in,
             sidestep_out,
+            special,
         }
     }
 }

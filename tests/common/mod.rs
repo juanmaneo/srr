@@ -44,8 +44,8 @@
 use std::collections::HashMap;
 
 use srr::game::{
-    Attack, AttackData, Facing, Fighter, FighterState, GlitchSet, GrappleData, Input, Match,
-    MatchConfig, PlayerId, Roster, Strength, TechniqueData,
+    Attack, AttackData, Character, Facing, Fighter, FighterState, GlitchSet, GrappleData, Input,
+    Match, MatchConfig, PlayerId, Roster, SHOULDER_RUSH, Strength, TechniqueData,
 };
 
 pub type Inputs = HashMap<PlayerId, Input>;
@@ -136,6 +136,8 @@ pub fn cfg() -> MatchConfig {
         sidestep_speed: 5,
         attack_depth: 40,
         body_depth: 40,
+        special: SHOULDER_RUSH,
+        characters: [Character::Chalk; 10],
     }
 }
 

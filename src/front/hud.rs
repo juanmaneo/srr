@@ -57,6 +57,7 @@ const TIMER_LOW: Rgba = Rgba::hex(0xff4a3a);
 const GRAPPLE_ON: Rgba = Rgba::hex(0x6cff8a);
 const GRAPPLE_OFF: Rgba = Rgba::hex(0x4a5a50);
 const ESCAPE: Rgba = Rgba::hex(0x3fc8ff);
+const COOLING: Rgba = Rgba::hex(0x5a3a2a);
 const BANNER: Rgba = Rgba::hex(0xffd84a);
 const BANNER_SMALL: Rgba = Rgba::hex(0xf4f0ff);
 const CONTROLS_COLOR: Rgba = Rgba::hex(0x8a8098);
@@ -314,7 +315,10 @@ fn draw_bar(frame: &mut Frame, slot: &BarSlot, bar: &HealthBar, fighter: &Fighte
         fight_ticks,
         bindings,
     } = *hud;
-    let max = session.current().config().max_health.max(1);
+    let current = session.current();
+    // Every character has its own maximum: a full bar is a full bar.
+    let rules = super::arena::rules_of(current, fighter);
+    let max = rules.max_health.max(1);
     let share = |health: i32| slot.width * health.clamp(0, max) as f32 / max as f32;
     // Anchored on the outer edge: the bar empties towards the timer.
     let span = |length: f32| {
@@ -367,8 +371,9 @@ fn draw_bar(frame: &mut Frame, slot: &BarSlot, bar: &HealthBar, fighter: &Fighte
     let local = player == session.local_player();
     frame.label(
         format!(
-            "{}  {:>3} HP{}",
+            "{} {}  {:>3} HP{}",
             name(client, player),
+            current.config().character(player),
             fighter.health(),
             network_mark(client, session, player)
         ),
@@ -416,6 +421,18 @@ fn draw_bar(frame: &mut Frame, slot: &BarSlot, bar: &HealthBar, fighter: &Fighte
                 Align::Left
             },
         );
+    }
+
+    // A special move that has to cool down (the fireball) fills a thin gauge along the bottom
+    // of the bar while it does, and the gauge disappears once it is ready again.
+    if fighter.special_cooldown() > 0 {
+        // Only the rules start a cooldown, so they have one.
+        let cooldown = rules.special.cooldown.max(1);
+        let ready = 1.0 - fighter.special_cooldown() as f32 / cooldown as f32;
+        let length = slot.width * ready;
+        let gauge_y = slot.y + slot.height - 3.0;
+        frame.rect(slot.x, gauge_y, slot.width, 3.0, COOLING);
+        frame.rect(span(length), gauge_y, length, 3.0, super::stick::FIRE);
     }
 
     if let Some(grapple) = fighter.grapple() {

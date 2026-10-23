@@ -1,6 +1,6 @@
 //! The room logic alone: seats, readiness, sessions and the frames, event by event.
 
-use srr::game::{Input, PlayerId};
+use srr::game::{Character, Input, PlayerId};
 use srr::net::{ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
 use srr_server::room::{Action, ClientId, GRACE, MAX_AHEAD, Room, TIMING_PERIOD};
 
@@ -14,9 +14,12 @@ const JUMP_KICK: Input = Input {
     ..Input::NONE
 };
 
-/// The frame of a [`ClientMessage::Ready`].
+/// The frame of a [`ClientMessage::Ready { character: Character::Chalk }`].
 fn ready() -> Vec<u8> {
-    ClientMessage::Ready.encode()
+    ClientMessage::Ready {
+        character: Character::Chalk,
+    }
+    .encode()
 }
 
 /// The frame of a [`ClientMessage::Input`].
@@ -160,7 +163,8 @@ fn ten_players_brawl_and_the_eleventh_is_turned_away() {
             &clients,
             ServerMessage::Start {
                 session: 1,
-                players: PlayerSet::first(MAX_PLAYERS)
+                players: PlayerSet::first(MAX_PLAYERS),
+                characters: [Character::Chalk; 10],
             }
         )
     );
@@ -243,7 +247,8 @@ fn a_single_ready_player_does_not_start_alone() {
             &[1, 2],
             ServerMessage::Start {
                 session: 1,
-                players: PlayerSet::first(2)
+                players: PlayerSet::first(2),
+                characters: [Character::Chalk; 10],
             }
         )
     );
@@ -263,7 +268,8 @@ fn two_ready_players_start_a_duel() {
             &[1, 2],
             ServerMessage::Start {
                 session: 1,
-                players: PlayerSet::first(2)
+                players: PlayerSet::first(2),
+                characters: [Character::Chalk; 10],
             }
         )
     );
@@ -297,7 +303,8 @@ fn three_ready_players_start_a_free_for_all() {
             &[1, 2, 3],
             ServerMessage::Start {
                 session: 1,
-                players: PlayerSet::first(3)
+                players: PlayerSet::first(3),
+                characters: [Character::Chalk; 10],
             }
         )
     );
@@ -599,7 +606,8 @@ fn a_late_joiner_sits_out_the_running_match() {
             &[1, 2, 3],
             ServerMessage::Start {
                 session: 2,
-                players: PlayerSet::first(3)
+                players: PlayerSet::first(3),
+                characters: [Character::Chalk; 10],
             }
         )
     );
@@ -631,7 +639,7 @@ fn malformed_frames_close_the_sender() {
         &[0xFF, 0, 0],
         // An input one byte short, and a ready one byte long.
         &[3, 1, 0, 0, 0, 0, 0],
-        &[7, 0],
+        &[7, 0, 0],
         // Server messages are not client messages.
         &[5],
         &[1, 0],
@@ -767,6 +775,7 @@ fn leaving_starts_the_match_when_the_others_are_all_ready() {
         ServerMessage::Start {
             session: 1,
             players: players(&[0, 2]),
+            characters: [Character::Chalk; 10],
         },
     ));
     assert_eq!(room.leave(2), expected);
@@ -801,7 +810,8 @@ fn session_numbers_wrap_around() {
                 &[1, 2],
                 ServerMessage::Start {
                     session,
-                    players: both
+                    players: both,
+                    characters: [Character::Chalk; 10],
                 }
             )
         );
@@ -825,4 +835,31 @@ fn session_numbers_wrap_around() {
         room.receive(2, &input(0, 0, LEFT)),
         to_all(&[1, 2], frame(0, 0, both, PlayerSet::EMPTY, &[(1, LEFT)]))
     );
+}
+
+#[test]
+fn the_match_starts_with_the_characters_picked_when_getting_ready() {
+    let mut room = room_of(3);
+    let ready_as = |character| ClientMessage::Ready { character }.encode();
+    room.receive(1, &ready_as(Character::Torch));
+    // Changing one's mind while waiting: the last pick counts.
+    room.receive(2, &ready_as(Character::Zip));
+    room.receive(2, &ready_as(Character::Brick));
+    let actions = room.receive(3, &ready());
+    let mut characters = [Character::Chalk; MAX_PLAYERS];
+    characters[0] = Character::Torch;
+    characters[1] = Character::Brick;
+    let start = ServerMessage::Start {
+        session: 1,
+        players: PlayerSet::first(3),
+        characters,
+    };
+    assert!(actions.contains(&Action::Send(1, start)), "{actions:?}");
+
+    // The next match keeps the picks unless they change.
+    let mut room = room_of(10);
+    for client in 1..=10 {
+        room.receive(client, &ready_as(Character::Zip));
+    }
+    assert_eq!(room.playing(), PlayerSet::first(10));
 }

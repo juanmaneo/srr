@@ -25,21 +25,28 @@
 //!    can catch: they come after strikes (a strike interrupts them) and cannot be blocked;
 //! 6. the round timer runs and the outcome is evaluated.
 //!
+//! Every player fights as a [`Character`]: its own health, speed, jump, power and reach, and
+//! one special move (a lunge, a [`Projectile`] like the fireball, an armored strike or a low
+//! slide), on [`Input::special`].
+//!
 //! A [`Bot`] plays a fighter for a player who is alone: it reads the [`Match`] and answers with
 //! an [`Input`], deterministically (its randomness is a seeded generator). [`Rival`] lists the
 //! bots: the training [`Dummy`] and the [`Brawler`], the computer that fights back.
 
 mod bot;
+mod character;
 mod config;
 mod fighter;
 mod grapple;
 mod input;
+mod projectile;
 mod replay;
 mod roster;
 mod simulation;
 mod technique;
 
 pub use bot::{Bot, Brawler, BrawlerConfig, CloneBot, Dummy, Rival};
+pub use character::{Character, CharacterData, ProjectileData, SHOULDER_RUSH, SpecialData};
 pub use config::{
     AttackData, ConfigError, Glitch, GlitchSet, GrappleData, MatchConfig, TICKS_PER_SECOND,
     TechniqueData,
@@ -47,6 +54,7 @@ pub use config::{
 pub use fighter::{AttackPhase, Facing, Fighter, FighterState};
 pub use grapple::{Grapple, GrapplePosition, GrappleRole};
 pub use input::{Attack, Input, Key, KeyBindings, Limb, Strength};
+pub use projectile::Projectile;
 pub use replay::{Replay, ReplayError};
 pub use roster::{PlayerId, PlayerSlot, Roster, RosterError, TeamId};
 pub use simulation::{Match, Outcome, Phase, SetupError};

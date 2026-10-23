@@ -23,7 +23,7 @@ use std::collections::HashSet;
 
 use super::render::{self, Pixmap};
 use super::{Frame, Game};
-use crate::game::{Key, MatchConfig};
+use crate::game::{Character, Key, MatchConfig};
 use crate::net::Client;
 
 /// Size of the image rendered by [`Headless::screenshot`] unless changed with
@@ -108,11 +108,25 @@ impl Headless {
         sent
     }
 
-    /// Waits until the intro can be skipped, then taps Enter: the fight screen is up. Does
-    /// nothing more than one tap of Enter when the fight screen is already shown.
+    /// Waits until the intro can be skipped, then taps Enter twice: past the title and the
+    /// select screen (keeping the character chosen), the fight screen is up. Does nothing more
+    /// than taps of Enter when the fight screen is already shown.
     pub fn skip_intro(&mut self) {
         while !self.game.intro().can_skip() {
             self.press(&[]);
+        }
+        self.tap(&[Key::Enter]);
+        self.tap(&[Key::Enter]);
+    }
+
+    /// Like [`Headless::skip_intro`], picking `character` on the select screen.
+    pub fn skip_intro_as(&mut self, character: Character) {
+        while !self.game.intro().can_skip() {
+            self.press(&[]);
+        }
+        self.tap(&[Key::Enter]);
+        while self.game.select().selected() != character {
+            self.tap(&[Key::ArrowRight]);
         }
         self.tap(&[Key::Enter]);
     }

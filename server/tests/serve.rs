@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use srr::game::{Input, PlayerId, TICKS_PER_SECOND};
+use srr::game::{Character, Input, PlayerId, TICKS_PER_SECOND};
 use srr::net::{ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
 use srr_server::http::read_head;
 use srr_server::websocket::{OP_BINARY, OP_CLOSE, OP_CONTINUATION, OP_PING, OP_PONG, OP_TEXT};
@@ -176,7 +176,11 @@ fn start(clients: &mut [&mut Ws], session: u8, players: PlayerSet) {
         ws.send_ready();
     }
     for ws in clients.iter_mut() {
-        ws.expect(ServerMessage::Start { session, players });
+        ws.expect(ServerMessage::Start {
+            session,
+            players,
+            characters: [Character::Chalk; 10],
+        });
     }
 }
 
@@ -212,7 +216,9 @@ impl Ws {
     }
 
     fn send_ready(&mut self) {
-        self.send_message(ClientMessage::Ready);
+        self.send_message(ClientMessage::Ready {
+            character: Character::Chalk,
+        });
     }
 
     fn send_input(&mut self, session: u8, tick: u32, input: Input) {
@@ -498,6 +504,7 @@ fn readiness_is_shown_until_everybody_is_ready() {
     let start = ServerMessage::Start {
         session: 1,
         players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
     };
     assert_eq!(first.message(), start);
     assert_eq!(second.message(), start);

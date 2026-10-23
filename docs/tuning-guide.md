@@ -78,6 +78,36 @@ presses; the throw is 8 + 2 (+ 28) at range 65 for 14 damage, countered in the f
 12 of 30, escaped with 11. Both whiffs are the most punishable moments in the game —
 that is the point of a read-based technique.
 
+## Characters: percentages and special moves
+
+Every fighter plays a `Character` (`src/game/character.rs`). A character never touches the
+shared rules (arena, timer, blocking, the grappling ladder): `Character::rules` scales the
+fighter's own numbers by the percentages of its `CharacterData`, rounding down, and gives it
+its special move. Chalk is 100 % everywhere and keeps `MatchConfig::special`, so a match of
+Chalks is exactly the configuration.
+
+| Character | Health | Speed (walk, sidestep) | Jump | Power (strike damage) | Reach (strike range) | Grab reach (grab, techniques) |
+| --------- | -----: | ---------------------: | ---: | --------------------: | -------------------: | ----------------------------: |
+| Chalk     | 100 %  | 100 %                  | 100 % | 100 %                | 100 %                | 100 %                         |
+| Torch     | 90 %   | 95 %                   | 100 % | 95 %                 | 100 %                | 100 %                         |
+| Brick     | 130 %  | 75 %                   | 85 %  | 115 %                | 105 %                | 125 %                         |
+| Zip       | 80 %   | 135 %                  | 112 % | 85 %                 | 95 %                 | 90 %                          |
+
+The special moves (`SpecialData`) carry absolute numbers, not percentages:
+
+| Move (character)       | Start-up / active / recovery | Range | Damage | Knockback | Hit-stun | What makes it special |
+| ---------------------- | ---------------------------: | ----: | -----: | --------: | -------: | --------------------- |
+| Shoulder Rush (Chalk)  | 8 / 6 / 18                   | 60    | 12     | 48        | 20       | lunges 12 per tick until it recovers (168 units) |
+| Fireball (Torch)       | 12 / 1 / 22                  | —     | 10     | 24        | 18       | throws a shot: 11 per tick for 70 ticks, 20 wide; 75-tick cooldown |
+| Iron Palm (Brick)      | 14 / 4 / 26                  | 95    | 20     | 64        | 26       | armored start-up: hits hurt but do not stun or push |
+| Slide Tackle (Zip)     | 4 / 8 / 18                   | 70    | 9      | 30        | 28       | lunges 15 per tick; high attacks pass over it until it recovers |
+
+Balance levers, from the gentlest: a special's `cooldown` (only the fireball has one, so it
+cannot be spammed), its recovery (what a blocked or dodged special costs), then the
+percentages. The fireball's 1-tick active phase is only the throw: the shot itself lives
+70 ticks. At time-up, characters with different health compare their health *shares*, so
+Brick's bigger bar is not a time-out win in itself.
+
 ## Tuning the computer opponents
 
 The bots share the `Bot` trait (`src/game/bot.rs`); the three computers are one
@@ -98,9 +128,15 @@ The presets live next to the struct (`BrawlerConfig::default`, `::PATIENT`,
 `::AGGRESSIVE`); the rivals are listed by `Rival` and picked in the practice menu. A
 new difficulty is a new const there — no strategy code to touch.
 
+Every computer uses its character's special move: when it is ready, a decision in reach
+whose roll falls in 60–69 picks it if it reaches (the lunge counts), and a fireball
+thrower walking in throws one on 4 % of the ticks while on the enemy's line. In practice
+the rival plays the next character every round (Chalk, Torch, Brick, Zip...).
+
 ## How to try a change
 
-1. Edit the numbers in `MatchConfig::default()` (or the `BrawlerConfig` presets).
+1. Edit the numbers in `MatchConfig::default()` (or the `BrawlerConfig` presets, or a
+   character's `CharacterData` and special move in `src/game/character.rs`).
 2. `cargo run` and fight it; `cargo test --workspace` must stay green (the game tests
    carry their own frame data, they are guarding the *rules*, not this balance).
 3. Keep the contract in mind: totals are what players feel, singles are what tests

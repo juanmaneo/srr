@@ -5,8 +5,8 @@
 
 use std::collections::BTreeMap;
 
-use srr::game::{Input, PlayerId};
-use srr::net::{ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
+use srr::game::{Character, Input, PlayerId};
+use srr::net::{Characters, ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
 
 /// Identifies one WebSocket connection.
 pub type ClientId = u64;
@@ -40,6 +40,8 @@ pub enum Action {
 struct Seat {
     client: ClientId,
     ready: bool,
+    /// The character picked with the last [`ClientMessage::Ready`].
+    character: Character,
 }
 
 /// The inputs received for one tick, by seat.
@@ -50,8 +52,9 @@ type Received = [Option<Input>; MAX_PLAYERS];
 /// A new connection takes the lowest free seat (seat `i` plays fighter `i`) and is welcomed;
 /// one more is turned away. Every change of who is seated or ready is broadcast as a
 /// [`ServerMessage::Lobby`]. Once every seated player is ready, and at least two are seated, a
-/// new session starts between all of them, everybody for themselves; readiness is then used
-/// up, so the next match needs everybody ready again (which lets newcomers join it).
+/// new session starts between all of them, everybody for themselves, each with the character
+/// they picked when they got ready; readiness is then used up, so the next match needs
+/// everybody ready again (which lets newcomers join it, and everybody change character).
 ///
 /// During a session the room gathers the inputs of its players and sends everybody one
 /// [`ServerMessage::Frame`] per tick, in tick order: as soon as every input of the tick is
@@ -64,7 +67,7 @@ type Received = [Option<Input>; MAX_PLAYERS];
 /// standing still, as long as two players remain.
 ///
 /// ```
-/// use srr::game::PlayerId;
+/// use srr::game::{Character, PlayerId};
 /// use srr::net::{ClientMessage, PlayerSet, ServerMessage};
 /// use srr_server::room::{Action, Room};
 ///
@@ -73,11 +76,13 @@ type Received = [Option<Input>; MAX_PLAYERS];
 ///     room.join(client);
 /// }
 /// assert_eq!(room.seated(), PlayerSet::first(3));
-/// let ready = ClientMessage::Ready.encode();
+/// let ready = ClientMessage::Ready { character: Character::Chalk }.encode();
 /// room.receive(1, &ready);
-/// room.receive(2, &ready);
+/// room.receive(2, &ClientMessage::Ready { character: Character::Torch }.encode());
 /// let actions = room.receive(3, &ready);
-/// let start = ServerMessage::Start { session: 1, players: PlayerSet::first(3) };
+/// let mut characters = [Character::Chalk; 10];
+/// characters[1] = Character::Torch;
+/// let start = ServerMessage::Start { session: 1, players: PlayerSet::first(3), characters };
 /// assert!(actions.contains(&Action::Send(3, start)));
 /// assert_eq!(room.playing(), PlayerSet::first(3));
 /// ```
@@ -159,6 +164,7 @@ impl Room {
         self.seats[index] = Some(Seat {
             client,
             ready: false,
+            character: Character::Chalk,
         });
         let mut actions = vec![Action::Send(
             client,
@@ -193,8 +199,8 @@ impl Room {
         actions
     }
 
-    /// A binary frame from `client`. [`ClientMessage::Ready`] marks the sender ready (and may
-    /// start the next session). An input of the current session is kept for its frame, unless
+    /// A binary frame from `client`. [`ClientMessage::Ready`] marks the sender ready with its
+    /// character (and may start the next session); sent again, it changes the character. An input of the current session is kept for its frame, unless
     /// that frame already went out or the tick is more than [`MAX_AHEAD`] ticks ahead of the
     /// clock; the first input for a tick wins. Inputs of an older session or of a player
     /// outside it are dropped. A malformed frame closes the sender's connection.
@@ -204,11 +210,12 @@ impl Room {
         };
         match ClientMessage::decode(bytes) {
             Err(_) => vec![Action::Close(client)],
-            Ok(ClientMessage::Ready) => {
+            Ok(ClientMessage::Ready { character }) => {
                 // `index_of` found the seat, so it is occupied.
-                self.seats[index]
-                    .iter_mut()
-                    .for_each(|seat| seat.ready = true);
+                self.seats[index].iter_mut().for_each(|seat| {
+                    seat.ready = true;
+                    seat.character = character;
+                });
                 self.start_or_lobby()
             }
             Ok(ClientMessage::Input {
@@ -325,9 +332,14 @@ impl Room {
         for seat in self.seats.iter_mut().flatten() {
             seat.ready = false;
         }
+        let mut characters: Characters = [Character::Chalk; MAX_PLAYERS];
+        for (slot, seat) in characters.iter_mut().zip(&self.seats) {
+            *slot = seat.map_or(Character::Chalk, |seat| seat.character);
+        }
         let start = ServerMessage::Start {
             session: self.session,
             players: seated,
+            characters,
         };
         self.clients()
             .map(|(_, client)| Action::Send(client, start))

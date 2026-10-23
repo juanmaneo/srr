@@ -34,5 +34,7 @@ mod rollback;
 
 pub use client::{Client, ClientError, MAX_INPUT_DELAY, Status, TARGET_LEAD};
 pub use players::{MAX_PLAYERS, PlayerSet};
-pub use protocol::{ClientMessage, DecodeError, FrameInputs, ServerMessage};
+pub use protocol::{
+    Characters, ClientMessage, DecodeError, FrameInputs, ServerMessage, character_at,
+};
 pub use rollback::{INPUT_DELAY, LAG_MEMORY, MAX_ROLLBACK, Session, SessionError};

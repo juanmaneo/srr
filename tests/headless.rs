@@ -455,10 +455,10 @@ fn skipping_the_intro_shows_the_versus_hud() {
         "{text}"
     );
 
-    // Skipping again only taps Enter (meaningless during the round).
+    // Skipping again only taps Enter twice (meaningless during the round).
     let ticks = game.ticks();
     game.skip_intro();
-    assert_eq!(game.ticks(), ticks + 2);
+    assert_eq!(game.ticks(), ticks + 4);
     assert_eq!(game.game().screen(), Screen::Fight);
 }
 

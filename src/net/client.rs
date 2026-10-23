@@ -7,19 +7,46 @@
 //! A local client plays without any server, as player 1 against player 2, a [`Bot`] chosen
 //! among the [`Rival`]s: the idle training dummy ([`Client::practice`]) or the computer
 //! ([`Client::versus`]), which can take over from each other in the middle of a round
-//! ([`Client::set_rival`]).
+//! ([`Client::set_rival`]). The rival plays another [`Character`] every round.
+//!
+//! The player picks their own [`Character`] with [`Client::set_character`]: online it is sent
+//! with [`Client::ready`] and takes effect with the next match the server starts; alone the
+//! round restarts at once with it.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::fmt;
 
-use super::players::PlayerSet;
-use super::protocol::{ClientMessage, DecodeError, ServerMessage};
+use super::players::{MAX_PLAYERS, PlayerSet};
+use super::protocol::{Characters, ClientMessage, DecodeError, ServerMessage};
 use super::rollback::{MAX_ROLLBACK, Session, SessionError};
-use crate::game::{Bot, Input, MatchConfig, PlayerId, Rival, TICKS_PER_SECOND};
+use crate::game::{Bot, Character, Input, MatchConfig, PlayerId, Rival, TICKS_PER_SECOND};
 
 /// The fighter played by the bot of a local client.
 const RIVAL: PlayerId = PlayerId(1);
+
+/// The character of the rival of a local client in round `id`: each round another one, in
+/// the order of [`Character::ALL`].
+///
+/// ```
+/// use srr::game::Character;
+/// use srr::net::Client;
+///
+/// assert_eq!(Client::rival_character(0), Character::Chalk);
+/// assert_eq!(Client::rival_character(1), Character::Torch);
+/// assert_eq!(Client::rival_character(4), Character::Chalk);
+/// ```
+fn rival_character(id: u8) -> Character {
+    Character::ALL[usize::from(id) % Character::ALL.len()]
+}
+
+/// The characters of a local round numbered `id`: the player's pick, and the rival's.
+fn local_characters(character: Character, id: u8) -> Characters {
+    let mut characters = [Character::Chalk; MAX_PLAYERS];
+    characters[0] = character;
+    characters[usize::from(RIVAL.0)] = rival_character(id);
+    characters
+}
 
 /// The margin, in ticks, an online client keeps between its inputs reaching the server and
 /// the server giving up on them (see [`ServerMessage::Timing`]). The server reports the worst
@@ -93,7 +120,7 @@ enum Mode {
 /// One browser's view of the online match.
 ///
 /// ```
-/// use srr::game::{Input, MatchConfig, PlayerId};
+/// use srr::game::{Character, Input, MatchConfig, PlayerId};
 /// use srr::net::{Client, PlayerSet, ServerMessage, Status, INPUT_DELAY};
 ///
 /// let mut client = Client::online(MatchConfig::default(), INPUT_DELAY);
@@ -101,7 +128,8 @@ enum Mode {
 /// assert_eq!(client.status(), Status::Lobby);
 /// assert!(client.ready().is_some(), "Enter in the lobby says we are ready");
 ///
-/// client.receive(&ServerMessage::Start { session: 1, players: PlayerSet::first(3) }.encode());
+/// let characters = [Character::Chalk; 10];
+/// client.receive(&ServerMessage::Start { session: 1, players: PlayerSet::first(3), characters }.encode());
 /// assert_eq!(client.status(), Status::Playing);
 /// let to_send = client.tick(Input::NONE);
 /// assert_eq!(to_send.len(), 1 + INPUT_DELAY as usize, "the first inputs go to the server");
@@ -128,6 +156,8 @@ pub struct Client {
     ready: PlayerSet,
     left: Option<PlayerId>,
     departed: PlayerSet,
+    /// The character the local player picked.
+    character: Character,
 }
 
 impl Client {
@@ -148,6 +178,7 @@ impl Client {
             ready: PlayerSet::EMPTY,
             left: None,
             departed: PlayerSet::EMPTY,
+            character: Character::Chalk,
         }
     }
 
@@ -170,11 +201,62 @@ impl Client {
         client.handle(ServerMessage::Welcome {
             player: PlayerId(0),
         });
+        let characters = local_characters(client.character, 0);
         client.handle(ServerMessage::Start {
             session: 0,
             players: PlayerSet::first(2),
+            characters,
         });
         client
+    }
+
+    /// The character of the rival of a local client in round `id` (see the
+    /// [module documentation](self)).
+    pub fn rival_character(id: u8) -> Character {
+        rival_character(id)
+    }
+
+    /// The character the local player picked ([`Character::Chalk`] until changed).
+    pub fn character(&self) -> Character {
+        self.character
+    }
+
+    /// Picks the local player's character. Alone, the round restarts at once with it (the
+    /// round wins are kept, and the rival keeps its character). Online it is used for the next match: when the player already
+    /// said they are ready in the room, this returns the frame telling the server the new
+    /// pick (otherwise [`Client::ready`] sends it).
+    ///
+    /// ```
+    /// use srr::game::{Character, MatchConfig, PlayerId};
+    /// use srr::net::Client;
+    ///
+    /// let mut client = Client::practice(MatchConfig::default());
+    /// assert_eq!(client.set_character(Character::Torch), None);
+    /// let config = client.session().unwrap().current().config();
+    /// assert_eq!(config.character(PlayerId(0)), Character::Torch);
+    /// ```
+    pub fn set_character(&mut self, character: Character) -> Option<Vec<u8>> {
+        if character == self.character {
+            return None;
+        }
+        self.character = character;
+        if let Mode::Local { rival, bot } = &mut self.mode {
+            let session = self
+                .session
+                .as_mut()
+                .expect("a local client always has a match");
+            let id = session.id().wrapping_add(1);
+            let mut characters = session.current().config().characters;
+            characters[0] = character;
+            *session = session.next_with(id, characters);
+            *bot = rival.spawn(RIVAL, u64::from(id));
+            return None;
+        }
+        let waiting = self.status == Status::Lobby
+            && self
+                .player
+                .is_some_and(|player| self.ready.contains(player));
+        waiting.then(|| ClientMessage::Ready { character }.encode())
     }
 
     /// Where the connection is.
@@ -298,7 +380,11 @@ impl Client {
                 self.player = Some(player);
                 self.status = Status::Lobby;
             }
-            ServerMessage::Start { session, players } => self.start(session, players),
+            ServerMessage::Start {
+                session,
+                players,
+                characters,
+            } => self.start(session, players, characters),
             ServerMessage::Frame {
                 session,
                 tick,
@@ -434,23 +520,27 @@ impl Client {
     /// with a fresh bot of the same [`Rival`] (seeded by the round).
     pub fn ready(&mut self) -> Option<Vec<u8>> {
         let finished = self.session.as_ref().is_some_and(Session::is_finished);
+        let ready = ClientMessage::Ready {
+            character: self.character,
+        };
         match &mut self.mode {
             Mode::Local { rival, bot } => {
                 if let Some(session) = self.session.as_mut().filter(|_| finished) {
-                    *session = session.next(session.id().wrapping_add(1));
-                    *bot = rival.spawn(RIVAL, u64::from(session.id()));
+                    let id = session.id().wrapping_add(1);
+                    *session = session.next_with(id, local_characters(self.character, id));
+                    *bot = rival.spawn(RIVAL, u64::from(id));
                 }
                 None
             }
             Mode::Online => match self.status {
-                Status::Lobby => Some(ClientMessage::Ready.encode()),
-                Status::Playing if finished => Some(ClientMessage::Ready.encode()),
+                Status::Lobby => Some(ready.encode()),
+                Status::Playing if finished => Some(ready.encode()),
                 _ => None,
             },
         }
     }
 
-    fn start(&mut self, id: u8, players: PlayerSet) {
+    fn start(&mut self, id: u8, players: PlayerSet, characters: Characters) {
         let Some(player) = self.player else {
             self.fail(ClientError::StartBeforeWelcome);
             return;
@@ -459,10 +549,14 @@ impl Client {
             .session
             .as_ref()
             .filter(|old| old.players() == players && old.local_player() == player)
-            .map(|old| old.next(id));
+            .map(|old| old.next_with(id, characters));
+        let config = MatchConfig {
+            characters,
+            ..self.config.clone()
+        };
         let created = match rematch {
             Some(session) => Ok(session),
-            None => Session::new(player, players, id, self.config.clone(), self.delay),
+            None => Session::new(player, players, id, config, self.delay),
         };
         match created {
             Ok(session) => {
