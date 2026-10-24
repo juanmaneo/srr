@@ -17,7 +17,8 @@ use bevy::sprite::Anchor;
 use bevy::window::PrimaryWindow;
 
 use super::{Engine, WEB_CANVAS, WINDOW_TITLE};
-use crate::front::{Align, Frame, Rgba, Viewport};
+use crate::front::gamepad::PadButton;
+use crate::front::{Align, Frame, GamepadState, Rgba, Viewport};
 use crate::game::{Key, TICKS_PER_SECOND};
 use crate::platform::Shell;
 
@@ -47,7 +48,7 @@ impl Engine for Bevy {
             .init_resource::<TouchTaps>()
             .add_systems(Startup, spawn_camera)
             .add_systems(FixedUpdate, tick)
-            .add_systems(Update, (latch_taps, draw))
+            .add_systems(Update, (latch_taps, latch_pad_taps, draw))
             .run();
     }
 }
@@ -69,6 +70,10 @@ struct Taps(HashSet<Key>);
 /// than a tick still reaches the game.
 #[derive(Resource, Default)]
 struct TouchTaps(Vec<Vec2>);
+
+/// Pad buttons pressed since the last tick: a tap shorter than a tick still reaches the game.
+#[derive(Resource, Default)]
+struct PadTaps(HashSet<PadButton>);
 
 #[derive(Component)]
 struct RectNode;
@@ -149,16 +154,69 @@ fn latch_taps(
         .extend(touches.iter_just_pressed().map(|touch| touch.position()));
 }
 
+/// The Bevy button of a standard pad button.
+fn pad_button(button: PadButton) -> GamepadButton {
+    match button {
+        PadButton::South => GamepadButton::South,
+        PadButton::East => GamepadButton::East,
+        PadButton::North => GamepadButton::North,
+        PadButton::West => GamepadButton::West,
+        PadButton::LeftTrigger => GamepadButton::LeftTrigger,
+        PadButton::LeftTrigger2 => GamepadButton::LeftTrigger2,
+        PadButton::RightTrigger => GamepadButton::RightTrigger,
+        PadButton::RightTrigger2 => GamepadButton::RightTrigger2,
+        PadButton::Select => GamepadButton::Select,
+        PadButton::Start => GamepadButton::Start,
+        PadButton::Mode => GamepadButton::Mode,
+        PadButton::LeftThumb => GamepadButton::LeftThumb,
+        PadButton::RightThumb => GamepadButton::RightThumb,
+        PadButton::DPadUp => GamepadButton::DPadUp,
+        PadButton::DPadDown => GamepadButton::DPadDown,
+        PadButton::DPadLeft => GamepadButton::DPadLeft,
+        PadButton::DPadRight => GamepadButton::DPadRight,
+    }
+}
+
+fn latch_pad_taps(pads: Query<&Gamepad>, mut taps: ResMut<PadTaps>) {
+    for pad in &pads {
+        taps.0.extend(
+            PadButton::ALL
+                .iter()
+                .copied()
+                .filter(|&button| pad.just_pressed(pad_button(button))),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn tick(
     keyboard: Res<ButtonInput<KeyCode>>,
     touches: Res<Touches>,
+    pads: Query<&Gamepad>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut taps: ResMut<Taps>,
     mut touch_taps: ResMut<TouchTaps>,
+    mut pad_taps: ResMut<PadTaps>,
     mut shell: NonSendMut<ShellResource>,
 ) {
     let mut pressed: HashSet<Key> = keyboard.get_pressed().copied().filter_map(key).collect();
     pressed.extend(taps.0.drain());
+    let mut gamepads = GamepadState::new();
+    let taps = pad_taps.0.drain();
+    for pad in &pads {
+        let mut state = GamepadState::new();
+        for button in PadButton::ALL {
+            if pad.pressed(pad_button(button)) {
+                state.press(button);
+            }
+        }
+        let stick = pad.left_stick();
+        state.set_stick(stick.x, stick.y);
+        gamepads = gamepads.merge(state);
+    }
+    for button in taps {
+        gamepads.press(button);
+    }
     let viewport = windows
         .get_single()
         .map_or(Viewport::fit(0.0, 0.0), |window| {
@@ -170,7 +228,7 @@ fn tick(
         .chain(touch_taps.0.drain(..))
         .map(|position| viewport.to_virtual(position.x, position.y))
         .collect();
-    shell.0.tick(&pressed, &fingers);
+    shell.0.tick(&pressed, &fingers, gamepads);
 }
 
 fn color(rgba: Rgba) -> Color {

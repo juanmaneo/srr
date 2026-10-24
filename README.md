@@ -157,6 +157,35 @@ layout, so phones and keyboards can play in the same room. Added to the home scr
 opens full screen like an app. The controls are drawn by the game itself (`src/front/touch.rs`),
 like every other screen, and tested headlessly.
 
+### Playing with a PS4 / PS5 controller
+
+Plug in a **DualShock 4** (PS4) or a **DualSense** (PS5) — or pair it over Bluetooth — and it
+just works, natively and in the browser (the browser's Gamepad API: press any button once so
+the page sees the pad). Any standard pad does: an Xbox controller maps the same way, with
+A B X Y instead of the shapes. The mapping (`src/front/gamepad.rs`) follows the on-screen
+controls of a phone:
+
+| Action                     | PS4 / PS5 (or Xbox) pad                    |
+| -------------------------- | ------------------------------------------ |
+| Walk left / right           | left stick or D-pad `◀` / `▶` (Xbox: `◀` / `▶`) |
+| Jump                       | left stick or D-pad `▲`                    |
+| Crouch / turn around       | left stick or D-pad `▼` (diagonals turn)    |
+| Low / medium / high punch  | `Square` / `Triangle` / `R1` (Xbox: `X` / `Y` / `RB`) |
+| Low / medium / high kick   | `Cross` / `Circle` / `R2` (Xbox: `A` / `B` / `RT`) |
+| Grab / advance a grapple   | `L1` (Xbox: `LB`)                           |
+| Sidestep to the wall / the street | `L3` / `R3` (the stick clicks)        |
+| Special move               | `L2` (Xbox: `LT`)                           |
+| Judo sweep / throw         | `Triangle` + `R2` / `Circle` + `R2`         |
+| Confirm / ready            | `Cross` (Xbox: `A`)                          |
+| Back / leave a practice fight | `Circle` (Xbox: `B`); `Share` on the fight screen |
+| Pause / resume             | `Options` (Xbox: `Menu`)                    |
+| Controls page (title screen) / practice | `Triangle` / `Square` on the title (Xbox: `Y` / `X`) |
+
+A thumb resting on the stick presses nothing (a worn stick does not drift the fighter
+around), every pad connected steers the same fighter, and the buttons press the keys of your
+layout, so a pad and a keyboard can play in the same room. `Tab` (switching the view) stays on
+the keyboard; the PS button belongs to the console / the browser / the OS.
+
 ### Characters
 
 Every player picks a character on the **select screen** that follows the title (`Left` /

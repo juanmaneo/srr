@@ -51,7 +51,7 @@ use fyrox::plugin::error::GameResult;
 use fyrox::plugin::{Plugin, PluginContext};
 use fyrox::window::WindowAttributes;
 
-use crate::front::{Frame, Label, Rect, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH, Viewport};
+use crate::front::{Frame, GamepadState, Label, Rect, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH, Viewport};
 use crate::game::{Key, TICKS_PER_SECOND};
 use crate::platform::Shell;
 
@@ -166,7 +166,7 @@ impl Plugin for Game {
         let mut ticks = 0;
         while self.lag >= TICK {
             self.lag -= TICK;
-            self.shell.tick(self.keys.held(), &[]);
+            self.shell.tick(self.keys.held(), &[], GamepadState::new());
             self.keys.ticked();
             ticks += 1;
             if ticks == MAX_CATCH_UP_TICKS {

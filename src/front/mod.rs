@@ -55,6 +55,7 @@ use space::Camera;
 pub mod arena;
 pub mod ascii;
 pub mod controls;
+pub mod gamepad;
 pub mod headless;
 pub mod hud;
 pub mod intro;
@@ -67,6 +68,7 @@ pub mod touch;
 pub mod tps;
 
 pub use controls::{ControlsPage, PAUSE_KEY, Practice};
+pub use gamepad::{GamepadState, PadButton};
 pub use headless::Headless;
 pub use hud::HealthBar;
 pub use intro::Intro;
@@ -117,6 +119,10 @@ const SOUND_OTHER: Rgba = Rgba::hex(0x8a8098);
 pub const CONTROLS_HINT: &str = "C: controls / keyboard layout   T: practice";
 const CONTROLS_HINT_X: f32 = 24.0;
 const CONTROLS_HINT_COLOR: Rgba = Rgba::hex(0xd8d0e8);
+
+/// The key opening the controls page from the intro (see [`crate::front::controls`]). It
+/// cannot be bound to an action.
+pub const CONTROLS_KEY: Key = Key::C;
 
 /// The key going practising: on the intro it opens the fight screen and, online, starts a
 /// practice fight; on the fight screen it starts one between online matches, and switches the
@@ -236,6 +242,8 @@ pub struct Game {
     touches: Vec<(f32, f32)>,
     /// Whether the screen was ever touched: the touch controls are shown from then on.
     touch_mode: bool,
+    /// The buttons held on the gamepads, and where their left sticks lean (merged).
+    gamepads: gamepad::GamepadState,
 }
 
 impl Game {
@@ -259,6 +267,7 @@ impl Game {
             practise_after_select: false,
             touches: Vec::new(),
             touch_mode: false,
+            gamepads: gamepad::GamepadState::new(),
             client,
         };
         game.music.set_mood(Mood::Intro);
@@ -355,6 +364,13 @@ impl Game {
         self.touch_mode
     }
 
+    /// Tells the game what is held on the gamepads connected to this machine (every pad
+    /// steers the same fighter, see [`GamepadState::merge`]); the next [`Game::tick`] presses
+    /// the keys those buttons and sticks stand for (see [`gamepad`]).
+    pub fn set_gamepad(&mut self, state: GamepadState) {
+        self.gamepads = state;
+    }
+
     /// The touch controls of the screen shown.
     pub fn touch_pad(&self) -> TouchPad {
         TouchPad::for_screen(self.screen)
@@ -446,9 +462,10 @@ impl Game {
     /// fight, a fresh Enter tells [`Client::ready`], and the keys become this tick's [`Input`]
     /// through the [bindings](Game::bindings) for [`Client::tick`].
     pub fn tick(&mut self, pressed: &HashSet<Key>) -> Vec<Vec<u8>> {
-        // The fingers press keys like the keyboard does.
+        // The fingers and the pads press keys like the keyboard does.
         let mut pressed = pressed.clone();
         pressed.extend(self.touch_pad().keys(&self.touches, &self.bindings));
+        pressed.extend(self.gamepads.keys(&self.bindings, self.screen));
         let pressed = &pressed;
         let mut fresh: Vec<Key> = pressed.difference(&self.held).copied().collect();
         fresh.sort_unstable();
@@ -456,7 +473,7 @@ impl Game {
         match self.screen {
             Screen::Intro => {
                 self.intro.tick();
-                if fresh.contains(&Key::C) {
+                if fresh.contains(&CONTROLS_KEY) {
                     self.controls = self.controls_page(ControlsPage::new());
                     self.screen = Screen::Controls;
                 } else if self.intro.can_skip() && fresh.contains(&PRACTICE_KEY) {

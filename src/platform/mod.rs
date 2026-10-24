@@ -16,7 +16,7 @@
 
 use std::collections::HashSet;
 
-use crate::front::{Frame, Game};
+use crate::front::{Frame, Game, GamepadState};
 use crate::game::{Key, MatchConfig};
 use crate::net::Client;
 
@@ -91,12 +91,13 @@ impl Shell {
         }
     }
 
-    /// One fixed tick: reads the network, advances the game with the keys held and the
-    /// fingers on the screen (virtual screen coordinates, see
-    /// [`Viewport::to_virtual`](crate::front::Viewport::to_virtual)) and sends this tick's
-    /// input.
-    pub fn tick(&mut self, pressed: &HashSet<Key>, touches: &[(f32, f32)]) {
+    /// One fixed tick: reads the network, advances the game with the keys held, the fingers
+    /// on the screen (virtual screen coordinates, see
+    /// [`Viewport::to_virtual`](crate::front::Viewport::to_virtual)) and the state of the
+    /// gamepads, and sends this tick's input.
+    pub fn tick(&mut self, pressed: &HashSet<Key>, touches: &[(f32, f32)], gamepads: GamepadState) {
         self.game.set_touches(touches);
+        self.game.set_gamepad(gamepads);
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(connection) = &self.connection {
