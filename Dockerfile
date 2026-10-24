@@ -31,7 +31,7 @@ FROM docker.io/library/rust:${DEBIAN_RELEASE} AS toolchain
 
 # The native build of the game (run by `cargo test --workspace`) plays the music through ALSA.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libasound2-dev pkg-config \
+ && apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work

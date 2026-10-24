@@ -40,9 +40,10 @@ cpal = { version = "=0.17.1", optional = true }
 # Alternative engine. Pinned like Bevy.
 fyrox = { version = "=1.0.1", optional = true }
 # Pinned: Bevy breaks its API with every minor release. Only the features the prototype needs
-# are enabled, which also avoids native audio / gamepad libraries (alsa, udev) at build time.
+# are enabled, plus `bevy_gilrs`: the gamepads (a PS4 / PS5 controller, see `src/front/gamepad.rs`),
+# which needs libudev natively but works in the browser as it is.
 # For faster native iteration use `cargo run --features bevy/dynamic_linking` (never for WASM).
-bevy = { version = "0.15", optional = true, default-features = false, features = ["bevy_asset", "bevy_core_pipeline", "bevy_render", "bevy_sprite", "bevy_text", "bevy_ui", "bevy_winit", "default_font", "multi_threaded", "webgl2", "x11"] }
+bevy = { version = "0.15", optional = true, default-features = false, features = ["bevy_asset", "bevy_core_pipeline", "bevy_gilrs", "bevy_render", "bevy_sprite", "bevy_text", "bevy_ui", "bevy_winit", "default_font", "multi_threaded", "webgl2", "x11"] }
 
 # `ahash` (pulled in by Bevy) uses getrandom 0.3, which refuses to compile for the browser unless
 # its JavaScript backend is selected. Since 0.3.4 the `wasm_js` feature alone is enough (no
