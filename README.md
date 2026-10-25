@@ -50,10 +50,10 @@ rivals; see
 
 Each player plays on their own keyboard and can pick their own layout on the controls page
 (press `C` on the title screen, or `P` to pause during a fight, see
-[Keyboard layout](#keyboard-layout)). The default (**Standard**) puts the attacks on the
-numeric keypad; the **WASD** preset is for keyboards without one.
+[Keyboard layout](#keyboard-layout)). The default (**WASD**) puts the attacks on the letters;
+the **Standard** preset moves them onto the arrows and the numeric keypad.
 
-| Action                | Standard (default) | WASD preset |
+| Action                | WASD (default) | Standard preset |
 | --------------------- | ------------------ | ----------- |
 | Walk left / right     | `←` / `→`          | `A` / `D`   |
 | Sidestep to the wall / the street | keypad `7` / `2` | `Q` / `E` |
@@ -230,8 +230,8 @@ the fight **pauses** and the same page opens as the pause menu (titled PAUSED), 
 can be changed whenever you want, not only before playing.
 
 * `↑` / `↓` choose a row (the arrows always drive this page, whatever the layout);
-* on the **Preset** row, `←` / `→` (or `Enter`) switch between **Standard (arrows + keypad)**
-  and **WASD (letters + space)**;
+* on the **Preset** row, `←` / `→` (or `Enter`) switch between **WASD (letters + space)**
+  (the default) and **Standard (arrows + keypad)**;
 * on an action row, `Enter` then the new key remaps it (`Esc` cancels). A key already used by
   another action swaps with it, so a key never does two things. `Enter`, `Esc`, `P`, `Tab` and
   `T` cannot be bound (they drive the menus, the readiness for the next match, the pause, the

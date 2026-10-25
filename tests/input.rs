@@ -369,8 +369,8 @@ fn bits_above_the_thirteenth_are_ignored() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn the_standard_layout_is_the_default() {
-    assert_eq!(KeyBindings::default(), KeyBindings::STANDARD);
+fn the_wasd_layout_is_the_default() {
+    assert_eq!(KeyBindings::default(), KeyBindings::WASD);
 }
 
 #[test]
@@ -709,12 +709,12 @@ fn the_wasd_preset_puts_the_layout_on_the_letters() {
 }
 
 #[test]
-fn the_presets_are_standard_then_wasd() {
+fn the_presets_are_wasd_then_standard() {
     assert_eq!(
         KeyBindings::PRESETS,
         [
-            ("Standard (arrows + keypad)", KeyBindings::STANDARD),
             ("WASD (letters + space)", KeyBindings::WASD),
+            ("Standard (arrows + keypad)", KeyBindings::STANDARD),
         ]
     );
     assert_eq!(KeyBindings::PRESETS[0].1, KeyBindings::default());

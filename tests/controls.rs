@@ -220,17 +220,17 @@ fn only_the_first_fresh_key_counts() {
 #[test]
 fn the_preset_row_cycles_through_the_presets() {
     let mut page = ControlsPage::new();
-    let mut bindings = KeyBindings::STANDARD;
+    let mut bindings = KeyBindings::WASD;
     press(&mut page, &mut bindings, Key::ArrowRight);
-    assert_eq!(bindings, KeyBindings::WASD);
-    press(&mut page, &mut bindings, Key::ArrowRight);
-    assert_eq!(bindings, KeyBindings::STANDARD, "wraps");
-    press(&mut page, &mut bindings, Key::Enter);
-    assert_eq!(bindings, KeyBindings::WASD, "Enter is next too");
-    press(&mut page, &mut bindings, Key::ArrowLeft);
     assert_eq!(bindings, KeyBindings::STANDARD);
+    press(&mut page, &mut bindings, Key::ArrowRight);
+    assert_eq!(bindings, KeyBindings::WASD, "wraps");
+    press(&mut page, &mut bindings, Key::Enter);
+    assert_eq!(bindings, KeyBindings::STANDARD, "Enter is next too");
     press(&mut page, &mut bindings, Key::ArrowLeft);
-    assert_eq!(bindings, KeyBindings::WASD, "wraps backwards");
+    assert_eq!(bindings, KeyBindings::WASD);
+    press(&mut page, &mut bindings, Key::ArrowLeft);
+    assert_eq!(bindings, KeyBindings::STANDARD, "wraps backwards");
     assert!(!page.is_waiting());
 }
 
@@ -238,10 +238,10 @@ fn the_preset_row_cycles_through_the_presets() {
 fn a_custom_layout_goes_back_to_the_first_preset() {
     for key in [Key::ArrowRight, Key::ArrowLeft, Key::Enter] {
         let mut page = ControlsPage::new();
-        let mut bindings = KeyBindings::WASD;
+        let mut bindings = KeyBindings::STANDARD;
         bindings.bind(2, Key::Z);
         press(&mut page, &mut bindings, key);
-        assert_eq!(bindings, KeyBindings::STANDARD, "{key:?}");
+        assert_eq!(bindings, KeyBindings::WASD, "{key:?}");
     }
 }
 

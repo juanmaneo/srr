@@ -259,7 +259,7 @@ impl Game {
             bars: Vec::new(),
             fight_ticks: 0,
             sound: SoundState::Waiting,
-            bindings: KeyBindings::STANDARD,
+            bindings: KeyBindings::WASD,
             controls: ControlsPage::new(),
             view: View::Side,
             camera: tps::overview(),
@@ -391,7 +391,7 @@ impl Game {
         self.sound = sound;
     }
 
-    /// The keyboard layout played with ([`KeyBindings::STANDARD`] until changed).
+    /// The keyboard layout played with ([`KeyBindings::WASD`] until changed).
     pub fn bindings(&self) -> &KeyBindings {
         &self.bindings
     }

@@ -476,15 +476,14 @@ impl Key {
 
 /// The keys of the local player.
 ///
-/// [`KeyBindings::STANDARD`] (also the `Default`) is the game's layout: arrows to move and
-/// jump, the down arrow to crouch (down + left / right to turn around), keypad `1`/`5`/`6`
-/// for the low/medium/high punch, keypad `4`/`8`/`9` for the low/medium/high kick, keypad
-/// `0` to grab, keypad `7` / `2` to sidestep towards the wall / the street (the upper and
-/// the lower row, like the wall above the street in the side view) and keypad `3` for the
-/// character's special move. The judo techniques are two keys pressed together: `5` + `9`
-/// and `8` + `9` (see [`Technique`](super::Technique)).
+/// [`KeyBindings::WASD`] (also the `Default`) is the game's layout: `A` `S` `D` `W` to move,
+/// jump and crouch (`S` + `A` / `D` to turn around), `B` `H` `J` for the low/medium/high
+/// punch, `G` `Y` `U` for the low/medium/high kick, `Space` to grab, `Q` / `E` to sidestep
+/// towards the wall / the street and `F` for the character's special move. The judo
+/// techniques are two keys pressed together: `H` + `U` and `Y` + `U` (see
+/// [`Technique`](super::Technique)).
 ///
-/// [`KeyBindings::WASD`] is the same layout for keyboards without a keypad, and
+/// [`KeyBindings::STANDARD`] is the same layout on the arrows and the numeric keypad, and
 /// [`KeyBindings::bind`] remaps one action at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyBindings {
@@ -561,8 +560,8 @@ impl KeyBindings {
 
     /// The presets offered on the controls page, with their names; the first is the default.
     pub const PRESETS: [(&'static str, KeyBindings); 2] = [
-        ("Standard (arrows + keypad)", KeyBindings::STANDARD),
         ("WASD (letters + space)", KeyBindings::WASD),
+        ("Standard (arrows + keypad)", KeyBindings::STANDARD),
     ];
 
     /// What each key of [`KeyBindings::keys`] does, in the same order.
@@ -736,6 +735,6 @@ impl KeyBindings {
 
 impl Default for KeyBindings {
     fn default() -> Self {
-        KeyBindings::STANDARD
+        KeyBindings::WASD
     }
 }

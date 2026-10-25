@@ -503,7 +503,7 @@ fn hits_empty_the_health_bar_on_the_screenshot() {
     fight_the_dummy(&mut game);
     game.idle(MatchConfig::default().countdown_ticks + 1);
     while x_of(&game, 1) - x_of(&game, 0) > 60 {
-        game.press(&[Key::ArrowRight]);
+        game.press(&[Key::D]);
     }
 
     // The dummy's bar is on the right and empties towards the timer, i.e. from its left end.
@@ -514,7 +514,7 @@ fn hits_empty_the_health_bar_on_the_screenshot() {
     );
     let full = game.screenshot().pixel(probe.0, probe.1);
 
-    game.tap(&[Key::Numpad6]);
+    game.tap(&[Key::J]);
     game.idle(40);
     assert!(health_of(&game, 1) < 100, "the high punch connected");
     let hit = game.screenshot().pixel(probe.0, probe.1);
@@ -531,9 +531,9 @@ fn an_ippon_seoi_nage_shows_up_on_the_hud() {
     fight_the_dummy(&mut game);
     game.idle(MatchConfig::default().countdown_ticks + 1);
     while x_of(&game, 1) - x_of(&game, 0) > 55 {
-        game.press(&[Key::ArrowRight]);
+        game.press(&[Key::D]);
     }
-    game.press(&[Key::Numpad8, Key::Numpad9]);
+    game.press(&[Key::Y, Key::U]);
     game.idle(12);
     assert_eq!(
         fighter_state(&game, 0),
@@ -542,7 +542,7 @@ fn an_ippon_seoi_nage_shows_up_on_the_hud() {
     let text = game.text_snapshot(160, 45);
     assert!(text.contains("[IPPON-SEOI-NAGE]"), "{text}");
     assert!(
-        text.contains("COUNTER 8+9"),
+        text.contains("COUNTER Y+U"),
         "the dummy is told how to counter: {text}"
     );
 }

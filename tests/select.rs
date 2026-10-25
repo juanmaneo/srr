@@ -215,7 +215,7 @@ fn the_character_row_of_the_pause_menu_restarts_a_practice_round_with_the_new_on
     assert_eq!(game.game().screen(), Screen::Fight);
     // After the countdown, the special key throws a fireball.
     game.hold(&[], 120);
-    game.hold(&[Key::Numpad3], 13);
+    game.hold(&[Key::F], 13);
     assert_eq!(game.game().shown_match().unwrap().projectiles().len(), 1);
 }
 
@@ -363,7 +363,7 @@ fn the_fireball_gauge_refills_under_the_bar() {
 fn the_fireball_flies_in_both_views() {
     let mut game = practising_as(Character::Torch);
     game.hold(&[], 120);
-    game.hold(&[Key::Numpad3], 13);
+    game.hold(&[Key::F], 13);
     assert_eq!(game.game().shown_match().unwrap().projectiles().len(), 1);
     assert!(
         rects_of(&game.game().frame(), Rgba::hex(0xfff6d8)) > 0,

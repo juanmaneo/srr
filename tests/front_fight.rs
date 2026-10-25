@@ -2347,7 +2347,7 @@ fn c_opens_the_controls_page_and_escape_comes_back_to_the_intro() {
     let frame = game.frame();
     assert_eq!(frame.background, intro::BACKGROUND);
     assert!(find_label(&frame, "CONTROLS").is_some());
-    assert!(find_label(&frame, "< Standard (arrows + keypad) >").is_some());
+    assert!(find_label(&frame, "< WASD (letters + space) >").is_some());
     let ticks = game.intro().ticks();
     for _ in 0..10 {
         game.tick(&keys(&[Key::C]));
@@ -2380,10 +2380,10 @@ fn the_controls_page_opens_on_the_preset_row_every_time() {
 #[test]
 fn the_layout_chosen_on_the_controls_page_drives_the_fight() {
     let mut game = online_game(cfg(), 0);
-    assert_eq!(game.bindings(), &KeyBindings::STANDARD);
+    assert_eq!(game.bindings(), &KeyBindings::WASD);
     game.tick(&keys(&[Key::C]));
     game.tick(&keys(&[Key::ArrowRight]));
-    assert_eq!(game.bindings(), &KeyBindings::WASD);
+    assert_eq!(game.bindings(), &KeyBindings::STANDARD);
     // Remap the grab to K: down to "Grab", Enter, K.
     for _ in 0..10 {
         game.tick(&keys(&[Key::ArrowDown]));
@@ -2399,13 +2399,13 @@ fn the_layout_chosen_on_the_controls_page_drives_the_fight() {
     assert_eq!(game.screen(), Screen::Intro);
 
     skip_intro(&mut game);
-    fight_tick(&mut game, &[Key::ArrowDown], idle());
+    fight_tick(&mut game, &[Key::S], idle());
     assert_eq!(
         state(game.client(), 0),
         FighterState::Idle,
-        "the arrows do nothing"
+        "the WASD keys do nothing"
     );
-    fight_tick(&mut game, &[Key::S], idle());
+    fight_tick(&mut game, &[Key::ArrowDown], idle());
     assert_eq!(state(game.client(), 0), FighterState::Crouching);
     fight_tick(&mut game, &[Key::K], idle());
     assert_eq!(
@@ -2482,7 +2482,7 @@ fn p_pauses_a_practice_fight_and_opens_the_pause_menu() {
     assert!(!game.is_paused());
     assert_eq!(session_tick(&game), 1, "the leaving tick is not played");
     assert_eq!(game.music().mood(), Mood::Fight);
-    game.tick(&keys(&[Key::ArrowRight]));
+    game.tick(&keys(&[Key::D]));
     assert_eq!(session_tick(&game), 2);
     assert_eq!(state(game.client(), 0), FighterState::Walking);
 }
@@ -2492,7 +2492,7 @@ fn p_resumes_too_and_the_layout_changed_while_paused_drives_the_fight() {
     let mut game = practice_duel();
     game.tick(&keys(&[Key::P]));
     game.tick(&keys(&[Key::ArrowRight]));
-    assert_eq!(game.bindings(), &KeyBindings::WASD);
+    assert_eq!(game.bindings(), &KeyBindings::STANDARD);
     // Remap the grab to K: down to "Grab", Enter, K.
     for _ in 0..10 {
         game.tick(&keys(&[Key::ArrowDown]));
@@ -2514,13 +2514,13 @@ fn p_resumes_too_and_the_layout_changed_while_paused_drives_the_fight() {
     assert!(!game.is_paused());
     assert_eq!(session_tick(&game), 0);
 
-    game.tick(&keys(&[Key::ArrowDown]));
+    game.tick(&keys(&[Key::S]));
     assert_eq!(
         state(game.client(), 0),
         FighterState::Idle,
-        "the arrows do nothing"
+        "the WASD keys do nothing"
     );
-    game.tick(&keys(&[Key::S]));
+    game.tick(&keys(&[Key::ArrowDown]));
     assert_eq!(state(game.client(), 0), FighterState::Crouching);
     game.tick(&keys(&[Key::K]));
     assert_eq!(
@@ -2595,7 +2595,7 @@ fn the_pause_menu_switches_the_rival_of_a_practice_game() {
 fn an_online_match_goes_on_while_paused_with_the_player_standing_still() {
     let mut game = online_game(cfg(), 0);
     skip_intro(&mut game);
-    fight_tick(&mut game, &[Key::ArrowRight], idle());
+    fight_tick(&mut game, &[Key::D], idle());
     assert_eq!(state(game.client(), 0), FighterState::Walking);
     assert_eq!(session_tick(&game), 1);
 
@@ -2611,7 +2611,7 @@ fn an_online_match_goes_on_while_paused_with_the_player_standing_still() {
     };
     let (mine, theirs) = (x_of(&game, 0), x_of(&game, 1));
     for _ in 0..5 {
-        let frames = fight_tick(&mut game, &[Key::ArrowRight, Key::Numpad5], right());
+        let frames = fight_tick(&mut game, &[Key::D, Key::H], right());
         assert_eq!(frames.len(), 1, "an idle input goes out every tick");
         let Ok(ClientMessage::Input { input, .. }) = ClientMessage::decode(&frames[0]) else {
             panic!("not an input");
@@ -2636,7 +2636,7 @@ fn an_online_match_goes_on_while_paused_with_the_player_standing_still() {
     assert_eq!(game.screen(), Screen::Fight);
     assert_eq!(frames.len(), 1, "the resuming tick is played too");
     assert_eq!(session_tick(&game), 8);
-    fight_tick(&mut game, &[Key::ArrowRight], idle());
+    fight_tick(&mut game, &[Key::D], idle());
     assert_eq!(state(game.client(), 0), FighterState::Walking);
 }
 
@@ -2754,12 +2754,12 @@ fn the_fight_screen_plays_the_practice_duel() {
     assert_eq!(game.client().session().unwrap().tick(), 1);
     let countdown = MatchConfig::default().countdown_ticks;
     for _ in 0..countdown + 5 {
-        game.tick(&keys(&[Key::ArrowRight]));
+        game.tick(&keys(&[Key::D]));
     }
     let shown = game.shown_match().unwrap();
     assert_eq!(shown.phase(), Phase::Fighting);
     let p0 = shown.fighter(PlayerId(0)).unwrap();
-    assert!(p0.x() > 400, "the arrow walked player 1: {}", p0.x());
+    assert!(p0.x() > 400, "the D key walked player 1: {}", p0.x());
     assert_eq!(game.local_player(), Some(PlayerId(0)));
 }
 
@@ -2767,7 +2767,7 @@ fn the_fight_screen_plays_the_practice_duel() {
 fn the_fight_screen_sends_the_local_input_online() {
     let mut game = online_game(cfg(), 1);
     skip_intro(&mut game);
-    let frames = fight_tick(&mut game, &[Key::Numpad0], idle());
+    let frames = fight_tick(&mut game, &[Key::Space], idle());
     assert_eq!(frames.len(), 1, "an input frame");
     let Ok(ClientMessage::Input {
         session,
@@ -3061,7 +3061,7 @@ fn the_fight_frame_shows_the_arena_and_the_hud() {
     )
     .expect("the practice notice");
     assert_eq!((notice.y, notice.align), (NOTICE_Y, Align::Center));
-    for line in controls_lines(&KeyBindings::STANDARD) {
+    for line in controls_lines(&KeyBindings::WASD) {
         assert!(text.contains(&line), "{text}");
     }
     assert!(text.contains("99"), "the timer");
@@ -3085,7 +3085,7 @@ fn a_whole_practice_round_can_be_played_and_restarted() {
     let mut game = Game::new(Client::practice(config));
     practice_fight(&mut game);
     for _ in 0..200 {
-        game.tick(&keys(&[Key::Numpad6]));
+        game.tick(&keys(&[Key::J]));
     }
     let shown = game.shown_match().unwrap();
     assert!(matches!(shown.phase(), Phase::Finished(_)));

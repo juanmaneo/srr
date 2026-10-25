@@ -659,7 +659,7 @@ fn dummy_state(game: &Headless) -> FighterState {
 fn the_mannequins_follow_the_fight_into_the_air_the_stun_and_the_floor() {
     let mut game = practice(20);
     game.game_mut().set_view(View::ThirdPerson);
-    game.hold(&[Key::ArrowUp], 1);
+    game.hold(&[Key::W], 1);
     game.idle(3);
     let me = game
         .game()
@@ -672,8 +672,8 @@ fn the_mannequins_follow_the_fight_into_the_air_the_stun_and_the_floor() {
     within_screen(&airborne.rects);
     assert!(airborne.text().contains("P1 (you)"), "the HUD is on top");
 
-    game.hold(&[Key::ArrowRight], 70);
-    game.tap(&[Key::Numpad1]);
+    game.hold(&[Key::D], 70);
+    game.tap(&[Key::B]);
     game.idle(4);
     assert_eq!(dummy_state(&game), FighterState::HitStun);
     let stunned = game.frame();
@@ -683,8 +683,8 @@ fn the_mannequins_follow_the_fight_into_the_air_the_stun_and_the_floor() {
     // Every hit pushes the dummy back: step in before the next one.
     for _ in 0..8 {
         game.idle(20);
-        game.hold(&[Key::ArrowRight], 8);
-        game.tap(&[Key::Numpad1]);
+        game.hold(&[Key::D], 8);
+        game.tap(&[Key::B]);
     }
     game.idle(30);
     assert_eq!(dummy_state(&game), FighterState::Knockout);
@@ -708,7 +708,7 @@ fn the_mannequins_follow_the_fight_into_the_air_the_stun_and_the_floor() {
 fn the_mannequins_and_the_camera_follow_the_sidesteps() {
     let mut game = practice(100);
     game.game_mut().set_view(View::ThirdPerson);
-    game.hold(&[Key::Numpad7], 9);
+    game.hold(&[Key::Q], 9);
     let current = game.game().shown_match().unwrap();
     let me = current.fighter(PlayerId(0)).unwrap();
     assert_eq!(me.z(), 45);
@@ -723,7 +723,7 @@ fn the_mannequins_and_the_camera_follow_the_sidesteps() {
     within_screen(&game.frame().rects);
 
     // As far as the street goes: still on the pavement.
-    game.hold(&[Key::Numpad2], 60);
+    game.hold(&[Key::E], 60);
     let current = game.game().shown_match().unwrap();
     let me = current.fighter(PlayerId(0)).unwrap();
     assert_eq!(me.z(), -current.config().arena_depth, "at the kerb");
