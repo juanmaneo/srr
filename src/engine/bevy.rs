@@ -46,6 +46,7 @@ impl Engine for Bevy {
             .init_resource::<Pools>()
             .init_resource::<Taps>()
             .init_resource::<TouchTaps>()
+            .init_resource::<PadTaps>()
             .add_systems(Startup, spawn_camera)
             .add_systems(FixedUpdate, tick)
             .add_systems(Update, (latch_taps, latch_pad_taps, draw))
