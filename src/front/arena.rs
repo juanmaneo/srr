@@ -261,7 +261,8 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
         (Reverse(f.z()), layer)
     });
     for fighter in order {
-        figure(fighter).draw(frame);
+        // Every fighter wears the skin its player picked, whatever the others wear.
+        super::skin::draw_inked(frame, &figure(fighter), &client.skin(fighter.player()));
     }
     for shot in current.projectiles() {
         draw_fireball(frame, shot_center(shot, config), shot.facing(), fight_ticks);

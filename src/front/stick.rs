@@ -363,6 +363,13 @@ impl Figure {
         self.draw_mark(frame);
     }
 
+    /// Only the marks around the head (the stars of a stun, the cross of a knockout): what a
+    /// [skin](super::skin) draws over its own figure, so the state of the fighter stays
+    /// readable whatever it wears.
+    pub fn draw_marks_only(&self, frame: &mut Frame) {
+        self.draw_mark(frame);
+    }
+
     /// The direction from the neck to the head (screen coordinates), and the one the face looks
     /// to (perpendicular, towards the facing side when standing).
     fn head_axes(&self) -> (Point, Point) {

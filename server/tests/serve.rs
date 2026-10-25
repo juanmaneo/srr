@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use srr::game::{Character, Input, PlayerId, TICKS_PER_SECOND};
+use srr::game::{Character, Input, PlayerId, StyleSet, TICKS_PER_SECOND};
 use srr::net::{ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
 use srr_server::http::read_head;
 use srr_server::websocket::{OP_BINARY, OP_CLOSE, OP_CONTINUATION, OP_PING, OP_PONG, OP_TEXT};
@@ -145,7 +145,8 @@ impl Server {
         Ws { stream, reader }
     }
 
-    /// A WebSocket client that has been seated as `player`: welcomed, then shown the lobby.
+    /// A WebSocket client that has been seated as `player`: welcomed, told the styles of
+    /// the server and the skins already worn, then shown the lobby.
     fn player(&self, player: u8) -> Ws {
         let mut ws = self.websocket();
         assert_eq!(
@@ -154,7 +155,8 @@ impl Server {
                 player: PlayerId(player)
             }
         );
-        let lobby = ws.message();
+        // The styles this server allows, then the skins already worn, then the lobby.
+        let lobby = ws.drain_intro();
         assert!(
             matches!(lobby, ServerMessage::Lobby { seated, .. } if seated.contains(PlayerId(player))),
             "{lobby:?}"
@@ -257,6 +259,24 @@ impl Ws {
         ServerMessage::decode(&payload).unwrap()
     }
 
+    /// Reads and checks the styles and the skins a newcomer is told after its welcome (see
+    /// [`ServerMessage::Styles`] and [`ServerMessage::SkinOf`]): all styles allowed here,
+    /// every seated player in the chalk.
+    fn drain_intro(&mut self) -> ServerMessage {
+        assert_eq!(
+            self.message(),
+            ServerMessage::Styles {
+                allowed: StyleSet::all()
+            }
+        );
+        loop {
+            let message = self.message();
+            if !matches!(message, ServerMessage::SkinOf { .. }) {
+                return message;
+            }
+        }
+    }
+
     /// Reads messages until one is `accept`ed, skipping the [`ServerMessage::Lobby`] updates
     /// sent on the way. Any other message, or nothing acceptable within [`TIMEOUT`], fails.
     fn wait_for(&mut self, what: &str, accept: impl Fn(&ServerMessage) -> bool) -> ServerMessage {
@@ -334,7 +354,8 @@ impl Ws {
 
     /// Expects a close frame, then the end of the connection.
     fn expect_closed(&mut self) {
-        assert_eq!(self.frame(), (FIN | OP_CLOSE, Vec::new()));
+        let frame = self.frame();
+        assert_eq!(frame, (FIN | OP_CLOSE, Vec::new()), "got {frame:?}");
         self.expect_eof();
     }
 
@@ -493,11 +514,12 @@ fn readiness_is_shown_until_everybody_is_ready() {
             player: PlayerId(1)
         }
     );
+    let lobby_message = second.drain_intro();
     let lobby = ServerMessage::Lobby {
         seated: PlayerSet::first(2),
         ready: PlayerSet::first(1),
     };
-    assert_eq!(second.message(), lobby);
+    assert_eq!(lobby_message, lobby);
     assert_eq!(first.message(), lobby);
 
     second.send_ready();

@@ -199,7 +199,7 @@ fn the_character_row_of_the_pause_menu_restarts_a_practice_round_with_the_new_on
     game.hold(&[], 30);
     game.tap(&[Key::P]);
     assert_eq!(game.game().controls().character(), Character::Chalk);
-    for _ in 0..3 {
+    for _ in 0..4 {
         game.tap(&[Key::ArrowUp]);
     }
     assert_eq!(game.game().controls().selected(), Row::Character);
@@ -267,7 +267,7 @@ fn online_the_pick_is_sent_with_readiness_and_practice_uses_it_too() {
     // Changing one's mind while ready tells the server at once.
     game.tick(&keys(&[]));
     game.tick(&keys(&[Key::P]));
-    for _ in 0..3 {
+    for _ in 0..4 {
         game.tick(&keys(&[Key::ArrowUp]));
         game.tick(&keys(&[]));
     }

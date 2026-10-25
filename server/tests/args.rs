@@ -9,9 +9,18 @@ fn parse(args: &[&str]) -> Result<Command, String> {
 }
 
 fn serve(port: u16, root: &str) -> Result<Command, String> {
+    serve_with_styles(port, root, srr::game::StyleSet::all())
+}
+
+fn serve_with_styles(
+    port: u16,
+    root: &str,
+    styles: srr::game::StyleSet,
+) -> Result<Command, String> {
     Ok(Command::Serve {
         port,
         root: PathBuf::from(root),
+        styles,
     })
 }
 
@@ -59,6 +68,11 @@ fn errors() {
     assert_eq!(parse(&["--dir"]), error("`--dir` needs a value"));
     assert_eq!(parse(&["--port", "x"]), error("invalid port `x`"));
     assert_eq!(parse(&["--port", "65536"]), error("invalid port `65536`"));
+    assert_eq!(parse(&["--styles"]), error("`--styles` needs a value"));
+    assert_eq!(
+        parse(&["--styles", "nope"]),
+        error("unknown style `nope` (stick, realistic, manga)")
+    );
     assert_eq!(parse(&["--port", "-1"]), error("invalid port `-1`"));
     assert_eq!(parse(&["serve"]), error("unexpected argument `serve`"));
     assert_eq!(
@@ -70,10 +84,11 @@ fn errors() {
 #[test]
 fn usage_mentions_every_option_and_default() {
     let text = usage();
-    assert!(text.starts_with("Usage: srr-server [--port PORT] [--dir DIR]\n"));
+    assert!(text.starts_with("Usage: srr-server [--port PORT] [--dir DIR] [--styles STYLES]\n"));
     for needle in [
         "--port PORT",
         "--dir DIR",
+        "--styles LIST",
         "-h, --help",
         "(default 8080)",
         "(default dist)",
@@ -88,6 +103,7 @@ fn commands_compare_and_clone() {
     let command = Command::Serve {
         port: 1,
         root: PathBuf::from("x"),
+        styles: srr::game::StyleSet::all(),
     };
     assert_eq!(command.clone(), command);
     assert_ne!(command, Command::Help);

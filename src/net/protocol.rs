@@ -15,11 +15,14 @@
 //! | 7   | [`ClientMessage::Ready`]      | to server | character `u8`                                           |
 //! | 8   | [`ServerMessage::Frame`]      | to client | session `u8`, tick `u32`, players `u16`, late `u16`, then one input `u16` per player, by increasing id |
 //! | 9   | [`ServerMessage::Timing`]     | to client | tick `u32`, lead `i8`                                    |
+//! | 10  | [`ClientMessage::Skin`]        | to server | skin `u8` (see [`Skin::index`](crate::game::Skin::index))  |
+//! | 11  | [`ServerMessage::SkinOf`]     | to client | player `u8`, skin `u8`                                    |
+//! | 12  | [`ServerMessage::Styles`]     | to client | styles `u8` (a bitmask, see [`StyleSet`](crate::game::StyleSet)) |
 
 use std::fmt;
 
 use super::players::{MAX_PLAYERS, PlayerSet};
-use crate::game::{Character, Input, PlayerId};
+use crate::game::{Character, Input, PlayerId, Skin, StyleSet};
 
 const TAG_WELCOME: u8 = 1;
 const TAG_START: u8 = 2;
@@ -30,6 +33,9 @@ const TAG_LOBBY: u8 = 6;
 const TAG_READY: u8 = 7;
 const TAG_FRAME: u8 = 8;
 const TAG_TIMING: u8 = 9;
+const TAG_SKIN: u8 = 10;
+const TAG_SKIN_OF: u8 = 11;
+const TAG_STYLES: u8 = 12;
 
 /// Length of an input sent by a client: tag, session, tick and input bits.
 const INPUT_LENGTH: usize = 1 + 1 + 4 + 2;
@@ -51,6 +57,8 @@ pub enum DecodeError {
     UnknownTag(u8),
     /// A byte that should name a [`Character`] names none.
     UnknownCharacter(u8),
+    /// A byte that should name a [`Skin`] names none.
+    UnknownSkin(u8),
     /// The message has the wrong size for its tag.
     WrongLength {
         /// The tag of the message.
@@ -68,6 +76,7 @@ impl fmt::Display for DecodeError {
             DecodeError::Empty => write!(f, "empty message"),
             DecodeError::UnknownTag(tag) => write!(f, "unknown message tag {tag}"),
             DecodeError::UnknownCharacter(index) => write!(f, "unknown character {index}"),
+            DecodeError::UnknownSkin(index) => write!(f, "unknown skin {index}"),
             DecodeError::WrongLength {
                 tag,
                 expected,
@@ -100,6 +109,13 @@ pub enum ClientMessage {
         /// The character the sender fights as in the next match.
         character: Character,
     },
+    /// The sender's fighter wears `skin` from now on; the server tells every seat at once
+    /// (see [`ServerMessage::SkinOf`]), so every browser redraws it in the same tick.
+    Skin {
+        /// The skin worn. The server only lets through the styles it allows (see
+        /// [`ServerMessage::Styles`]).
+        skin: Skin,
+    },
 }
 
 impl ClientMessage {
@@ -127,6 +143,7 @@ impl ClientMessage {
                 bytes
             }
             ClientMessage::Ready { character } => vec![TAG_READY, character.index()],
+            ClientMessage::Skin { skin } => vec![TAG_SKIN, skin.index()],
         }
     }
 
@@ -149,6 +166,12 @@ impl ClientMessage {
                 let [_, character] = fixed::<2>(bytes)?;
                 Ok(ClientMessage::Ready {
                     character: character_of(character)?,
+                })
+            }
+            TAG_SKIN => {
+                let [_, skin] = fixed::<2>(bytes)?;
+                Ok(ClientMessage::Skin {
+                    skin: skin_of(skin)?,
                 })
             }
             tag => Err(DecodeError::UnknownTag(tag)),
@@ -217,6 +240,21 @@ pub enum ServerMessage {
         /// Its margin, in ticks.
         lead: i8,
     },
+    /// `player`'s fighter wears `skin` from now on, in every browser: sent to all the seats
+    /// the moment the player picks it, and to a newcomer for every seated player.
+    SkinOf {
+        /// The player whose skin changed.
+        player: PlayerId,
+        /// The skin they wear now.
+        skin: Skin,
+    },
+    /// The styles this server allows its players to wear (the bits of
+    /// [`StyleSet::bits`](crate::game::StyleSet::bits)); sent once on connection, before any
+    /// [`ServerMessage::SkinOf`]. A skin outside the set is never sent.
+    Styles {
+        /// The allowed styles (the chalk is always allowed, whatever the bits say).
+        allowed: StyleSet,
+    },
 }
 
 impl ServerMessage {
@@ -279,6 +317,8 @@ impl ServerMessage {
                 bytes.push(lead.to_le_bytes()[0]);
                 bytes
             }
+            ServerMessage::SkinOf { player, skin } => vec![TAG_SKIN_OF, player.0, skin.index()],
+            ServerMessage::Styles { allowed } => vec![TAG_STYLES, allowed.bits()],
         }
     }
 
@@ -316,6 +356,19 @@ impl ServerMessage {
                 Ok(ServerMessage::Timing {
                     tick: u32::from_le_bytes([t0, t1, t2, t3]),
                     lead: i8::from_le_bytes([lead]),
+                })
+            }
+            TAG_SKIN_OF => {
+                let [_, player, skin] = fixed::<3>(bytes)?;
+                Ok(ServerMessage::SkinOf {
+                    player: PlayerId(player),
+                    skin: skin_of(skin)?,
+                })
+            }
+            TAG_STYLES => {
+                let [_, allowed] = fixed::<2>(bytes)?;
+                Ok(ServerMessage::Styles {
+                    allowed: StyleSet::from_bits(allowed),
                 })
             }
             tag => Err(DecodeError::UnknownTag(tag)),
@@ -362,6 +415,10 @@ pub fn character_at(characters: &Characters, player: PlayerId) -> Character {
 
 fn character_of(index: u8) -> Result<Character, DecodeError> {
     Character::from_index(index).ok_or(DecodeError::UnknownCharacter(index))
+}
+
+fn skin_of(index: u8) -> Result<Skin, DecodeError> {
+    Skin::from_index(index).ok_or(DecodeError::UnknownSkin(index))
 }
 
 /// A frame: the fixed header, then as many inputs as the header has players.

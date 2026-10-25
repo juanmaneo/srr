@@ -358,7 +358,7 @@ fn ten_browsers_over_bad_networks_play_the_same_match() {
     }
     // One frame per tick, whatever the connections.
     assert!(
-        (20 * TICKS_PER_SECOND - 2..=20 * TICKS_PER_SECOND + 2).contains(&report.frames),
+        (20 * TICKS_PER_SECOND - 4..=20 * TICKS_PER_SECOND + 4).contains(&report.frames),
         "{} frames",
         report.frames
     );

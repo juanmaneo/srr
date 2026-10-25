@@ -51,12 +51,13 @@ fn page_on(row: usize) -> ControlsPage {
 
 #[test]
 fn the_rows_are_the_preset_the_actions_the_character_the_practice_and_back() {
-    assert_eq!(ROWS, Input::BITS as usize + 4);
+    assert_eq!(ROWS, Input::BITS as usize + 5);
     assert_eq!(Row::at(0), Row::Preset);
     for action in 0..KeyBindings::ACTIONS.len() {
         assert_eq!(Row::at(action + 1), Row::Action(action));
     }
-    assert_eq!(Row::at(ROWS - 3), Row::Character);
+    assert_eq!(Row::at(ROWS - 4), Row::Character);
+    assert_eq!(Row::at(ROWS - 3), Row::Skin);
     assert_eq!(Row::at(ROWS - 2), Row::Practice);
     assert_eq!(Row::at(ROWS - 1), Row::Back);
 }
@@ -196,10 +197,12 @@ fn up_and_down_move_the_selection_and_wrap() {
     press(&mut page, &mut bindings, Key::ArrowUp);
     assert_eq!(page.selected(), Row::Practice);
     press(&mut page, &mut bindings, Key::ArrowUp);
+    assert_eq!(page.selected(), Row::Skin);
+    press(&mut page, &mut bindings, Key::ArrowUp);
     assert_eq!(page.selected(), Row::Character);
     press(&mut page, &mut bindings, Key::ArrowUp);
     assert_eq!(page.selected(), Row::Action(Input::BITS as usize - 1));
-    for _ in 0..4 {
+    for _ in 0..5 {
         press(&mut page, &mut bindings, Key::ArrowDown);
     }
     assert_eq!(page.selected(), Row::Preset);
@@ -360,7 +363,7 @@ fn the_practice_row_reads_the_choice() {
 #[test]
 fn the_character_row_goes_round_the_characters() {
     let mut bindings = KeyBindings::STANDARD;
-    let mut page = page_on(ROWS - 3);
+    let mut page = page_on(ROWS - 4);
     assert_eq!(page.selected(), Row::Character);
     assert_eq!(page.character(), Character::Chalk);
     press(&mut page, &mut bindings, Key::ArrowRight);

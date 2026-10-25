@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use srr::game::{Character, Input, PlayerId};
+use srr::game::{Character, Input, PlayerId, Skin, StyleSet};
 use srr::net::{Characters, ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
 
 /// Identifies one WebSocket connection.
@@ -42,6 +42,8 @@ struct Seat {
     ready: bool,
     /// The character picked with the last [`ClientMessage::Ready`].
     character: Character,
+    /// The skin the player wears (the chalk until they pick one).
+    skin: Skin,
 }
 
 /// The inputs received for one tick, by seat.
@@ -86,7 +88,7 @@ type Received = [Option<Input>; MAX_PLAYERS];
 /// assert!(actions.contains(&Action::Send(3, start)));
 /// assert_eq!(room.playing(), PlayerSet::first(3));
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Room {
     seats: [Option<Seat>; MAX_PLAYERS],
     session: u8,
@@ -105,12 +107,44 @@ pub struct Room {
     /// The worst margin of each player's inputs since the last timing report, and the tick of
     /// that input.
     worst_lead: [Option<(i64, u32)>; MAX_PLAYERS],
+    /// The styles this server allows its players to wear (the chalk always among them);
+    /// told to every newcomer with [`ServerMessage::Styles`].
+    styles: StyleSet,
+}
+
+impl Default for Room {
+    /// An empty room allowing every style.
+    fn default() -> Self {
+        Room::with_styles(StyleSet::all())
+    }
 }
 
 impl Room {
-    /// An empty room.
+    /// An empty room, allowing every style.
     pub fn new() -> Self {
-        Room::default()
+        Self::default()
+    }
+
+    /// An empty room allowing only `styles` (what the server's command line asked for).
+    /// The chalk is always allowed, whatever the set says.
+    pub fn with_styles(styles: StyleSet) -> Self {
+        Room {
+            seats: [None; MAX_PLAYERS],
+            session: 0,
+            fighters: PlayerSet::EMPTY,
+            playing: PlayerSet::EMPTY,
+            clock: 0,
+            next_frame: 0,
+            pending: BTreeMap::new(),
+            last: [Input::NONE; MAX_PLAYERS],
+            worst_lead: [None; MAX_PLAYERS],
+            styles,
+        }
+    }
+
+    /// The styles this room allows (see [`ServerMessage::Styles`]).
+    pub fn styles(&self) -> StyleSet {
+        self.styles
     }
 
     /// The client in the seat of `player`, if any.
@@ -120,6 +154,20 @@ impl Room {
             .copied()
             .flatten()
             .map(|seat| seat.client)
+    }
+
+    /// The skin `player`'s fighter wears in this room (the chalk of an empty seat).
+    pub fn skin(&self, player: PlayerId) -> Skin {
+        self.seat_skin(player)
+    }
+
+    /// The skin of a player, whoever sits in their seat.
+    fn seat_skin(&self, player: PlayerId) -> Skin {
+        self.seats
+            .get(usize::from(player.0))
+            .copied()
+            .flatten()
+            .map_or(Skin::STICK, |seat| seat.skin)
     }
 
     /// The number of the current (or last) session; 0 before the first one.
@@ -165,6 +213,7 @@ impl Room {
             client,
             ready: false,
             character: Character::Chalk,
+            skin: Skin::STICK,
         });
         let mut actions = vec![Action::Send(
             client,
@@ -172,6 +221,18 @@ impl Room {
                 player: player_at(index),
             },
         )];
+        // What this server allows, then the skins already worn in the room: a newcomer
+        // sees the room dressed as it is.
+        actions.push(Action::Send(
+            client,
+            ServerMessage::Styles {
+                allowed: self.styles,
+            },
+        ));
+        for (player, _) in self.clients() {
+            let skin = self.seat_skin(player);
+            actions.push(Action::Send(client, ServerMessage::SkinOf { player, skin }));
+        }
         actions.extend(self.lobby());
         actions
     }
@@ -217,6 +278,22 @@ impl Room {
                     seat.character = character;
                 });
                 self.start_or_lobby()
+            }
+            Ok(ClientMessage::Skin { skin }) => {
+                // A style the room does not allow is ignored; an allowed one is worn at once
+                // and told to everybody, so every browser redraws the fighter in the same
+                // tick. The sender hears it too: their own display changes when the server
+                // confirms it, like everybody else's.
+                if !self.styles.contains(skin.style) {
+                    return Vec::new();
+                }
+                let player = player_at(index);
+                if let Some(seat) = self.seats[index].as_mut() {
+                    seat.skin = skin;
+                }
+                self.clients()
+                    .map(|(_, other)| Action::Send(other, ServerMessage::SkinOf { player, skin }))
+                    .collect()
             }
             Ok(ClientMessage::Input {
                 session,

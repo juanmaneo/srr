@@ -186,6 +186,35 @@ around), every pad connected steers the same fighter, and the buttons press the 
 layout, so a pad and a keyboard can play in the same room. `Tab` (switching the view) stays on
 the keyboard; the PS button belongs to the console / the browser / the OS.
 
+### Skins (the styles and the variants)
+
+Every fighter can wear a **skin**: how it is drawn, nothing to do with the rules. The styles
+are three, and a match can mix them freely — a chalk stick figure against a full-colour
+heroine, or a brawl of ten fighters all dressed differently:
+
+* **Stick (chalk)**, the default: the game's own ink on the alley wall.
+* **Realistic**: full-colour fighters with faces, hair and physiques, the look of a modern
+  fighting game. Ten variants: three women (a graceful brunette, a striking blonde, a fierce
+  red-haired one), an athletic man, a stocky brawler, a wiry youth, an elder, a soldier, a
+  punk and a masked mystic.
+* **Manga**: the same ten variants in the bright cel-shaded look of an anime: flat colours,
+  thick ink, big eyes.
+
+Each player wears their **own** variant (the ten players of a brawl each look different, like
+the accessories of the chalk ink), picked on the **Skin** row of the controls page / pause
+menu (`←` / `→`); the choice takes effect **immediately**: locally at once, online the server
+tells every browser in the same round, so the whole room sees the change together. Every
+fighter keeps the game's poses, marks and effects whatever it wears — a skin is a layer over
+the ink, never a replacement.
+
+**The styles on offer are decided by the server hosting the game** (`--styles stick,realistic,manga`
+on the command line of `srr-server`, all of them by default; the chalk is always allowed). A
+style the server does not allow never reaches the menus.
+
+The skins are drawn by the game itself (`src/front/skin.rs`), only rectangles like every other
+screen, so both engines and the headless tests draw them unchanged. The 3D view (`Tab`) reads
+the same palettes for its mannequins.
+
 ### Characters
 
 Every player picks a character on the **select screen** that follows the title (`Left` /

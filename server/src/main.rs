@@ -4,16 +4,17 @@ use std::process::ExitCode;
 use std::thread;
 use std::time::Duration;
 
+use srr::game::StyleSet;
 use srr::net::MAX_PLAYERS;
-use srr_server::{Command, Limits, TICK, parse_args, serve_with, usage};
+use srr_server::{Command, Limits, TICK, parse_args, serve_with_styles, usage};
 
 /// How long to wait, after the server has stopped, for the writer threads to flush the close
 /// frames to every browser.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
 
 fn main() -> ExitCode {
-    let (port, root) = match parse_args(std::env::args().skip(1)) {
-        Ok(Command::Serve { port, root }) => (port, root),
+    let (port, root, styles) = match parse_args(std::env::args().skip(1)) {
+        Ok(Command::Serve { port, root, styles }) => (port, root, styles),
         Ok(Command::Help) => {
             print!("{}", usage());
             return ExitCode::SUCCESS;
@@ -36,8 +37,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    print_addresses(port, &root);
-    let server = serve_with(listener, root, TICK, Limits::default());
+    print_addresses(port, &root, styles);
+    let server = serve_with_styles(listener, root, TICK, Limits::default(), styles);
     // Ctrl+C: stop accepting, tell every browser, and let the server wind down.
     let stop = server.stopper();
     if ctrlc::set_handler(move || stop.stop()).is_err() {
@@ -48,7 +49,7 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn print_addresses(port: u16, root: &Path) {
+fn print_addresses(port: u16, root: &Path, styles: StyleSet) {
     println!("Shattered Realm: Rampage - serving {}", root.display());
     println!("  this machine:  http://localhost:{port}");
     match lan_address() {
@@ -58,6 +59,7 @@ fn print_addresses(port: u16, root: &Path) {
     println!(
         "Up to {MAX_PLAYERS} browsers sit in the room; a match starts when everybody pressed Enter. Ctrl+C stops the server."
     );
+    println!("Skins allowed: {styles} (the chalk stick figure always is).");
 }
 
 /// The address other machines reach this one at. Connecting a UDP socket sends nothing; it only

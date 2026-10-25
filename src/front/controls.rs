@@ -14,10 +14,11 @@
 //! [`Game`](super::Game) keeps the first and carries out the others.
 
 use super::scene::{Align, Frame, Rgba, SCREEN_WIDTH};
-use crate::game::{Character, Input, Key, KeyBindings, Rival, Technique};
+use crate::game::{Character, Input, Key, KeyBindings, PlayerId, Rival, Skin, StyleSet, Technique};
 
-/// Rows of the page: the preset, one per action, the character, the practice, then "back".
-pub const ROWS: usize = Input::BITS as usize + 4;
+/// Rows of the page: the preset, one per action, the character, the skin, the practice, then
+/// "back".
+pub const ROWS: usize = Input::BITS as usize + 5;
 
 /// The key pausing the fight (and resuming it from the pause menu); it cannot be bound.
 pub const PAUSE_KEY: Key = Key::P;
@@ -47,6 +48,9 @@ pub enum Row {
     Action(usize),
     /// The character played (see [`Character`]).
     Character,
+    /// The skin worn (see [`Skin`]): the styles the server allows, each wearing the player's
+    /// own variant.
+    Skin,
     /// The rival of a practice fight (see [`Practice`]).
     Practice,
     /// Back to the title, or back to the fight when paused.
@@ -61,7 +65,8 @@ impl Row {
     ///
     /// assert_eq!(Row::at(0), Row::Preset);
     /// assert_eq!(Row::at(1), Row::Action(0));
-    /// assert_eq!(Row::at(ROWS - 3), Row::Character);
+    /// assert_eq!(Row::at(ROWS - 4), Row::Character);
+    /// assert_eq!(Row::at(ROWS - 3), Row::Skin);
     /// assert_eq!(Row::at(ROWS - 2), Row::Practice);
     /// assert_eq!(Row::at(ROWS - 1), Row::Back);
     /// ```
@@ -70,7 +75,8 @@ impl Row {
             0 => Row::Preset,
             i if i + 1 >= ROWS => Row::Back,
             i if i + 2 == ROWS => Row::Practice,
-            i if i + 3 == ROWS => Row::Character,
+            i if i + 3 == ROWS => Row::Skin,
+            i if i + 4 == ROWS => Row::Character,
             i => Row::Action(i - 1),
         }
     }
@@ -225,13 +231,33 @@ pub fn controls_lines(bindings: &KeyBindings) -> [String; 2] {
 
 /// The state of the controls page: the row chosen, whether it waits for a new key, whether
 /// it is the pause menu of a fight, the character and the practice choice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ControlsPage {
     selected: usize,
     waiting: bool,
     paused: bool,
     character: Character,
+    skin: Skin,
+    /// The player whose variant the skin row wears.
+    player: PlayerId,
+    /// The styles the server allows, for the skin row.
+    styles: StyleSet,
     practice: Practice,
+}
+
+impl Default for ControlsPage {
+    fn default() -> Self {
+        ControlsPage {
+            selected: 0,
+            waiting: false,
+            paused: false,
+            character: Character::default(),
+            skin: Skin::STICK,
+            player: PlayerId(0),
+            styles: StyleSet::all(),
+            practice: Practice::Unavailable,
+        }
+    }
 }
 
 impl ControlsPage {
@@ -258,6 +284,27 @@ impl ControlsPage {
     /// The page with `character` on its character row.
     pub fn with_character(self, character: Character) -> Self {
         ControlsPage { character, ..self }
+    }
+
+    /// The page with `skin` on its skin row, offering the styles of `styles` (see
+    /// [`Client::styles`](crate::net::Client::styles); a set with only the chalk offers no
+    /// choice and the row reads empty).
+    pub fn with_skin(self, skin: Skin, styles: StyleSet) -> Self {
+        ControlsPage {
+            skin,
+            styles,
+            ..self
+        }
+    }
+
+    /// The page whose skin row wears `player`'s own variant.
+    pub fn with_player(self, player: PlayerId) -> Self {
+        ControlsPage { player, ..self }
+    }
+
+    /// The skin, as changed on the skin row.
+    pub fn skin(&self) -> Skin {
+        self.skin
     }
 
     /// The character, as changed on the character row.
@@ -316,6 +363,12 @@ impl ControlsPage {
                 self.character = self.character.next();
             }
             (Key::ArrowLeft, Row::Character) => self.character = self.character.previous(),
+            (Key::ArrowRight | Key::Enter, Row::Skin) => {
+                self.skin = Skin::of_player(self.skin.style.next(), self.player)
+            }
+            (Key::ArrowLeft, Row::Skin) => {
+                self.skin = Skin::of_player(self.skin.style.previous(), self.player)
+            }
             (Key::ArrowRight | Key::Enter, Row::Practice) => {
                 self.practice = self.practice.next();
             }
@@ -373,6 +426,16 @@ impl ControlsPage {
                         "Character",
                         format!("< {} - {} >", data.name, data.special_name),
                     )
+                }
+                Row::Skin => {
+                    // Only the styles the server allows are offered (a set with no skin at
+                    // all shows no choice either).
+                    let value = if self.styles.styles().count() > 1 {
+                        format!("< {} >", self.skin.label())
+                    } else {
+                        String::new()
+                    };
+                    ("Skin", value)
                 }
                 Row::Practice => ("Practice", self.practice.label()),
                 Row::Back => (

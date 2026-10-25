@@ -20,7 +20,9 @@ use std::fmt;
 use super::players::{MAX_PLAYERS, PlayerSet};
 use super::protocol::{Characters, ClientMessage, DecodeError, ServerMessage};
 use super::rollback::{MAX_ROLLBACK, Session, SessionError};
-use crate::game::{Bot, Character, Input, MatchConfig, PlayerId, Rival, TICKS_PER_SECOND};
+use crate::game::{
+    Bot, Character, Input, MatchConfig, PlayerId, Rival, Skin, StyleSet, TICKS_PER_SECOND,
+};
 
 /// The fighter played by the bot of a local client.
 const RIVAL: PlayerId = PlayerId(1);
@@ -158,6 +160,11 @@ pub struct Client {
     departed: PlayerSet,
     /// The character the local player picked.
     character: Character,
+    /// The styles this server allows (chalk always among them; see
+    /// [`ServerMessage::Styles`]).
+    styles: StyleSet,
+    /// The skin each player wears, by id (the chalk until told otherwise).
+    skins: [Skin; MAX_PLAYERS],
 }
 
 impl Client {
@@ -179,6 +186,8 @@ impl Client {
             left: None,
             departed: PlayerSet::EMPTY,
             character: Character::Chalk,
+            styles: StyleSet::none(),
+            skins: [Skin::STICK; MAX_PLAYERS],
         }
     }
 
@@ -219,6 +228,66 @@ impl Client {
     /// The character the local player picked ([`Character::Chalk`] until changed).
     pub fn character(&self) -> Character {
         self.character
+    }
+
+    /// The styles this server allows its players to wear (the chalk always among them; a
+    /// local game allows every style).
+    pub fn styles(&self) -> StyleSet {
+        if self.is_local() {
+            StyleSet::all()
+        } else {
+            self.styles
+        }
+    }
+
+    /// The skin `player` wears ([`Skin::STICK`] until told otherwise).
+    pub fn skin(&self, player: PlayerId) -> Skin {
+        self.skins
+            .get(usize::from(player.0))
+            .copied()
+            .unwrap_or(Skin::STICK)
+    }
+
+    /// The skin the local player's fighter wears.
+    pub fn my_skin(&self) -> Skin {
+        self.player.map_or(Skin::STICK, |player| self.skin(player))
+    }
+
+    /// The local player's fighter wears `skin` from now on. Locally (and in a practice
+    /// fight) it shows at once; online this returns the frame telling the server, which
+    /// tells everybody (see [`ServerMessage::SkinOf`]) — including the sender, so their own
+    /// display changes when the server confirms it, like everybody else's.
+    ///
+    /// A style the server does not allow is not sent: the fighter keeps its skin.
+    ///
+    /// ```
+    /// use srr::game::{MatchConfig, Skin, Style, Variant};
+    /// use srr::net::Client;
+    ///
+    /// let mut client = Client::practice(MatchConfig::default());
+    /// let manga = Skin::styled(Style::Manga, Variant::Brunette);
+    /// client.set_skin(manga);
+    /// assert_eq!(client.my_skin(), manga, "at once, locally");
+    /// ```
+    pub fn set_skin(&mut self, skin: Skin) -> Option<Vec<u8>> {
+        let player = self.player?;
+        self.set_skin_of(player, skin)
+    }
+
+    /// [`Client::set_skin`] for `player`: what a local practice fight uses to dress the
+    /// rival's fighter too. Online the skin is still the local player's own; another
+    /// player's skin only comes from the server (see [`ServerMessage::SkinOf`]).
+    pub fn set_skin_of(&mut self, player: PlayerId, skin: Skin) -> Option<Vec<u8>> {
+        if self.is_local() {
+            if let Some(slot) = self.skins.get_mut(usize::from(player.0)) {
+                *slot = skin;
+            }
+            return None;
+        }
+        if Some(player) != self.player || !self.styles.contains(skin.style) {
+            return None;
+        }
+        Some(ClientMessage::Skin { skin }.encode())
     }
 
     /// Picks the local player's character. Alone, the round restarts at once with it (the
@@ -407,6 +476,12 @@ impl Client {
                     self.pace = pace_for(i32::from(lead) + self.gained_since(tick));
                 }
             }
+            ServerMessage::SkinOf { player, skin } => {
+                if let Some(slot) = self.skins.get_mut(usize::from(player.0)) {
+                    *slot = skin;
+                }
+            }
+            ServerMessage::Styles { allowed } => self.styles = allowed,
         }
     }
 

@@ -592,7 +592,8 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
         .iter()
         .flat_map(|fighter| {
             let figure = Figure::of(fighter, rules_of(current, fighter), fight_ticks);
-            mannequin(&figure, depth(fighter, config), camera)
+            let skin = client.skin(fighter.player());
+            mannequin(&figure, &skin, depth(fighter, config), camera)
         })
         .chain(
             current
@@ -903,19 +904,39 @@ fn head_axes(figure: &Figure) -> (Point, Point) {
 
 /// The wooden mannequin of `figure`: a tube per bone, a ball per joint, the head a sphere, the
 /// accessory and the marks in relief, standing on the line `depth`.
-fn mannequin(figure: &Figure, depth: i32, camera: &Camera) -> Vec<Part> {
+fn mannequin(figure: &Figure, skin: &crate::game::Skin, depth: i32, camera: &Camera) -> Vec<Part> {
     let lift = |point: Point, z: i32| self::lift(point, depth + z);
     let mut s = Sculpt {
         camera,
         parts: Vec::new(),
     };
-    let base = if figure.ink == stick::INK {
+    // A skinned fighter wears its palette in 3D too: the outfit for the volumes, the hair
+    // for the head, the skin for the hands and the feet.
+    let palette = super::skin::palette_of(skin);
+    let base = if skin.style.is_skinned() {
+        palette.outfit
+    } else if figure.ink == stick::INK {
         WOOD
     } else {
         figure.ink
     };
     s.tube(lift(figure.neck, 0), lift(figure.hip, 0), TORSO, base);
-    s.ball(lift(figure.head, 0), HEAD, base);
+    // The head wears the palette's skin, with its hair as a second ball on top.
+    let skinned = skin.style.is_skinned();
+    s.ball(
+        lift(figure.head, 0),
+        HEAD,
+        if skinned { palette.skin } else { base },
+    );
+    if skinned {
+        let (up, _) = head_axes(figure);
+        let along = HEAD as f32 / 3.0;
+        let hair = Point {
+            x: figure.head.x + up.x * along,
+            y: figure.head.y + up.y * along,
+        };
+        s.ball(lift(hair, 0), HEAD * 3 / 4, palette.hair);
+    }
     s.ball(lift(figure.shoulder, 0), SHOULDER, base);
     s.ball(lift(figure.hip, 0), SHOULDER, base);
     let limbs = [
@@ -930,7 +951,9 @@ fn mannequin(figure: &Figure, depth: i32, camera: &Camera) -> Vec<Part> {
             s.tube(lift(from, z), lift(bone.joint, z), radius, color);
             s.ball(lift(bone.joint, z), JOINT, color);
             s.tube(lift(bone.joint, z), lift(bone.end, z), radius, color);
-            s.ball(lift(bone.end, z), end, color);
+            // The hands and the feet of a skinned fighter are bare skin.
+            let end_color = if skinned { palette.skin } else { color };
+            s.ball(lift(bone.end, z), end, end_color);
         }
     }
 

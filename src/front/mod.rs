@@ -46,7 +46,7 @@ use std::collections::HashSet;
 
 use crate::audio::{Mood, MusicControl};
 use crate::game::{
-    Character, GrapplePosition, Input, Key, KeyBindings, Match, Phase, PlayerId, Rival,
+    Character, GrapplePosition, Input, Key, KeyBindings, Match, Phase, PlayerId, Rival, Skin,
     TICKS_PER_SECOND,
 };
 use crate::net::{Client, MAX_PLAYERS, Status};
@@ -62,6 +62,7 @@ pub mod intro;
 pub mod render;
 mod scene;
 pub mod select;
+pub mod skin;
 pub mod space;
 pub mod stick;
 pub mod touch;
@@ -335,6 +336,22 @@ impl Game {
         self.client.character()
     }
 
+    /// The skin the local player's fighter wears (see [`Game::set_skin`]).
+    pub fn skin(&self) -> Skin {
+        self.client.my_skin()
+    }
+
+    /// The local player's fighter wears `skin` from now on: locally it shows at once; online
+    /// the server confirms it to everybody (including this browser) in the same tick, so the
+    /// whole room sees the change together. Returns the frames to send to the server.
+    pub fn set_skin(&mut self, skin: Skin) -> Vec<Vec<u8>> {
+        if let Some(practice) = &mut self.practice {
+            let player = practice.player().unwrap_or(PlayerId(0));
+            practice.set_skin_of(player, skin);
+        }
+        self.client.set_skin(skin).into_iter().collect()
+    }
+
     /// Fights as `character` from now on: alone (or in a practice fight) the round restarts
     /// with it at once; online it is used for the next match (see [`Client::set_character`]).
     /// Returns the frames to send to the server.
@@ -506,6 +523,9 @@ impl Game {
                 if self.controls.practice() != self.practice() {
                     self.set_practice(self.controls.practice());
                 }
+                if self.controls.skin() != self.client.my_skin() {
+                    outgoing.extend(self.set_skin(self.controls.skin()));
+                }
                 if paused {
                     self.stand_still(&mut outgoing);
                 }
@@ -536,8 +556,11 @@ impl Game {
 
     /// `page` showing the current character and practice choice.
     fn controls_page(&self, page: ControlsPage) -> ControlsPage {
+        let player = self.client.player().unwrap_or(PlayerId(0));
         page.with_practice(self.practice())
             .with_character(self.character())
+            .with_player(player)
+            .with_skin(self.client.my_skin(), self.client.styles())
     }
 
     /// Opens the select screen on the current character; `practise` remembers that it was

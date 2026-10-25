@@ -43,6 +43,7 @@ mod projectile;
 mod replay;
 mod roster;
 mod simulation;
+mod style;
 mod technique;
 
 pub use bot::{Bot, Brawler, BrawlerConfig, CloneBot, Dummy, Rival};
@@ -58,4 +59,5 @@ pub use projectile::Projectile;
 pub use replay::{Replay, ReplayError};
 pub use roster::{PlayerId, PlayerSlot, Roster, RosterError, TeamId};
 pub use simulation::{Match, Outcome, Phase, SetupError};
+pub use style::{Skin, Style, StyleSet, Variant};
 pub use technique::Technique;

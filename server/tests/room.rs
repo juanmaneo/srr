@@ -1,6 +1,6 @@
 //! The room logic alone: seats, readiness, sessions and the frames, event by event.
 
-use srr::game::{Character, Input, PlayerId};
+use srr::game::{Character, Input, PlayerId, Skin, Style, StyleSet, Variant};
 use srr::net::{ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
 use srr_server::room::{Action, ClientId, GRACE, MAX_AHEAD, Room, TIMING_PERIOD};
 
@@ -48,6 +48,27 @@ fn to_all(clients: &[ClientId], message: ServerMessage) -> Vec<Action> {
 /// A [`ServerMessage::Lobby`] sent to each of `clients`, in that order.
 fn lobby(clients: &[ClientId], seated: PlayerSet, ready: PlayerSet) -> Vec<Action> {
     to_all(clients, ServerMessage::Lobby { seated, ready })
+}
+
+/// The styles this room allows, then the skin of every seated player: what a newcomer is
+/// told after its welcome, in seat order.
+fn skins(client: ClientId, players: &[PlayerId]) -> Vec<Action> {
+    let mut actions = vec![Action::Send(
+        client,
+        ServerMessage::Styles {
+            allowed: StyleSet::all(),
+        },
+    )];
+    actions.extend(players.iter().map(|&player| {
+        Action::Send(
+            client,
+            ServerMessage::SkinOf {
+                player,
+                skin: Skin::STICK,
+            },
+        )
+    }));
+    actions
 }
 
 /// The frame of `tick` between `fighters`: `held` lists the inputs that are not
@@ -106,7 +127,6 @@ fn timings(actions: Vec<Action>) -> Vec<Action> {
 #[test]
 fn empty_room() {
     let room = Room::new();
-    assert_eq!(room, Room::default());
     assert_eq!(room.session(), 0);
     assert_eq!(room.seated(), PlayerSet::EMPTY);
     assert_eq!(room.ready(), PlayerSet::EMPTY);
@@ -127,6 +147,10 @@ fn clients_are_seated_welcomed_and_shown_the_lobby() {
         let player = PlayerId(clients.len() as u8);
         clients.push(client);
         let mut expected = vec![Action::Send(client, ServerMessage::Welcome { player })];
+        expected.extend(skins(
+            client,
+            &(0..clients.len() as u8).map(PlayerId).collect::<Vec<_>>(),
+        ));
         expected.extend(lobby(
             &clients,
             PlayerSet::first(clients.len()),
@@ -216,31 +240,15 @@ fn a_single_ready_player_does_not_start_alone() {
     assert_eq!(room.playing(), PlayerSet::EMPTY);
 
     // A newcomer sees who is ready; once they are ready too, the duel starts.
-    assert_eq!(
-        room.join(2),
-        vec![
-            Action::Send(
-                2,
-                ServerMessage::Welcome {
-                    player: PlayerId(1)
-                }
-            ),
-            Action::Send(
-                1,
-                ServerMessage::Lobby {
-                    seated: PlayerSet::first(2),
-                    ready: players(&[0])
-                }
-            ),
-            Action::Send(
-                2,
-                ServerMessage::Lobby {
-                    seated: PlayerSet::first(2),
-                    ready: players(&[0])
-                }
-            ),
-        ]
-    );
+    let mut expected = vec![Action::Send(
+        2,
+        ServerMessage::Welcome {
+            player: PlayerId(1),
+        },
+    )];
+    expected.extend(skins(2, &[PlayerId(0), PlayerId(1)]));
+    expected.extend(lobby(&[1, 2], PlayerSet::first(2), players(&[0])));
+    assert_eq!(room.join(2), expected);
     assert_eq!(
         room.receive(2, &ready()),
         to_all(
@@ -540,38 +548,15 @@ fn a_late_joiner_sits_out_the_running_match() {
     let mut room = room_of(2);
     all_ready(&mut room, &[1, 2]);
 
-    assert_eq!(
-        room.join(3),
-        vec![
-            Action::Send(
-                3,
-                ServerMessage::Welcome {
-                    player: PlayerId(2)
-                }
-            ),
-            Action::Send(
-                1,
-                ServerMessage::Lobby {
-                    seated: PlayerSet::first(3),
-                    ready: PlayerSet::EMPTY
-                }
-            ),
-            Action::Send(
-                2,
-                ServerMessage::Lobby {
-                    seated: PlayerSet::first(3),
-                    ready: PlayerSet::EMPTY
-                }
-            ),
-            Action::Send(
-                3,
-                ServerMessage::Lobby {
-                    seated: PlayerSet::first(3),
-                    ready: PlayerSet::EMPTY
-                }
-            ),
-        ]
-    );
+    let mut expected = vec![Action::Send(
+        3,
+        ServerMessage::Welcome {
+            player: PlayerId(2),
+        },
+    )];
+    expected.extend(skins(3, &[PlayerId(0), PlayerId(1), PlayerId(2)]));
+    expected.extend(lobby(&[1, 2, 3], PlayerSet::first(3), PlayerSet::EMPTY));
+    assert_eq!(room.join(3), expected);
     assert_eq!(room.seated(), PlayerSet::first(3));
     assert_eq!(room.playing(), PlayerSet::first(2));
 
@@ -713,6 +698,7 @@ fn the_match_goes_on_without_a_leaver_while_two_remain() {
             player: PlayerId(1),
         },
     )];
+    expected.extend(skins(4, &[PlayerId(0), PlayerId(1), PlayerId(2)]));
     expected.extend(lobby(&[1, 4, 3], PlayerSet::first(3), PlayerSet::EMPTY));
     assert_eq!(room.join(4), expected);
     assert_eq!(room.playing(), players(&[0, 2]));
@@ -862,4 +848,88 @@ fn the_match_starts_with_the_characters_picked_when_getting_ready() {
         room.receive(client, &ready_as(Character::Zip));
     }
     assert_eq!(room.playing(), PlayerSet::first(10));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The skins
+// ---------------------------------------------------------------------------------------------
+
+/// The frame of a [`ClientMessage::Skin`].
+fn skin(skin: Skin) -> Vec<u8> {
+    ClientMessage::Skin { skin }.encode()
+}
+
+#[test]
+fn a_skin_is_broadcast_to_everybody_at_once() {
+    let mut room = room_of(2);
+    let manga = Skin::styled(Style::Manga, Variant::Brunette);
+    let actions = room.receive(1, &skin(manga));
+    // Both seats are told in the same round, including the sender: every browser redraws
+    // the fighter in the same tick.
+    let told = |player| {
+        Action::Send(
+            2,
+            ServerMessage::SkinOf {
+                player,
+                skin: manga,
+            },
+        )
+    };
+    assert!(actions.contains(&told(PlayerId(0))), "{actions:?}");
+    assert_eq!(room.skin(PlayerId(0)), manga);
+    assert_eq!(room.skin(PlayerId(1)), Skin::STICK);
+    // A newcomer is told the skin already worn.
+    let join = room.join(3);
+    assert!(
+        join.contains(&Action::Send(
+            3,
+            ServerMessage::SkinOf {
+                player: PlayerId(0),
+                skin: manga
+            }
+        )),
+        "{join:?}"
+    );
+}
+
+#[test]
+fn a_room_allows_only_the_styles_it_was_given() {
+    let manga_only = StyleSet::none().with(Style::Manga);
+    let mut room = Room::with_styles(manga_only);
+    room.join(1);
+    // The newcomer is told what is allowed.
+    assert!(
+        room.join(2).contains(&Action::Send(
+            2,
+            ServerMessage::Styles {
+                allowed: manga_only
+            }
+        )),
+        "the styles are told on join"
+    );
+    // An allowed skin passes...
+    let manga = Skin::styled(Style::Manga, Variant::Redhead);
+    assert_eq!(
+        room.receive(1, &skin(manga)),
+        vec![
+            Action::Send(
+                1,
+                ServerMessage::SkinOf {
+                    player: PlayerId(0),
+                    skin: manga
+                }
+            ),
+            Action::Send(
+                2,
+                ServerMessage::SkinOf {
+                    player: PlayerId(0),
+                    skin: manga
+                }
+            ),
+        ]
+    );
+    // ...a style the room does not allow is ignored.
+    let realistic = Skin::styled(Style::Realistic, Variant::Redhead);
+    assert_eq!(room.receive(1, &skin(realistic)), vec![]);
+    assert_eq!(room.skin(PlayerId(0)), manga, "the pick is kept");
 }
