@@ -88,7 +88,7 @@ impl std::error::Error for SessionError {}
 /// let mut frames = BTreeMap::new();
 /// for _ in 0..10 {
 ///     for machine in machines.iter_mut() {
-///         let player = usize::from(machine.local_player().0);
+///         let player = usize::from(machine.local_player().unwrap().0);
 ///         for tick in machine.submit_local(Input::NONE) {
 ///             frames.entry(tick).or_insert([Input::NONE; PlayerSet::CAPACITY])[player] =
 ///                 Input::NONE;
@@ -110,7 +110,7 @@ impl std::error::Error for SessionError {}
 /// ```
 #[derive(Debug, Clone)]
 pub struct Session {
-    local: PlayerId,
+    local: Option<PlayerId>,
     players: PlayerSet,
     id: u8,
     delay: u32,
@@ -160,6 +160,41 @@ impl Session {
         if !players.contains(local) {
             return Err(SessionError::NotInSession(local));
         }
+        Self::with_local(Some(local), players, id, config, delay)
+    }
+
+    /// A new match numbered `id` between `players` watched from outside, nobody playing on
+    /// this machine (a spectator, see [`Session::local_player`]). The frames of the server are
+    /// all it ever plays; it never predicts anything.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::InvalidRoster`] when the players cannot form a match (fewer than two),
+    /// and [`SessionError::InvalidSetup`] when the configuration does not validate.
+    ///
+    /// ```
+    /// use srr::game::{Input, MatchConfig};
+    /// use srr::net::{PlayerSet, Session};
+    ///
+    /// let mut watching =
+    ///     Session::spectate(PlayerSet::first(2), 1, MatchConfig::default()).unwrap();
+    /// let inputs = [Input::NONE; PlayerSet::CAPACITY];
+    /// assert!(watching.receive_frame(1, 0, &inputs, PlayerSet::EMPTY));
+    /// assert!(watching.advance(), "the frame plays at once");
+    /// assert_eq!(watching.local_player(), None);
+    /// ```
+    pub fn spectate(players: PlayerSet, id: u8, config: MatchConfig) -> Result<Self, SessionError> {
+        Self::with_local(None, players, id, config, 0)
+    }
+
+    /// The body of [`Session::new`] and [`Session::spectate`].
+    fn with_local(
+        local: Option<PlayerId>,
+        players: PlayerSet,
+        id: u8,
+        config: MatchConfig,
+        delay: u32,
+    ) -> Result<Self, SessionError> {
         let slots = players
             .iter()
             .map(|player| PlayerSlot {
@@ -230,8 +265,8 @@ impl Session {
             characters,
             ..self.config.clone()
         };
-        let fresh = Session::new(self.local, self.players, id, config, self.delay)
-            .expect("the players and the configuration were validated by Session::new");
+        let fresh = Self::with_local(self.local, self.players, id, config, self.delay)
+            .expect("the players and the configuration were validated before");
         Session { carried, ..fresh }
     }
 
@@ -240,8 +275,9 @@ impl Session {
         self.players
     }
 
-    /// The player controlled on this machine.
-    pub fn local_player(&self) -> PlayerId {
+    /// The player controlled on this machine, or `None` for a spectator (see
+    /// [`Session::spectate`]).
+    pub fn local_player(&self) -> Option<PlayerId> {
         self.local
     }
 
@@ -310,8 +346,12 @@ impl Session {
     /// Schedules the local input for every tick up to `delay` ticks after the round shown that
     /// does not have one yet, and returns those ticks: the inputs to send to the server.
     /// Usually one tick; several at the start of the round or after catching up; none while
-    /// the session waits for the server (the input is dropped).
+    /// the session waits for the server (the input is dropped). A spectator schedules nothing:
+    /// it plays no fighter.
     pub fn submit_local(&mut self, input: Input) -> Range<u32> {
+        if self.local.is_none() {
+            return self.tick..self.tick;
+        }
         let start = self.next_local.max(self.confirmed_tick);
         let end = start.max(self.tick.saturating_add(self.delay).saturating_add(1));
         for tick in start..end {
@@ -414,8 +454,8 @@ impl Session {
     /// held in the last frame.
     fn guess(&self, tick: u32) -> FrameInputs {
         let mut inputs = self.latest;
-        if let Some(&input) = self.local_inputs.get(&tick) {
-            inputs[usize::from(self.local.0)] = input;
+        if let (Some(&input), Some(local)) = (self.local_inputs.get(&tick), self.local) {
+            inputs[usize::from(local.0)] = input;
         }
         inputs
     }

@@ -7,8 +7,9 @@
 //! coverage gate.
 //!
 //! In the browser the shell talks to the relay server; add `?practice` to the URL to play
-//! alone (against the training dummy, or the computer: `T` switches). Native builds always
-//! play alone.
+//! alone (against the training dummy, or the computer: `T` switches), or `?spectate` to
+//! watch the room without playing (the page for a TV, say). Native builds always play
+//! alone.
 //!
 //! Natively the music starts with the intro. In the browser it starts on the first key press,
 //! click or touch, from inside the DOM event (see `web::AudioUnlock`), because of the autoplay

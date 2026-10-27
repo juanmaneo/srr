@@ -18,6 +18,7 @@
 //! | 10  | [`ClientMessage::Skin`]        | to server | skin `u8` (see [`Skin::index`](crate::game::Skin::index))  |
 //! | 11  | [`ServerMessage::SkinOf`]     | to client | player `u8`, skin `u8`                                    |
 //! | 12  | [`ServerMessage::Styles`]     | to client | styles `u8` (a bitmask, see [`StyleSet`](crate::game::StyleSet)) |
+//! | 13  | [`ServerMessage::Watching`]   | to client | —                                                        |
 
 use std::fmt;
 
@@ -36,6 +37,7 @@ const TAG_TIMING: u8 = 9;
 const TAG_SKIN: u8 = 10;
 const TAG_SKIN_OF: u8 = 11;
 const TAG_STYLES: u8 = 12;
+const TAG_WATCHING: u8 = 13;
 
 /// Length of an input sent by a client: tag, session, tick and input bits.
 const INPUT_LENGTH: usize = 1 + 1 + 4 + 2;
@@ -255,6 +257,10 @@ pub enum ServerMessage {
         /// The allowed styles (the chalk is always allowed, whatever the bits say).
         allowed: StyleSet,
     },
+    /// The receiver is a spectator (a watcher of the room, the page asked for it with
+    /// `?spectate`): it is told everything the players are told, but nothing it sends is
+    /// listened to. It sees the room as an observer, never seated, never ready.
+    Watching,
 }
 
 impl ServerMessage {
@@ -319,6 +325,7 @@ impl ServerMessage {
             }
             ServerMessage::SkinOf { player, skin } => vec![TAG_SKIN_OF, player.0, skin.index()],
             ServerMessage::Styles { allowed } => vec![TAG_STYLES, allowed.bits()],
+            ServerMessage::Watching => vec![TAG_WATCHING],
         }
     }
 
@@ -371,6 +378,7 @@ impl ServerMessage {
                     allowed: StyleSet::from_bits(allowed),
                 })
             }
+            TAG_WATCHING => fixed::<1>(bytes).map(|_| ServerMessage::Watching),
             tag => Err(DecodeError::UnknownTag(tag)),
         }
     }

@@ -188,9 +188,14 @@ pub fn aim(client: &Client) -> Camera {
     let current = session.current();
     let config = current.config();
     let fighters = current.fighters();
-    let local = current
-        .fighter(session.local_player())
-        .unwrap_or(&fighters[0]);
+    let local = session
+        .local_player()
+        .and_then(|me| current.fighter(me))
+        .filter(|me| !me.is_knocked_out())
+        .or_else(|| fighters.iter().find(|f| !f.is_knocked_out()));
+    let Some(local) = local else {
+        return overview();
+    };
     let (x, _) = feet(local, config);
     let z = depth(local, config);
     let others: Vec<f32> = fighters
@@ -636,7 +641,7 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
             )
         };
         if let Some(p) = camera.project(anchor) {
-            if fighter.player() == session.local_player() {
+            if session.local_player() == Some(fighter.player()) {
                 let marker = [(p.x - 12, p.y - 26), (p.x + 12, p.y - 26), (p.x, p.y - 12)];
                 fill_polygon(frame, &marker, MARKER);
                 for (i, &corner) in marker.iter().enumerate() {

@@ -1,6 +1,6 @@
 //! The browser glue: the WebSocket to the relay server (`srr-server`), served from the same
-//! host as the page, on `/ws`, and the audio unlock (browsers only play sound started from a
-//! user gesture).
+//! host as the page, on `/ws` (or `/watch`, for the page opened with `?spectate`), and the
+//! audio unlock (browsers only play sound started from a user gesture).
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -186,21 +186,37 @@ pub(super) fn save_bindings(bindings: &KeyBindings) {
     let _ = storage.set_item(BINDINGS_KEY, &storage::store(bindings));
 }
 
-/// `ws://<host of the page>/ws` (`wss://` when the page is served over HTTPS).
-fn server_url() -> Option<String> {
+/// Whether the page URL asks to spectate the room (`?spectate`): the page watches the fights
+/// on the `/watch` endpoint instead of taking a seat.
+pub(super) fn spectate_requested() -> bool {
+    web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .is_some_and(|query| query.contains("spectate"))
+}
+
+/// `ws://<host of the page>/ws` (`wss://` when the page is served over HTTPS), or `/watch`
+/// when the page asks to spectate.
+fn server_url(spectating: bool) -> Option<String> {
     let location = web_sys::window()?.location();
     let scheme = if location.protocol().ok()? == "https:" {
         "wss"
     } else {
         "ws"
     };
-    Some(format!("{scheme}://{}/ws", location.host().ok()?))
+    let path = if spectating { "/watch" } else { "/ws" };
+    Some(format!("{scheme}://{}{path}", location.host().ok()?))
 }
 
-/// The online client and its connection (`None`, with a disconnected client, on failure).
+/// The online client and its connection (`None`, with a disconnected client, on failure):
+/// a spectator's page watches the room instead of joining it (see [`Client::spectator`]).
 pub(super) fn connect() -> (Client, Option<Connection>) {
-    let mut client = Client::online(MatchConfig::default(), INPUT_DELAY);
-    let connection = server_url().and_then(|url| Connection::open(&url));
+    let spectating = spectate_requested();
+    let mut client = if spectating {
+        Client::spectator(MatchConfig::default())
+    } else {
+        Client::online(MatchConfig::default(), INPUT_DELAY)
+    };
+    let connection = server_url(spectating).and_then(|url| Connection::open(&url));
     if connection.is_none() {
         client.disconnected();
     }

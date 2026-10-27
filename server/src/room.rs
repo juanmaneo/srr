@@ -3,7 +3,7 @@
 //! Pure logic: every event returns the [`Action`]s the network layer must perform, and time
 //! only passes when the network layer calls [`Room::tick`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use srr::game::{Character, Input, PlayerId, Skin, StyleSet};
 use srr::net::{Characters, ClientMessage, MAX_PLAYERS, PlayerSet, ServerMessage};
@@ -58,6 +58,11 @@ type Received = [Option<Input>; MAX_PLAYERS];
 /// they picked when they got ready; readiness is then used up, so the next match needs
 /// everybody ready again (which lets newcomers join it, and everybody change character).
 ///
+/// A connection that asks to spectate (see [`Room::watch`]) takes no seat: it is told
+/// [`ServerMessage::Watching`] and then everything the players are told — the room, the
+/// matches that start, every frame, the skins — but nothing it sends is listened to, and any
+/// number of them may watch.
+///
 /// During a session the room gathers the inputs of its players and sends everybody one
 /// [`ServerMessage::Frame`] per tick, in tick order: as soon as every input of the tick is
 /// there, or once the clock says the tick waited [`GRACE`] ticks. Then a missing input is
@@ -110,6 +115,8 @@ pub struct Room {
     /// The styles this server allows its players to wear (the chalk always among them);
     /// told to every newcomer with [`ServerMessage::Styles`].
     styles: StyleSet,
+    /// The connections watching the room without a seat (see [`Room::watch`]).
+    watchers: HashSet<ClientId>,
 }
 
 impl Default for Room {
@@ -139,6 +146,7 @@ impl Room {
             last: [Input::NONE; MAX_PLAYERS],
             worst_lead: [None; MAX_PLAYERS],
             styles,
+            watchers: HashSet::new(),
         }
     }
 
@@ -237,10 +245,40 @@ impl Room {
         actions
     }
 
+    /// A new connection that asks to spectate (the page was opened with `?spectate`, say on a
+    /// TV): it takes no seat, is told it is watching, then the styles, the skins, the state of
+    /// the room and — if a match is running — its beginning, and from now on everything the
+    /// players are told ([`Room::receive`] ignores whatever it sends).
+    pub fn watch(&mut self, client: ClientId) -> Vec<Action> {
+        self.watchers.insert(client);
+        let mut actions = vec![Action::Send(client, ServerMessage::Watching)];
+        actions.push(Action::Send(
+            client,
+            ServerMessage::Styles {
+                allowed: self.styles,
+            },
+        ));
+        for (player, _) in self.clients() {
+            let skin = self.seat_skin(player);
+            actions.push(Action::Send(client, ServerMessage::SkinOf { player, skin }));
+        }
+        actions.push(Action::Send(client, self.lobby_state()));
+        // A session runs (or ran, and the next one is still waited for): its start is replayed,
+        // so the spectator shows the match like the players do. `fighters` is empty before the
+        // first session ever, whatever the session number wraps to.
+        if self.playing.len() >= 2 && !self.fighters.is_empty() {
+            actions.push(Action::Send(client, self.start_message()));
+        }
+        actions
+    }
+
     /// A connection closed. Leaving a room one is not seated in changes nothing. The match
     /// goes on without the leaver (whose fighter stands still) while two players remain; the
     /// frames waiting only for the leaver go out at once.
     pub fn leave(&mut self, client: ClientId) -> Vec<Action> {
+        if self.watchers.remove(&client) {
+            return Vec::new();
+        }
         let Some(index) = self.index_of(client) else {
             return Vec::new();
         };
@@ -254,6 +292,11 @@ impl Room {
         let mut actions: Vec<Action> = self
             .clients()
             .map(|(_, other)| Action::Send(other, ServerMessage::PlayerLeft { player }))
+            .chain(
+                self.watchers
+                    .iter()
+                    .map(|&watcher| Action::Send(watcher, ServerMessage::PlayerLeft { player })),
+            )
             .collect();
         actions.extend(self.flush());
         actions.extend(self.start_or_lobby());
@@ -293,6 +336,9 @@ impl Room {
                 }
                 self.clients()
                     .map(|(_, other)| Action::Send(other, ServerMessage::SkinOf { player, skin }))
+                    .chain(self.watchers.iter().map(|&watcher| {
+                        Action::Send(watcher, ServerMessage::SkinOf { player, skin })
+                    }))
                     .collect()
             }
             Ok(ClientMessage::Input {
@@ -388,6 +434,11 @@ impl Room {
         self.clients()
             .filter(|&(player, _)| self.playing.contains(player))
             .map(|(_, client)| Action::Send(client, frame))
+            .chain(
+                self.watchers
+                    .iter()
+                    .map(|&watcher| Action::Send(watcher, frame)),
+            )
             .collect()
     }
 
@@ -409,28 +460,46 @@ impl Room {
         for seat in self.seats.iter_mut().flatten() {
             seat.ready = false;
         }
+        let start = self.start_message();
+        self.audience()
+            .map(|client| Action::Send(client, start))
+            .collect()
+    }
+
+    /// The [`ServerMessage::Start`] of the session that just began (or that runs, for a
+    /// spectator that arrives in the middle of it).
+    fn start_message(&self) -> ServerMessage {
         let mut characters: Characters = [Character::Chalk; MAX_PLAYERS];
         for (slot, seat) in characters.iter_mut().zip(&self.seats) {
             *slot = seat.map_or(Character::Chalk, |seat| seat.character);
         }
-        let start = ServerMessage::Start {
+        ServerMessage::Start {
             session: self.session,
-            players: seated,
+            players: self.fighters,
             characters,
-        };
-        self.clients()
-            .map(|(_, client)| Action::Send(client, start))
-            .collect()
+        }
+    }
+
+    /// The [`ServerMessage::Lobby`] of the room as it stands.
+    fn lobby_state(&self) -> ServerMessage {
+        ServerMessage::Lobby {
+            seated: self.seated(),
+            ready: self.ready(),
+        }
     }
 
     fn lobby(&self) -> Vec<Action> {
-        let lobby = ServerMessage::Lobby {
-            seated: self.seated(),
-            ready: self.ready(),
-        };
-        self.clients()
-            .map(|(_, client)| Action::Send(client, lobby))
+        let lobby = self.lobby_state();
+        self.audience()
+            .map(|client| Action::Send(client, lobby))
             .collect()
+    }
+
+    /// Every seated player, then every spectator.
+    fn audience(&self) -> impl Iterator<Item = ClientId> + '_ {
+        self.clients()
+            .map(|(_, client)| client)
+            .chain(self.watchers.iter().copied())
     }
 
     /// Every seated player with their client, by seat.

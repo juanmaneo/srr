@@ -887,3 +887,108 @@ fn requests_must_arrive_in_time_but_websockets_may_stay_silent() {
     ws.send_frame(FIN | OP_PING, b"still here");
     assert_eq!(ws.frame(), (FIN | OP_PONG, b"still here".to_vec()));
 }
+
+// -----------------------------------------------------------------------------------------
+// Spectating over the /watch endpoint
+// -----------------------------------------------------------------------------------------
+
+/// A spectator's WebSocket, told it watches the room (a `/ws` client gets a welcome instead).
+#[test]
+fn the_watch_endpoint_seats_a_spectator_instead_of_a_player() {
+    let server = Server::start();
+    let mut stream = server.connect();
+    write!(
+        stream,
+        "GET /watch?v=1 HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
+         Connection: keep-alive, Upgrade\r\nSec-WebSocket-Key: {KEY}\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    )
+    .unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let head = read_head(&mut reader).unwrap();
+    assert!(
+        head.starts_with("HTTP/1.1 101 Switching Protocols\r\n"),
+        "{head}"
+    );
+    let mut watcher = Ws { stream, reader };
+    assert_eq!(watcher.message(), ServerMessage::Watching);
+    // The styles and the skins, then the lobby, like a player.
+    let lobby = watcher.drain_intro();
+    assert_eq!(
+        lobby,
+        ServerMessage::Lobby {
+            seated: PlayerSet::EMPTY,
+            ready: PlayerSet::EMPTY
+        }
+    );
+
+    // A player joins after the spectator: it takes seat 0, and the lobby tells the spectator.
+    let mut player = server.player(0);
+    let lobby = watcher.wait_for("the lobby after the player sat", |message| {
+        matches!(message, ServerMessage::Lobby { seated, .. } if seated.contains(PlayerId(0)))
+    });
+    assert!(matches!(lobby, ServerMessage::Lobby { ready, .. } if ready.is_empty()));
+
+    // Whatever the spectator sends is ignored.
+    watcher.send_ready();
+    watcher.send_input(1, 0, LEFT);
+
+    // The player readies up alone: no match starts, and the spectator sees the readiness.
+    player.send_ready();
+    let lobby = watcher.wait_for("the readiness of the player", |message| {
+        matches!(message, ServerMessage::Lobby { ready, .. } if ready.contains(PlayerId(0)))
+    });
+    assert!(matches!(lobby, ServerMessage::Lobby { seated, .. } if seated == PlayerSet::first(1)));
+}
+
+/// A spectator that connects while a match runs is told its start, then its frames; it never
+/// misses the next match either.
+#[test]
+fn a_spectator_sees_a_running_match_and_the_next_one() {
+    let server = Server::start();
+    let mut players = server.match_of::<2>();
+
+    // The spectator arrives mid-match.
+    let mut stream = server.connect();
+    write!(
+        stream,
+        "GET /watch HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
+         Connection: Upgrade\r\nSec-WebSocket-Key: {KEY}\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    )
+    .unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let head = read_head(&mut reader).unwrap();
+    assert!(
+        head.starts_with("HTTP/1.1 101 Switching Protocols\r\n"),
+        "{head}"
+    );
+    let mut watcher = Ws { stream, reader };
+    assert_eq!(watcher.message(), ServerMessage::Watching);
+    let _ = watcher.drain_intro();
+    watcher.expect(ServerMessage::Start {
+        session: 1,
+        players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
+    });
+
+    // The frames of the running match reach it, like the players: the next tick is sent
+    // to the players and the spectator alike.
+    players[0].send_input(1, 0, LEFT);
+    players[1].send_input(1, 0, JUMP_KICK);
+    let expected = ServerMessage::Frame {
+        session: 1,
+        tick: 0,
+        players: PlayerSet::first(2),
+        late: PlayerSet::EMPTY,
+        inputs: {
+            let mut inputs = [Input::NONE; 16];
+            inputs[0] = LEFT;
+            inputs[1] = JUMP_KICK;
+            inputs
+        },
+    };
+    watcher.expect(expected);
+    players[0].expect(expected);
+    players[1].expect(expected);
+}

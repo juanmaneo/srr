@@ -34,6 +34,12 @@
 //! practice fight switches the rival, and so does the practice row of the pause menu
 //! ([`Practice`]).
 //!
+//! A spectator ([`Client::spectator`], the page opened with `?spectate`, say on a TV) skips
+//! the intro and the select screen and shows the fights of the room on the fight screen: the
+//! frames of the server play them exactly, and everything the players are told about the room
+//! is shown too. Nothing is ever sent, no fighter is played, and any number of spectators may
+//! watch.
+//!
 //! On a touch screen the engine hands the game its touches ([`Game::set_touches`]): from the
 //! first one on, on-screen controls ([`touch`]) are drawn over every screen and press keys like
 //! a keyboard would.
@@ -259,12 +265,19 @@ pub struct Game {
 }
 
 impl Game {
-    /// A game starting on the intro, playing with `client`.
+    /// A game starting on the intro, playing with `client` — unless `client` is a spectator
+    /// ([`Client::spectator`]), whose page goes straight to the fight screen: a TV set up to
+    /// watch the room shows the fights without anybody pressing anything on it.
     pub fn new(client: Client) -> Self {
         let character = client.character();
+        let spectating = client.is_spectator();
         let game = Game {
             practice: None,
-            screen: Screen::Intro,
+            screen: if spectating {
+                Screen::Fight
+            } else {
+                Screen::Intro
+            },
             intro: Intro::new(),
             music: MusicControl::new(),
             held: HashSet::new(),
@@ -695,11 +708,13 @@ impl Game {
         let (mood, tension) = match (self.screen, status, self.shown_match()) {
             (Screen::Controls, _, _) if self.controls.is_paused() => (Mood::Breakdown, 0.0),
             (Screen::Intro | Screen::Select | Screen::Controls, _, _) => (Mood::Intro, 0.0),
-            (Screen::Fight, Status::Playing, Some(current)) => match current.phase() {
-                Phase::Countdown { .. } => (Mood::Fight, 0.0),
-                Phase::Fighting => (Mood::Fight, intensity(current)),
-                Phase::Finished(_) => (Mood::Breakdown, 0.0),
-            },
+            (Screen::Fight, Status::Playing | Status::Watching, Some(current)) => {
+                match current.phase() {
+                    Phase::Countdown { .. } => (Mood::Fight, 0.0),
+                    Phase::Fighting => (Mood::Fight, intensity(current)),
+                    Phase::Finished(_) => (Mood::Breakdown, 0.0),
+                }
+            }
             (Screen::Fight, _, _) => (Mood::Breakdown, 0.0),
         };
         self.music.set_mood(mood);
@@ -716,6 +731,7 @@ impl Game {
         }
         match self.client.status() {
             Status::Connecting => "connecting to the server...".to_string(),
+            Status::Watching => "spectating the room - the fights show up on their own".to_string(),
             Status::Lobby if self.client.seated().len() <= 1 => {
                 "connected - nobody else is here yet".to_string()
             }
@@ -732,9 +748,11 @@ impl Game {
         }
     }
 
-    /// The player controlled here, when a match is running.
+    /// The player controlled here, when a match is running (`None` for a spectator).
     pub fn local_player(&self) -> Option<PlayerId> {
-        self.active_client().session().map(|s| s.local_player())
+        self.active_client()
+            .session()
+            .and_then(|s| s.local_player())
     }
 
     /// The small line under the banner about practice, if any: the rival and how to switch it,

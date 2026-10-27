@@ -6,9 +6,11 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
+use srr::front::hud::watching_text;
 use srr::game::{
     Attack, Character, ConfigError, Input, Match, MatchConfig, Outcome, Phase, PlayerId,
-    PlayerSlot, Rival, Roster, RosterError, SetupError, Strength, TeamId,
+    PlayerSlot, Rival, Roster, RosterError, SetupError, Skin, Strength, Style, StyleSet, TeamId,
+    Variant,
 };
 use srr::net::{
     Client, ClientError, ClientMessage, DecodeError, FrameInputs, INPUT_DELAY, LAG_MEMORY,
@@ -165,7 +167,11 @@ impl PerfectServer {
 fn exchange(sessions: &mut [Session], server: &mut PerfectServer, inputs: &[Input]) {
     for (session, &input) in sessions.iter_mut().zip(inputs) {
         let ticks = session.submit_local(input);
-        server.submit(session.local_player(), ticks, input);
+        server.submit(
+            session.local_player().expect("a player is played"),
+            ticks,
+            input,
+        );
     }
     for (tick, inputs) in server.frames() {
         for session in sessions.iter_mut() {
@@ -288,6 +294,7 @@ fn every_server_message_round_trips_through_its_bytes() {
         frame(1, 0, PlayerSet::EMPTY, PlayerSet::EMPTY, &[]),
         ServerMessage::PlayerLeft { player: p(1) },
         ServerMessage::RoomFull,
+        ServerMessage::Watching,
         ServerMessage::Lobby {
             seated: PlayerSet::first(MAX_PLAYERS),
             ready: set(&[1, 3, 8]),
@@ -341,6 +348,7 @@ fn server_messages_have_the_documented_layout() {
     );
     assert_eq!(ServerMessage::PlayerLeft { player: p(2) }.encode(), [4, 2]);
     assert_eq!(ServerMessage::RoomFull.encode(), [5]);
+    assert_eq!(ServerMessage::Watching.encode(), [13]);
     assert_eq!(
         ServerMessage::Lobby {
             seated: PlayerSet::first(10),
@@ -619,7 +627,7 @@ fn a_new_session_describes_itself() {
     for local in players.iter() {
         let session = Session::new(local, players, 17, config.clone(), INPUT_DELAY).unwrap();
         assert_eq!(session.players(), players);
-        assert_eq!(session.local_player(), local);
+        assert_eq!(session.local_player(), Some(local));
         assert_eq!(session.id(), 17);
         assert_eq!((session.tick(), session.confirmed_tick()), (0, 0));
         assert_eq!(session.current(), &expected);
@@ -981,7 +989,7 @@ fn machines_hearing_from_the_server_at_different_times_agree() {
                 let tick = session.confirmed_tick();
                 session.receive_frame(1, tick, &frames[tick as usize], PlayerSet::EMPTY);
             }
-            let local = session.local_player().0;
+            let local = session.local_player().expect("a player is played").0;
             session.submit_local(input_of(u32::from(local), now));
             session.advance();
         }
@@ -1096,7 +1104,7 @@ fn the_next_session_forgets_everything_but_the_wins() {
     session.receive_frame(1, 0, &inputs(&[]), set(&[1]));
     let mut next = session.next(2);
     assert_eq!(next.players(), PlayerSet::first(3));
-    assert_eq!(next.local_player(), p(0));
+    assert_eq!(next.local_player(), Some(p(0)));
     assert_eq!((next.tick(), next.confirmed_tick()), (0, 0));
     assert_eq!(next.lagging(), PlayerSet::EMPTY);
     assert_eq!(
@@ -1177,7 +1185,7 @@ fn an_online_client_goes_from_the_lobby_to_playing() {
     let session = client.session().unwrap();
     assert_eq!(session.id(), 6);
     assert_eq!(session.players(), PlayerSet::first(3));
-    assert_eq!(session.local_player(), p(1));
+    assert_eq!(session.local_player(), Some(p(1)));
     assert_eq!(session.tick(), 0);
 }
 
@@ -1704,7 +1712,7 @@ fn a_practice_client_plays_at_once_against_the_dummy() {
     assert_eq!(client.status(), Status::Playing);
     assert_eq!(client.player(), Some(p(0)));
     let session = client.session().unwrap();
-    assert_eq!(session.local_player(), p(0));
+    assert_eq!(session.local_player(), Some(p(0)));
     assert_eq!(session.players(), PlayerSet::first(2));
     assert_eq!(session.id(), 0);
     assert_eq!(session.tick(), 0);
@@ -2019,5 +2027,235 @@ fn characters_beyond_the_seats_are_ignored() {
                 expected
             },
         })
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Spectating: watching a room without playing in it
+// ---------------------------------------------------------------------------------------------
+
+/// A spectator welcomed by the server (`Watching`) in a room where nothing runs yet.
+fn watching_client(config: MatchConfig) -> Client {
+    let mut client = Client::spectator(config);
+    client.receive(&ServerMessage::Watching.encode());
+    assert_eq!(client.status(), Status::Watching);
+    assert!(client.is_spectator());
+    assert_eq!(client.player(), None);
+    client
+}
+
+#[test]
+fn a_spectator_never_plays_and_never_sends_anything() {
+    let mut client = watching_client(quick_draw_config());
+    client.receive(
+        &ServerMessage::Lobby {
+            seated: set(&[0, 1]),
+            ready: PlayerSet::EMPTY,
+        }
+        .encode(),
+    );
+    client.receive(&start(3, set(&[0, 1])));
+    assert_eq!(client.status(), Status::Watching);
+    let session = client.session().expect("the match is shown");
+    assert_eq!(session.players(), set(&[0, 1]));
+    assert_eq!(session.local_player(), None, "nobody is played");
+
+    // The frames of the server play the round, one tick at a time.
+    client.receive(&frame(3, 0, set(&[0, 1]), PlayerSet::EMPTY, &[]).encode());
+    assert!(client.tick(high_punch()).is_empty(), "nothing is sent");
+    assert_eq!(client.session().unwrap().tick(), 1, "the frame played");
+    // Without a frame the round waits.
+    assert!(client.tick(idle()).is_empty());
+    assert_eq!(client.session().unwrap().tick(), 1, "nothing was guessed");
+
+    // Enter does nothing either.
+    assert!(client.ready().is_none());
+}
+
+#[test]
+fn a_spectator_shows_the_next_match_and_the_round_after_that() {
+    let mut client = watching_client(quick_draw_config());
+    client.receive(&start(3, set(&[0, 1])));
+    for tick in 0..6 {
+        client.receive(&frame(3, tick, set(&[0, 1]), PlayerSet::EMPTY, &[]).encode());
+        client.tick(idle());
+    }
+    assert!(
+        client.session().unwrap().is_finished(),
+        "the five-tick round is over"
+    );
+    // The next match between the same players: a fresh session that keeps counting.
+    client.receive(&start(4, set(&[0, 1])));
+    let session = client.session().unwrap();
+    assert_eq!((session.id(), session.tick()), (4, 0));
+    assert_eq!(session.players(), set(&[0, 1]));
+    assert_eq!(session.local_player(), None);
+}
+
+#[test]
+fn a_spectator_arriving_mid_match_shows_it_from_the_next_frame_on() {
+    let mut client = watching_client(no_countdown());
+    client.receive(
+        &ServerMessage::Lobby {
+            seated: set(&[0, 1]),
+            ready: set(&[0, 1]),
+        }
+        .encode(),
+    );
+    // The match already runs: its start is replayed, the round starts from tick 0.
+    client.receive(&start(5, set(&[0, 1])));
+    client.receive(&frame(5, 0, set(&[0, 1]), PlayerSet::EMPTY, &[]).encode());
+    client.tick(idle());
+    assert_eq!(client.session().unwrap().tick(), 1);
+    // A frame of another session is ignored, like for a player.
+    client.receive(&frame(4, 1, set(&[0, 1]), PlayerSet::EMPTY, &[]).encode());
+    client.tick(idle());
+    assert_eq!(client.session().unwrap().tick(), 1, "only the frames of 5");
+}
+
+#[test]
+fn a_watching_message_is_ignored_by_a_player_and_a_spectator_welcomed_twice_stays_one() {
+    // A player that hears `Watching` (a server that got mixed up) keeps its seat.
+    let mut player = Client::online(no_countdown(), 0);
+    player.receive(&ServerMessage::Welcome { player: p(0) }.encode());
+    player.receive(&ServerMessage::Watching.encode());
+    assert_eq!(player.status(), Status::Lobby, "a player is no spectator");
+    assert!(!player.is_spectator());
+
+    // A spectator that hears `Watching` twice stays one.
+    let mut watcher = watching_client(no_countdown());
+    watcher.receive(&ServerMessage::Watching.encode());
+    assert_eq!(watcher.status(), Status::Watching);
+}
+
+#[test]
+fn a_spectator_sees_who_left_but_the_match_goes_on_for_it() {
+    let mut client = watching_client(no_countdown());
+    client.receive(&start(3, set(&[0, 1])));
+    client.receive(&frame(3, 0, set(&[0, 1]), PlayerSet::EMPTY, &[]).encode());
+    client.tick(idle());
+    // A player leaves: the spectator is told, and the match stays on screen.
+    client.receive(&ServerMessage::PlayerLeft { player: p(1) }.encode());
+    assert_eq!(client.status(), Status::Watching, "a spectator has no seat");
+    assert_eq!(client.departed(), set(&[1]));
+    client.receive(&frame(3, 1, set(&[0, 1]), PlayerSet::EMPTY, &[]).encode());
+    client.tick(idle());
+    assert_eq!(client.session().unwrap().tick(), 2, "the match went on");
+}
+
+#[test]
+fn a_spectator_shows_the_skins_and_the_room_like_the_players() {
+    let mut client = watching_client(no_countdown());
+    client.receive(
+        &ServerMessage::Styles {
+            allowed: StyleSet::all(),
+        }
+        .encode(),
+    );
+    let manga = Skin::styled(Style::Manga, Variant::Redhead);
+    client.receive(
+        &ServerMessage::SkinOf {
+            player: p(2),
+            skin: manga,
+        }
+        .encode(),
+    );
+    assert_eq!(client.skin(p(2)), manga);
+    client.receive(
+        &ServerMessage::Lobby {
+            seated: set(&[0, 1, 2]),
+            ready: set(&[1]),
+        }
+        .encode(),
+    );
+    assert_eq!(client.seated(), set(&[0, 1, 2]));
+    assert_eq!(client.ready_players(), set(&[1]));
+}
+
+#[test]
+fn a_disconnected_spectator_is_marked_like_a_player() {
+    let mut client = watching_client(no_countdown());
+    client.disconnected();
+    assert_eq!(client.status(), Status::Disconnected);
+    // A connection that broke before the server said anything is disconnected as well.
+    let mut client = Client::spectator(no_countdown());
+    assert_eq!(client.status(), Status::Connecting);
+    client.disconnected();
+    assert_eq!(client.status(), Status::Disconnected);
+}
+
+#[test]
+fn a_session_of_a_spectator_never_predicts_and_carries_the_wins() {
+    // A spectator's session is the same machinery as a player's, minus the local fighter.
+    let mut session =
+        Session::spectate(set(&[0, 1]), 3, quick_draw_config()).expect("a valid match");
+    assert_eq!(session.players(), set(&[0, 1]));
+    assert_eq!(session.local_player(), None);
+    // submit_local schedules nothing for a spectator (the client never calls it, but a
+    // session mixed up must not crash either).
+    let ticks = session.submit_local(idle());
+    assert!(ticks.is_empty());
+    for tick in 0..6 {
+        assert!(session.receive_frame(
+            3,
+            tick,
+            &[Input::NONE; PlayerSet::CAPACITY],
+            PlayerSet::EMPTY
+        ));
+        assert!(session.advance());
+    }
+    assert!(session.is_finished(), "the five-tick round is over");
+    let next = session.next(4);
+    assert_eq!(next.local_player(), None, "still watching");
+    assert_eq!(next.id(), 4);
+}
+
+#[test]
+fn spectating_a_match_of_one_player_is_refused_like_playing_in_it() {
+    // Fewer than two players cannot form a match.
+    assert_eq!(
+        Session::spectate(set(&[0]), 1, MatchConfig::default())
+            .unwrap_err()
+            .to_string(),
+        SessionError::InvalidRoster(RosterError::TooFewPlayers { count: 1 }).to_string()
+    );
+}
+
+#[test]
+fn a_spectator_ticks_and_fails_like_any_connection() {
+    // Before any match: ticking does nothing.
+    let mut client = watching_client(no_countdown());
+    assert!(client.tick(idle()).is_empty());
+    assert!(client.session().is_none(), "nothing is shown yet");
+
+    // A start that cannot make a match (a single player) fails the spectator too.
+    client.receive(&start(3, set(&[0])));
+    assert_eq!(
+        client.status(),
+        Status::Failed(ClientError::Session(SessionError::InvalidRoster(
+            RosterError::TooFewPlayers { count: 1 }
+        )))
+    );
+}
+
+#[test]
+fn a_spectator_of_an_empty_room_is_told_so() {
+    let client = watching_client(no_countdown());
+    assert_eq!(
+        watching_text(&client),
+        "Watching the room - nobody is here yet"
+    );
+    // And once players are in, what it says about them.
+    let mut full = watching_client(no_countdown());
+    full.receive(
+        &ServerMessage::Lobby {
+            seated: set(&[0, 1]),
+            ready: set(&[1]),
+        }
+        .encode(),
+    );
+    assert_eq!(
+        watching_text(&full),
+        "Watching 2 players, 1 ready\nThe next match shows up on its own"
     );
 }

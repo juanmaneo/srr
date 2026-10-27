@@ -46,6 +46,16 @@ title screen or while waiting in the room, and `T` or the pause menu to switch b
 rivals; see
 [Playing alone](#playing-alone-the-training-dummy-or-the-computers).
 
+Full party, not enough computers? **Spectate**: open the page with `?spectate`
+(`http://<host-ip>:8080/?spectate`) on the machine hooked to the TV (or any big screen) and
+the room shows up there — the fights, the health bars, the banners, the music, without a
+seat and without pressing anything. Any number of spectators may watch, in the side view or
+the third-person one (`Tab`), and the players' phones and the TV mix freely: a party of ten
+plays on nine machines while the tenth shows the game to the room. A player who is knocked
+out of a brawl keeps watching too: their third-person camera leaves their fighter on the
+floor and follows the ones still fighting. See
+[Spectating: the game on a TV](#spectating-the-game-on-a-tv).
+
 ### Controls
 
 Each player plays on their own keyboard and can pick their own layout on the controls page
@@ -539,6 +549,30 @@ Notes:
   you fight the training dummy, or the computer (`T` switches). `cargo run` (native window)
   also plays alone.
 
+#### Spectating: the game on a TV
+
+Open the page with `?spectate` on the machine hooked to the big screen
+(`http://<host-ip>:8080/?spectate`): it takes no seat, so a full party of ten can play while
+the tenth machine shows the game to the room. The spectator's page skips the title and the
+select screens and shows the fights as they are — the arena, the versus HUD, the banners, the
+music — with new matches showing up on their own, so nobody has to touch the TV once it is
+set up:
+
+* the page connects to the server's `/watch` endpoint instead of `/ws`, and the server marks
+  it a spectator: it is told everything the players are told (the room, the matches, every
+  frame, the skins, the departures) and nothing it sends is listened to;
+* it plays the frames of the server exactly, never guessing anything: the fight on the TV is
+  always the confirmed one, so it never rolls back or hesitates;
+* several pages may spectate at once (say, one per screen of the room) — they cost the
+  server one connection each, like a player;
+* a spectator arriving in the middle of a match sees it from the frames on (`Tab` switches
+  to the third-person view, which stands behind a fighter still standing, since a spectator
+  owns nobody).
+
+A knocked-out player's third-person camera does the same: it leaves their fighter lying on
+the pavement and follows the fight that goes on, so being eliminated from a brawl means
+watching the rest of it from the corner, not staring at the floor.
+
 #### How the online match works
 
 Every browser runs the same deterministic simulation from the same inputs; no game state is
@@ -597,8 +631,9 @@ cargo run --release -p srr-server -- --dir dist --port 8080
 | `--dir DIR`   | `dist`  | directory with the web build to serve |
 | `-h, --help`  |         | show the usage                        |
 
-It serves the files of `DIR` on `GET` and the room (up to 10 players) on the WebSocket at
-`/ws`, and runs the room's clock (60 ticks per second) that sends the frames of late players.
+It serves the files of `DIR` on `GET`, the room (up to 10 players) on the WebSocket at
+`/ws`, and the spectators on the WebSocket at `/watch` (the page opened with `?spectate`),
+and runs the room's clock (60 ticks per second) that sends the frames of late players.
 `Ctrl-C` stops it cleanly: the browsers are told with a close frame, the sockets are flushed,
 and the process exits 0.
 

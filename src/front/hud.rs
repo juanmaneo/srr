@@ -250,7 +250,7 @@ pub fn tag(client: &Client, player: PlayerId) -> String {
 pub fn name(client: &Client, player: PlayerId) -> String {
     let local = client
         .session()
-        .is_some_and(|session| session.local_player() == player);
+        .is_some_and(|session| session.local_player() == Some(player));
     let you = if local { " (you)" } else { "" };
     format!("{}{you}", tag(client, player))
 }
@@ -368,7 +368,7 @@ fn draw_bar(frame: &mut Frame, slot: &BarSlot, bar: &HealthBar, fighter: &Fighte
     } else {
         (slot.x + slot.width, Align::Right)
     };
-    let local = player == session.local_player();
+    let local = session.local_player() == Some(player);
     frame.label(
         format!(
             "{} {}  {:>3} HP{}",
@@ -585,6 +585,11 @@ pub fn banner(client: &Client) -> (Option<&'static str>, String) {
     match client.status() {
         Status::Connecting => (None, "Connecting to the server...".to_string()),
         Status::Lobby => (None, lobby_text(client)),
+        Status::Watching => client
+            .session()
+            .map_or((None, watching_text(client)), |session| {
+                round_banner(client, session)
+            }),
         Status::Playing => client.session().map_or((None, String::new()), |session| {
             round_banner(client, session)
         }),
@@ -619,7 +624,10 @@ fn round_banner(client: &Client, session: &Session) -> (Option<&'static str>, St
             let result = match outcome {
                 Outcome::Winner(team) => {
                     let members = current.roster().members(team);
-                    if members.contains(&session.local_player()) {
+                    if session
+                        .local_player()
+                        .is_some_and(|me| members.contains(&me))
+                    {
                         "You win!".to_string()
                     } else {
                         let names: Vec<String> =
@@ -646,7 +654,11 @@ pub fn ready_text(client: &Client, session: &Session) -> String {
     }
     let seated = client.seated();
     let ready = client.ready_players();
-    let mut lines = vec![if ready.contains(session.local_player()) {
+    let me = session.local_player();
+    if me.is_none() {
+        return "Watching the room".to_string();
+    }
+    let mut lines = vec![if ready.contains(me.unwrap()) {
         waiting_text(client, seated, ready)
     } else {
         "Enter for the next round".to_string()
@@ -671,6 +683,21 @@ fn waiting_text(client: &Client, seated: PlayerSet, ready: PlayerSet) -> String 
         // Never empty here: the server starts the match as soon as everybody is ready.
         format!("Waiting for {} to get ready...", tags(client, waiting))
     }
+}
+
+/// The banner of a spectator between matches: who is here, who is ready, and that the next
+/// match shows up on its own.
+pub fn watching_text(client: &Client) -> String {
+    let seated = client.seated();
+    let ready = client.ready_players();
+    if seated.is_empty() {
+        return "Watching the room - nobody is here yet".to_string();
+    }
+    format!(
+        "Watching {} players, {} ready\nThe next match shows up on its own",
+        seated.len(),
+        ready.len()
+    )
 }
 
 /// The banner between matches: who left, who is here and who is ready.

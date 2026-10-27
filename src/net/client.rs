@@ -70,6 +70,9 @@ const PREDICTION_BUDGET: u32 = MAX_ROLLBACK / 2;
 pub enum Status {
     /// Waiting for the server to say which seat we have.
     Connecting,
+    /// Spectating the room (see [`Client::spectator`]): the matches are shown, nothing is
+    /// played here.
+    Watching,
     /// Seated in the room, between matches: alone, waiting for the others to get ready, or
     /// after a player left the match (which stays visible).
     Lobby,
@@ -165,6 +168,9 @@ pub struct Client {
     styles: StyleSet,
     /// The skin each player wears, by id (the chalk until told otherwise).
     skins: [Skin; MAX_PLAYERS],
+    /// Whether this connection watches the room instead of playing (see
+    /// [`Client::spectator`]).
+    spectator: bool,
 }
 
 impl Client {
@@ -188,7 +194,43 @@ impl Client {
             character: Character::Chalk,
             styles: StyleSet::none(),
             skins: [Skin::STICK; MAX_PLAYERS],
+            spectator: false,
         }
+    }
+
+    /// A client that watches the room without playing (the page was opened with `?spectate`):
+    /// the server tells it every match that starts and every frame of it, which it shows like
+    /// the players see them, but it never controls a fighter and nothing it sends is listened
+    /// to. Useful to put the game on a big screen while playing on the phones.
+    ///
+    /// ```
+    /// use srr::game::{Character, MatchConfig, PlayerId};
+    /// use srr::net::{Client, PlayerSet, ServerMessage, Status};
+    ///
+    /// let mut watcher = Client::spectator(MatchConfig::default());
+    /// assert_eq!(watcher.status(), Status::Connecting);
+    /// watcher.handle(ServerMessage::Watching);
+    /// assert_eq!(watcher.status(), Status::Watching);
+    /// watcher.handle(ServerMessage::Start {
+    ///     session: 3,
+    ///     players: PlayerSet::first(2),
+    ///     characters: [Character::Chalk; 10],
+    /// });
+    /// assert!(watcher.session().is_some(), "the match is shown");
+    /// assert_eq!(watcher.player(), None, "nobody is played");
+    /// assert!(watcher.tick(Default::default()).is_empty(), "nothing to send");
+    /// assert!(watcher.ready().is_none());
+    /// ```
+    pub fn spectator(config: MatchConfig) -> Self {
+        Client {
+            spectator: true,
+            ..Client::online(config, 0)
+        }
+    }
+
+    /// Whether this client watches the room without playing (see [`Client::spectator`]).
+    pub fn is_spectator(&self) -> bool {
+        self.spectator
     }
 
     /// A client playing alone as player 1 against a training dummy that never moves
@@ -449,6 +491,11 @@ impl Client {
                 self.player = Some(player);
                 self.status = Status::Lobby;
             }
+            ServerMessage::Watching => {
+                if self.spectator {
+                    self.status = Status::Watching;
+                }
+            }
             ServerMessage::Start {
                 session,
                 players,
@@ -486,16 +533,17 @@ impl Client {
     }
 
     /// A player of the match left: their fighter stands still from now on, and the match goes
-    /// on unless fewer than two players remain.
+    /// on unless fewer than two players remain. A spectator is told too, but keeps watching.
     fn player_left(&mut self, player: PlayerId) {
         let Some(session) = self.session.as_ref() else {
             return;
         };
-        if self.status != Status::Playing || !session.players().contains(player) {
+        let watching = self.spectator && self.status == Status::Watching;
+        if (!watching && self.status != Status::Playing) || !session.players().contains(player) {
             return;
         }
         self.departed = self.departed.with(player);
-        if session.players().len() - self.departed.len() < 2 {
+        if session.players().len() - self.departed.len() < 2 && !watching {
             self.status = Status::Lobby;
             self.left = Some(player);
         }
@@ -531,6 +579,9 @@ impl Client {
     /// (up to [`MAX_INPUT_DELAY`]); once the connection gets better, it gives that delay back
     /// before skipping ticks.
     pub fn tick(&mut self, input: Input) -> Vec<Vec<u8>> {
+        if self.spectator {
+            return self.watch_tick();
+        }
         let (Status::Playing, Some(session)) = (self.status, self.session.as_mut()) else {
             return Vec::new();
         };
@@ -570,9 +621,12 @@ impl Client {
                 })),
                 Mode::Local { bot, .. } => {
                     // Everybody's input is known at once: the client is its own server.
+                    let me = session
+                        .local_player()
+                        .expect("a local client plays a fighter");
                     for tick in ticks {
                         let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
-                        inputs[usize::from(session.local_player().0)] = input;
+                        inputs[usize::from(me.0)] = input;
                         inputs[usize::from(RIVAL.0)] = bot.think(session.current());
                         session.receive_frame(id, tick, &inputs, PlayerSet::EMPTY);
                     }
@@ -587,6 +641,19 @@ impl Client {
             }
         }
         outgoing
+    }
+
+    /// One fixed tick of a spectator: the frames of the server play the round on screen, one
+    /// tick at a time, and nothing is ever sent. A spectator never guesses: when no frame
+    /// came the round simply waits (a spectator is never late, so it never stalls either).
+    fn watch_tick(&mut self) -> Vec<Vec<u8>> {
+        let Some(session) = self.session.as_mut() else {
+            return Vec::new();
+        };
+        if session.tick() < session.confirmed_tick() {
+            session.advance();
+        }
+        Vec::new()
     }
 
     /// The player wants to fight (Enter). Online, in the lobby or once the round is over, this
@@ -616,14 +683,15 @@ impl Client {
     }
 
     fn start(&mut self, id: u8, players: PlayerSet, characters: Characters) {
-        let Some(player) = self.player else {
-            self.fail(ClientError::StartBeforeWelcome);
-            return;
-        };
+        if self.spectator || self.player.is_none() {
+            return self.watch_start(id, players, characters);
+        }
+        // `watch_start` handled every connection without a seat, so one is held.
+        let player = self.player.expect("a seated player");
         let rematch = self
             .session
             .as_ref()
-            .filter(|old| old.players() == players && old.local_player() == player)
+            .filter(|old| old.players() == players && old.local_player() == Some(player))
             .map(|old| old.next_with(id, characters));
         let config = MatchConfig {
             characters,
@@ -644,6 +712,37 @@ impl Client {
                 self.left = None;
                 self.departed = PlayerSet::EMPTY;
                 // Starting a match uses up everybody's readiness, on the server too.
+                self.ready = PlayerSet::EMPTY;
+            }
+            Err(error) => self.fail(ClientError::Session(error)),
+        }
+    }
+
+    /// [`Client::start`] for a spectator: the match is watched from outside, with no fighter
+    /// of one's own. A connection that was told neither `Watching` nor a seat cannot show
+    /// anything: it fails the way `Client::start` does.
+    fn watch_start(&mut self, id: u8, players: PlayerSet, characters: Characters) {
+        if !self.spectator {
+            self.fail(ClientError::StartBeforeWelcome);
+            return;
+        }
+        let config = MatchConfig {
+            characters,
+            ..self.config.clone()
+        };
+        let rematch = self
+            .session
+            .as_ref()
+            .filter(|old| old.players() == players && old.local_player().is_none())
+            .map(|old| old.next_with(id, characters));
+        let created = rematch.map_or_else(|| Session::spectate(players, id, config), Ok);
+        match created {
+            Ok(session) => {
+                self.session = Some(session);
+                self.status = Status::Watching;
+                self.stalled = 0;
+                self.left = None;
+                self.departed = PlayerSet::EMPTY;
                 self.ready = PlayerSet::EMPTY;
             }
             Err(error) => self.fail(ClientError::Session(error)),

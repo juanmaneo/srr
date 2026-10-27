@@ -15,7 +15,9 @@ use srr::front::{
     Frame, Game, Headless, PAUSE_KEY, Rect, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH, Screen, VIEW_KEY,
     View,
 };
-use srr::game::{Character, FighterState, Key, MatchConfig, PlayerId};
+use srr::game::{
+    Attack, AttackData, Character, FighterState, Input, Key, MatchConfig, PlayerId, Strength,
+};
 use srr::net::{Client, PlayerSet, ServerMessage};
 
 const WHITE: Rgba = Rgba::hex(0xffffff);
@@ -808,4 +810,132 @@ fn the_camera_settles_over_the_shoulder() {
     assert!(gap < Fx::int(1), "{camera:?} vs {aim:?}");
     assert!(camera.orientation.dot(aim.orientation).abs() > Fx::from_f32(0.995));
     assert_eq!(CAMERA_LAG, 3);
+}
+
+/// An online client of `local` whose duel just started, in a match where one punch of player 0
+/// knocks player 1 out.
+fn fragile_duel(local: u8) -> Client {
+    let config = MatchConfig {
+        countdown_ticks: 0,
+        max_health: 10,
+        punches: [AttackData {
+            startup: 1,
+            active: 1,
+            recovery: 1,
+            range: 700,
+            damage: 10,
+            knockback: 0,
+            hitstun: 1,
+        }; 3],
+        ..MatchConfig::default()
+    };
+    let mut client = Client::online(config, 0);
+    client.handle(ServerMessage::Welcome {
+        player: PlayerId(local),
+    });
+    client.handle(ServerMessage::Lobby {
+        seated: PlayerSet::first(2),
+        ready: PlayerSet::EMPTY,
+    });
+    client.handle(ServerMessage::Start {
+        session: 1,
+        players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
+    });
+    client
+}
+
+/// One frame of the duel between both players, then a tick of `client`.
+fn step(client: &mut Client, p0: Input, p1: Input) {
+    let (id, tick) = {
+        let session = client.session().unwrap();
+        (session.id(), session.confirmed_tick())
+    };
+    let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
+    inputs[0] = p0;
+    inputs[1] = p1;
+    client.handle(ServerMessage::Frame {
+        session: id,
+        tick,
+        players: PlayerSet::first(2),
+        late: PlayerSet::EMPTY,
+        inputs,
+    });
+    client.tick(if client.player() == Some(PlayerId(0)) {
+        p0
+    } else {
+        p1
+    });
+}
+
+/// A knocked-out player's camera follows the fight that goes on: it stands behind the other
+/// fighter, the way it would behind its own.
+#[test]
+fn the_camera_of_a_knocked_out_player_follows_the_survivor() {
+    let mut client = fragile_duel(0);
+    let punch = Input::pressing(Attack::punch(Strength::Low));
+    step(&mut client, punch, Input::NONE);
+    for _ in 0..4 {
+        step(&mut client, Input::NONE, Input::NONE);
+    }
+    let survivor = client.session().unwrap().current();
+    assert!(
+        survivor
+            .fighter(PlayerId(1))
+            .is_some_and(|f| f.is_knocked_out()),
+        "player 2 is out"
+    );
+    let (x1, _) = feet(
+        client
+            .session()
+            .unwrap()
+            .current()
+            .fighter(PlayerId(0))
+            .unwrap(),
+        client.session().unwrap().current().config(),
+    );
+    assert_eq!(
+        tps::aim(&client),
+        shoulder(x1, 1),
+        "the camera watches the fighter still standing"
+    );
+}
+
+/// A spectator watches from behind the first fighter still standing; when everybody is out the
+/// camera overlooks the arena again.
+#[test]
+fn a_spectator_watches_from_behind_a_fighter_still_standing() {
+    let mut watcher = Client::spectator(MatchConfig::default());
+    watcher.handle(ServerMessage::Watching);
+    watcher.handle(ServerMessage::Start {
+        session: 1,
+        players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
+    });
+    let current = watcher.session().unwrap().current();
+    let (x0, _) = feet(current.fighter(PlayerId(0)).unwrap(), current.config());
+    assert_eq!(
+        tps::aim(&watcher),
+        shoulder(x0, 1),
+        "behind player 1, like player 1's own camera"
+    );
+}
+
+/// When every fighter is knocked out (a double knockout), the camera leaves the floor and
+/// overlooks the arena again, like between matches.
+#[test]
+fn the_camera_of_a_fight_where_everybody_is_out_overlooks_the_arena() {
+    let mut client = fragile_duel(0);
+    let punch = Input::pressing(Attack::punch(Strength::Low));
+    // Both press the same punch on the same tick: a double knockout.
+    step(&mut client, punch, punch);
+    for _ in 0..4 {
+        step(&mut client, Input::NONE, Input::NONE);
+    }
+    let current = client.session().unwrap().current();
+    assert!(
+        current.fighters().iter().all(|f| f.is_knocked_out()),
+        "every fighter is out"
+    );
+    assert_eq!(tps::aim(&client), overview());
 }

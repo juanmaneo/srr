@@ -267,9 +267,11 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
     for shot in current.projectiles() {
         draw_fireball(frame, shot_center(shot, config), shot.facing(), fight_ticks);
     }
-    // A session only exists for a local player who is in the match, so there is one fighter.
-    current
-        .fighter(session.local_player())
+    // A session only exists for a local player who is in the match, so there is one fighter;
+    // a spectator watches nobody in particular, so no fighter is marked.
+    session
+        .local_player()
+        .and_then(|me| current.fighter(me))
         .iter()
         .for_each(|&local| {
             let (x, _) = feet(local, config);

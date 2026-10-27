@@ -4,7 +4,8 @@
 //!
 //! * serves the web build (`dist/`) over HTTP, so every browser loads the game from it;
 //! * accepts WebSocket connections on `/ws` and seats the first [`MAX_PLAYERS`] in the
-//!   [`room`], which starts a free-for-all once everybody seated is ready;
+//!   [`room`], which starts a free-for-all once everybody seated is ready, and on `/watch`
+//!   the spectators (see [`room::Room::watch`]), who watch the same matches without a seat;
 //! * gathers the inputs of the players into one frame per tick for everybody, without waiting
 //!   long for a late one (the browsers run the match with rollback, see `srr::net`).
 //!
@@ -47,6 +48,9 @@ pub const DEFAULT_PORT: u16 = 8080;
 pub const DEFAULT_ROOT: &str = "dist";
 /// The path of the WebSocket endpoint.
 pub const WEBSOCKET_PATH: &str = "/ws";
+/// The WebSocket endpoint of the spectators (see [`Room::watch`]): the same page with
+/// `?spectate` in its URL opens this one instead.
+pub const WATCH_PATH: &str = "/watch";
 /// The period of the room's clock: the game's fixed tick.
 pub const TICK: Duration = Duration::from_nanos(1_000_000_000 / TICKS_PER_SECOND as u64);
 /// Messages waiting to be written to one client (about four seconds of frames) before the
@@ -510,9 +514,10 @@ fn handle_connection(
     if request.method != "GET" {
         return writer.write_all(&http::error_response("405 Method Not Allowed"));
     }
-    if request.path() != WEBSOCKET_PATH {
+    if request.path() != WEBSOCKET_PATH && request.path() != WATCH_PATH {
         return serve_file(&mut writer, root, request.path());
     }
+    let spectating = request.path() == WATCH_PATH;
     match request.header("sec-websocket-key") {
         Some(key) if request.is_websocket_upgrade() => {
             // Seated players stay silent in the lobby; a timeout in the middle of a frame
@@ -522,7 +527,7 @@ fn handle_connection(
                 .set_read_timeout(None)
                 .and_then(|()| writer.write_all(&http::websocket_handshake(key)))
                 .and_then(|()| writer.try_clone())
-                .and_then(|stream| run_websocket(reader, writer, stream, hub))
+                .and_then(|stream| run_websocket(reader, writer, stream, hub, spectating))
         }
         _ => writer.write_all(&http::error_response("400 Bad Request")),
     }
@@ -538,13 +543,15 @@ fn serve_file(writer: &mut TcpStream, root: &Path, path: &str) -> io::Result<()>
     writer.write_all(&response)
 }
 
-/// Seats the client: `writer` goes to its writing thread, `stream` (another handle on the same
-/// socket) stays in the hub to cut the connection off.
+/// Seats the client (or seats it among the spectators, when it connected to [`WATCH_PATH`]):
+/// `writer` goes to its writing thread, `stream` (another handle on the same socket) stays in
+/// the hub to cut the connection off.
 fn run_websocket(
     mut reader: BufReader<TcpStream>,
     writer: TcpStream,
     stream: TcpStream,
     hub: &Mutex<Hub>,
+    spectating: bool,
 ) -> io::Result<()> {
     let (queue, queued) = mpsc::sync_channel(QUEUE_LENGTH);
     thread::spawn(move || write_queue(writer, queued));
@@ -553,7 +560,11 @@ fn run_websocket(
         let client = hub.next_id;
         hub.next_id += 1;
         hub.writers.insert(client, Writer { queue, stream });
-        let actions = hub.room.join(client);
+        let actions = if spectating {
+            hub.room.watch(client)
+        } else {
+            hub.room.join(client)
+        };
         hub.apply(actions);
         client
     };
@@ -572,6 +583,8 @@ fn pump(reader: &mut BufReader<TcpStream>, client: ClientId, hub: &Mutex<Hub>) -
         let mut hub = lock(hub);
         match frame.opcode {
             OP_BINARY if frame.fin => {
+                // A spectator is not seated, so this is ignored (a room only listens to the
+                // connections it seated).
                 let actions = hub.room.receive(client, &frame.payload);
                 hub.apply(actions);
             }

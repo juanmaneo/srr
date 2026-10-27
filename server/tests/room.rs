@@ -933,3 +933,182 @@ fn a_room_allows_only_the_styles_it_was_given() {
     assert_eq!(room.receive(1, &skin(realistic)), vec![]);
     assert_eq!(room.skin(PlayerId(0)), manga, "the pick is kept");
 }
+
+// -----------------------------------------------------------------------------------------
+// Spectators: watching the room without a seat
+// -----------------------------------------------------------------------------------------
+
+/// What a spectator is told when it arrives in an empty room.
+#[test]
+fn a_spectator_is_told_it_watches_and_shown_the_lobby() {
+    let mut room = Room::new();
+    assert_eq!(
+        room.watch(9),
+        vec![
+            Action::Send(9, ServerMessage::Watching),
+            Action::Send(
+                9,
+                ServerMessage::Styles {
+                    allowed: StyleSet::all(),
+                }
+            ),
+            Action::Send(
+                9,
+                ServerMessage::Lobby {
+                    seated: PlayerSet::EMPTY,
+                    ready: PlayerSet::EMPTY
+                }
+            ),
+        ]
+    );
+    // Whatever a spectator sends is ignored, even garbage.
+    assert_eq!(room.receive(9, &[255]), vec![]);
+}
+
+/// A spectator takes no seat: the players that join after it sit as if it were not there.
+#[test]
+fn a_spectator_takes_no_seat() {
+    let mut room = Room::new();
+    room.watch(9);
+    room.join(1);
+    assert_eq!(room.seated(), players(&[0]));
+    assert_eq!(room.seat(PlayerId(0)), Some(1));
+}
+
+/// A spectator is told everything the players are told: the lobby, the skins, who left.
+#[test]
+fn a_spectator_sees_the_room_like_the_players_do() {
+    let mut room = room_of(2);
+    room.watch(9);
+    // A skin change reaches the spectator too.
+    let manga = Skin::styled(Style::Manga, Variant::Redhead);
+    let actions = room.receive(1, &skin(manga));
+    assert!(actions.contains(&Action::Send(
+        9,
+        ServerMessage::SkinOf {
+            player: PlayerId(0),
+            skin: manga
+        }
+    )));
+    // So does a lobby change.
+    let actions = all_ready(&mut room, &[1]);
+    assert!(actions.contains(&Action::Send(
+        9,
+        ServerMessage::Lobby {
+            seated: players(&[0, 1]),
+            ready: players(&[0])
+        }
+    )));
+    // And the departure of a player.
+    let actions = room.leave(2);
+    assert!(actions.contains(&Action::Send(
+        9,
+        ServerMessage::PlayerLeft {
+            player: PlayerId(1)
+        }
+    )));
+}
+
+/// A spectator that arrives while a match runs is told its beginning and then its frames, in
+/// order, like the players.
+#[test]
+fn a_spectator_arriving_mid_match_sees_it_from_the_server_not_the_past() {
+    let mut room = room_of(2);
+    let actions = all_ready(&mut room, &[1, 2]);
+    let start = actions
+        .iter()
+        .find(|action| matches!(action, Action::Send(1, ServerMessage::Start { .. })))
+        .cloned();
+    assert!(start.is_some());
+    run(&mut room, GRACE);
+    room.receive(1, &input(1, 0, LEFT));
+    room.receive(2, &input(1, 0, JUMP_KICK));
+
+    // The spectator arrives: it is told it watches, the room, and the running match.
+    let actions = room.watch(9);
+    assert_eq!(
+        actions.first(),
+        Some(&Action::Send(9, ServerMessage::Watching))
+    );
+    let replayed = actions.iter().find_map(|action| match action {
+        Action::Send(9, message @ ServerMessage::Start { .. }) => Some(message),
+        _ => None,
+    });
+    let Action::Send(_, started) = start.unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(replayed, Some(&started), "the running match is replayed");
+    // The next frame reaches it, like the players.
+    let _ = room.receive(1, &input(1, 1, LEFT));
+    let actions = room.receive(2, &input(1, 1, JUMP_KICK));
+    let expected = frame(
+        1,
+        1,
+        players(&[0, 1]),
+        PlayerSet::EMPTY,
+        &[(0, LEFT), (1, JUMP_KICK)],
+    );
+    assert!(actions.contains(&Action::Send(9, expected)));
+}
+
+/// The frames of a match go to the spectators as well; a spectator leaving changes nothing
+/// for the players.
+#[test]
+fn the_frames_reach_the_spectators_and_a_spectator_leaving_changes_nothing() {
+    let mut room = room_of(2);
+    room.watch(9);
+    all_ready(&mut room, &[1, 2]);
+    let _ = room.receive(1, &input(1, 0, LEFT));
+    let actions = room.receive(2, &input(1, 0, JUMP_KICK));
+    let expected = frame(
+        1,
+        0,
+        players(&[0, 1]),
+        PlayerSet::EMPTY,
+        &[(0, LEFT), (1, JUMP_KICK)],
+    );
+    assert!(actions.contains(&Action::Send(9, expected)));
+
+    // The spectator leaves: nobody is told anything and the match goes on.
+    assert_eq!(room.leave(9), vec![]);
+    let _ = room.receive(1, &input(1, 1, LEFT));
+    let actions = room.receive(2, &input(1, 1, JUMP_KICK));
+    assert!(
+        !actions.contains(&Action::Send(9, expected)),
+        "the spectator is gone"
+    );
+    assert!(actions.contains(&Action::Send(
+        1,
+        frame(
+            1,
+            1,
+            players(&[0, 1]),
+            PlayerSet::EMPTY,
+            &[(0, LEFT), (1, JUMP_KICK)]
+        )
+    )));
+}
+
+/// Two spectators watch the same match at once, and a second match reaches them too.
+#[test]
+fn many_spectators_watch_the_next_matches_too() {
+    let mut room = room_of(2);
+    room.watch(9);
+    room.watch(10);
+    let actions = all_ready(&mut room, &[1, 2]);
+    for watcher in [9, 10] {
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::Send(client, ServerMessage::Start { .. }) if *client == watcher
+        )));
+    }
+    let _ = room.receive(1, &input(1, 0, LEFT));
+    let actions = room.receive(2, &input(1, 0, JUMP_KICK));
+    for watcher in [9, 10] {
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::Send(client, ServerMessage::Frame { .. }) if *client == watcher
+        )));
+    }
+    drop(actions);
+}

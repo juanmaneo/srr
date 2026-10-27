@@ -214,7 +214,11 @@ fn relay_frame(client: &mut Client, held: &[(PlayerId, Input)], late: PlayerSet)
 /// One tick of the duel with what players 0 and 1 hold. The server's frame comes first, so
 /// the round shown is exact (nothing is guessed, and the local input is not sent again).
 fn play(client: &mut Client, p0: Input, p1: Input) {
-    let local = client.session().expect("a duel runs").local_player();
+    let local = client
+        .session()
+        .expect("a duel runs")
+        .local_player()
+        .expect("a player is played");
     let mine = if local == PlayerId(0) { p0 } else { p1 };
     relay_frame(
         client,
@@ -2258,7 +2262,11 @@ fn fight_tick(game: &mut Game, pressed: &[Key], remote: Input) -> Vec<Vec<u8>> {
         });
     if let Some(mine) = sent {
         let client = game.client_mut();
-        let local = client.session().expect("a duel runs").local_player();
+        let local = client
+            .session()
+            .expect("a duel runs")
+            .local_player()
+            .expect("a player is played");
         let theirs = PlayerId(1 - local.0);
         relay_frame(client, &[(local, mine), (theirs, remote)], PlayerSet::EMPTY);
     }
@@ -3415,7 +3423,11 @@ fn the_controls_page_of_the_title_chooses_the_rival_too() {
 
 /// One tick of a match where player `i` holds `inputs[i]`.
 fn play_all(client: &mut Client, inputs: &[Input]) {
-    let local = client.session().expect("a match runs").local_player();
+    let local = client
+        .session()
+        .expect("a match runs")
+        .local_player()
+        .expect("a player is played");
     let held: Vec<(PlayerId, Input)> = (0..).map(PlayerId).zip(inputs.iter().copied()).collect();
     relay_frame(client, &held, PlayerSet::EMPTY);
     let before = client.session().unwrap().tick();
@@ -3471,4 +3483,131 @@ fn a_three_player_round_goes_to_the_last_one_standing() {
         .filter(|r| r.width == r.height)
         .count();
     assert_eq!(lit, 1, "one pip lit");
+}
+
+// -----------------------------------------------------------------------------------------
+// Spectating: the game on a big screen, watching the room
+// -----------------------------------------------------------------------------------------
+
+/// A spectator's game: the client of a TV (or any machine) watching the room, welcomed and
+/// told a duel is running.
+fn spectator_game() -> Game {
+    let mut client = Client::spectator(cfg());
+    client.handle(ServerMessage::Watching);
+    client.handle(ServerMessage::Lobby {
+        seated: set(&[0, 1]),
+        ready: PlayerSet::EMPTY,
+    });
+    Game::new(client)
+}
+
+/// Feeds the spectator's client the server's frame of `tick` between players 0 and 1.
+fn relay_to_spectator(game: &mut Game, tick: u32, p0: Input, p1: Input) {
+    let (session, players) = {
+        let session = game.client().session().expect("a match runs");
+        (session.id(), session.players())
+    };
+    let mut inputs = [Input::NONE; PlayerSet::CAPACITY];
+    inputs[0] = p0;
+    inputs[1] = p1;
+    game.client_mut().handle(ServerMessage::Frame {
+        session,
+        tick,
+        players,
+        late: PlayerSet::EMPTY,
+        inputs,
+    });
+}
+
+#[test]
+fn a_spectators_page_goes_straight_to_the_fight_screen() {
+    let game = spectator_game();
+    assert_eq!(game.screen(), Screen::Fight, "no intro, no select");
+    assert!(game.client().is_spectator());
+    assert_eq!(game.local_player(), None, "nobody is played");
+    assert_eq!(game.practice(), Practice::Unavailable);
+    assert_eq!(
+        game.practice_notice(),
+        None,
+        "nothing about practice on a TV"
+    );
+    assert_eq!(
+        game.status_line(),
+        "spectating the room - the fights show up on their own"
+    );
+    // The banner tells the room while no match runs, and that matches show up on their own.
+    assert_eq!(
+        hud::banner(game.client()),
+        (
+            None,
+            "Watching 2 players, 0 ready\nThe next match shows up on its own".to_string()
+        )
+    );
+}
+
+#[test]
+fn a_spectator_shows_the_match_the_server_replays_and_follows_it() {
+    let mut game = spectator_game();
+    game.client_mut().handle(ServerMessage::Start {
+        session: SESSION,
+        players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
+    });
+    assert_eq!(game.client().status(), Status::Watching);
+    assert!(game.tick(&keys(&[])).is_empty(), "a tick draws the bars");
+    assert_eq!(game.health_bars().len(), 2, "both bars are shown");
+
+    // The frames play on screen, one per tick, without anything pressed.
+    relay_to_spectator(&mut game, 0, idle(), idle());
+    assert!(game.tick(&keys(&[])).is_empty(), "nothing is ever sent");
+    assert_eq!(game.client().session().unwrap().tick(), 1);
+    assert_eq!(game.music().mood(), Mood::Fight, "the fight is scored");
+
+    // Without a frame the round waits (a spectator never guesses).
+    assert!(game.tick(&keys(&[])).is_empty());
+    assert_eq!(game.client().session().unwrap().tick(), 1);
+
+    // The keys of a player are ignored: they cannot move a fighter.
+    relay_to_spectator(&mut game, 1, idle(), idle());
+    game.tick(&keys(&[Key::A, Key::Enter, PRACTICE_KEY]));
+    assert_eq!(game.client().session().unwrap().tick(), 2);
+    assert!(game.client().session().unwrap().local_player().is_none());
+    assert_eq!(game.practice(), Practice::Unavailable, "still no practice");
+}
+
+#[test]
+fn a_spectator_shows_the_winner_and_the_next_match_on_its_own() {
+    // A spectator of short rounds: the round is over after one frame.
+    let mut client = Client::spectator(short_rounds(1));
+    client.handle(ServerMessage::Watching);
+    client.handle(ServerMessage::Lobby {
+        seated: set(&[0, 1]),
+        ready: PlayerSet::EMPTY,
+    });
+    let mut game = Game::new(client);
+    let session = SESSION;
+    game.client_mut().handle(ServerMessage::Start {
+        session,
+        players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
+    });
+    for tick in 0..2 {
+        relay_to_spectator(&mut game, tick, idle(), idle());
+        game.tick(&keys(&[]));
+    }
+    assert!(game.client().session().unwrap().is_finished());
+    assert_eq!(
+        hud::banner(game.client()),
+        (Some("TIME"), "Draw!\nWatching the room".to_string()),
+        "a spectator is never asked to press Enter"
+    );
+
+    // The next match shows up on its own.
+    game.client_mut().handle(ServerMessage::Start {
+        session: session + 1,
+        players: PlayerSet::first(2),
+        characters: [Character::Chalk; 10],
+    });
+    assert_eq!(game.client().session().unwrap().tick(), 0);
+    assert_eq!(game.client().session().unwrap().id(), session + 1);
 }
