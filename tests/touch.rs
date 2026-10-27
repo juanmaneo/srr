@@ -24,6 +24,26 @@ fn at(screen: Screen, label: &str) -> (f32, f32) {
     )
 }
 
+/// A point on the middle of a character's card on the select screen (Torch is the second
+/// card, Brick the third).
+fn torch_card() -> (f32, f32) {
+    card_middle(1)
+}
+
+fn brick_card() -> (f32, f32) {
+    card_middle(2)
+}
+
+fn card_middle(index: usize) -> (f32, f32) {
+    use srr::front::select::{CARD_GAP, CARD_HEIGHT, CARD_TOP, CARD_WIDTH};
+    let count = Character::ALL.len() as f32;
+    let left = (1280.0 - (count * CARD_WIDTH + (count - 1.0) * CARD_GAP)) / 2.0;
+    (
+        left + index as f32 * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2.0,
+        CARD_TOP + CARD_HEIGHT / 2.0,
+    )
+}
+
 fn button(screen: Screen, label: &str) -> Button {
     *TouchPad::for_screen(screen)
         .buttons()
@@ -43,6 +63,12 @@ const HELD: Rgba = Rgba {
     b: 1.0,
     a: 0.38,
 };
+const KNOB_HELD: Rgba = Rgba {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 0.55,
+};
 
 // ---------------------------------------------------------------------------------------------
 // The pads
@@ -57,19 +83,19 @@ fn every_screen_has_its_controls() {
         labels,
         [
             "WALL", "STREET", "LK", "MK", "HK", "LP", "MP", "HP", "GRAB", "SPECIAL", "BACK",
-            "READY", "RIVAL", "VIEW", "PAUSE"
+            "READY", "RIVAL", "VIEW", "PAUSE", "TOGGLE"
         ]
     );
     for screen in [Screen::Select, Screen::Controls] {
         let menu = TouchPad::for_screen(screen);
         assert_eq!(menu.pad(), Some(Pad::Arrows));
         let labels: Vec<&str> = menu.buttons().iter().map(|b| b.label).collect();
-        assert_eq!(labels, ["BACK", "OK"]);
+        assert_eq!(labels, ["BACK", "OK", "TOGGLE"]);
     }
     let title = TouchPad::for_screen(Screen::Intro);
     assert_eq!(title.pad(), None);
     let labels: Vec<&str> = title.buttons().iter().map(|b| b.label).collect();
-    assert_eq!(labels, ["PRACTICE", "START"]);
+    assert_eq!(labels, ["PRACTICE", "START", "TOGGLE"]);
 }
 
 #[test]
@@ -139,8 +165,11 @@ fn the_fight_buttons_press_the_bound_keys() {
             "{label}"
         );
     }
-    assert_eq!(Press::Action(13).key(&KeyBindings::WASD), Key::F);
-    assert_eq!(Press::Key(Key::Tab).key(&KeyBindings::WASD), Key::Tab);
+    assert_eq!(Press::Action(13).key(&KeyBindings::WASD), Some(Key::F));
+    assert_eq!(Press::Key(Key::Tab).key(&KeyBindings::WASD), Some(Key::Tab));
+    assert_eq!(Press::Toggle.key(&KeyBindings::WASD), None);
+    assert!(Press::Toggle.is_toggle());
+    assert!(!Press::Key(Key::Enter).is_toggle());
 }
 
 #[test]
@@ -236,7 +265,7 @@ fn the_controls_only_show_once_the_screen_is_touched() {
     assert!(game.game().touch_mode());
     let touch = game.frame();
     let text = touch.text();
-    for label in ["LP", "HK", "GRAB", "SPECIAL", "PAUSE", "^", "v", "<", ">"] {
+    for label in ["LP", "HK", "GRAB", "SPECIAL", "PAUSE", "TOGGLE"] {
         assert!(text.lines().any(|line| line == label), "{label}: {text}");
     }
     assert!(keyboard.text().contains("Punch:"));
@@ -255,7 +284,11 @@ fn the_buttons_under_a_finger_light_up() {
     let start = at(Screen::Intro, "START");
     game.set_touches(&[start]);
     let lit = game.frame();
-    assert_eq!(lit.rects.iter().filter(|r| r.color == HELD).count(), 1);
+    assert_eq!(
+        lit.rects.iter().filter(|r| r.color == HELD).count(),
+        35,
+        "the start button, drawn rounded"
+    );
 
     let mut game = Headless::practice();
     game.skip_intro();
@@ -263,13 +296,27 @@ fn the_buttons_under_a_finger_light_up() {
         .set_touches(&[pad(80.0, 0.0), at(Screen::Fight, "SPECIAL")]);
     let frame = game.frame();
     assert_eq!(
+        frame.rects.iter().filter(|r| r.color == KNOB_HELD).count(),
+        36,
+        "the knob follows the thumb"
+    );
+    assert_eq!(
         frame.rects.iter().filter(|r| r.color == HELD).count(),
-        2,
-        "the right arrow and the special button"
+        35,
+        "the special button, drawn rounded"
     );
     game.game_mut().set_touches(&[]);
     let frame = game.frame();
-    assert_eq!(frame.rects.iter().filter(|r| r.color == HELD).count(), 0);
+    assert_eq!(
+        frame.rects.iter().filter(|r| r.color == HELD).count(),
+        0,
+        "nothing held"
+    );
+    assert_eq!(
+        frame.rects.iter().filter(|r| r.color == KNOB_HELD).count(),
+        0,
+        "the knob rests"
+    );
     assert!(
         frame
             .rects
@@ -277,6 +324,27 @@ fn the_buttons_under_a_finger_light_up() {
             .any(|r| r.color.r == 1.0 && r.color.g < 0.5),
         "the special button stands out"
     );
+
+    // A thumb resting near the middle: the knob sits on it, still inside the ring.
+    let mut game = Headless::practice();
+    game.skip_intro();
+    game.game_mut().set_touches(&[pad(10.0, 6.0)]);
+    let frame = game.frame();
+    let knob = frame
+        .rects
+        .iter()
+        .filter(|r| r.color == KNOB_HELD)
+        .max_by(|a, b| a.width.partial_cmp(&b.width).unwrap());
+    let knob = knob.expect("the knob's widest row under the thumb");
+    let (dx, dy) = (
+        knob.x + knob.width / 2.0 - PAD_CENTER.0,
+        knob.y + knob.height / 2.0 - PAD_CENTER.1,
+    );
+    assert!(
+        (dx - 10.0).abs() < 0.5 && (dy - 6.0).abs() < 2.0,
+        "({dx}, {dy})"
+    );
+    assert!(dx.hypot(dy) <= 86.0 - 34.0, "inside the ring");
 }
 
 #[test]
@@ -288,7 +356,8 @@ fn a_whole_practice_game_can_be_played_with_fingers() {
     // START: the select screen; the pad picks Torch; OK: the fight.
     game.tap_at(at(Screen::Intro, "START"));
     assert_eq!(game.game().screen(), Screen::Select);
-    game.tap_at(pad(80.0, 0.0));
+    // A tap on Torch's card selects it; a tap on OK picks it.
+    game.tap_at(torch_card());
     assert_eq!(game.game().select().selected(), Character::Torch);
     game.tap_at(at(Screen::Select, "OK"));
     assert_eq!(game.game().screen(), Screen::Fight);
@@ -367,6 +436,35 @@ fn the_practice_notice_names_the_buttons_and_moves_up() {
 }
 
 #[test]
+fn a_skin_picked_while_practising_online_dresses_the_practice_fighter() {
+    let mut client = Client::online(MatchConfig::default(), 0);
+    client.handle(ServerMessage::Welcome {
+        player: PlayerId(0),
+    });
+    client.handle(ServerMessage::Lobby {
+        seated: PlayerSet::first(1),
+        ready: PlayerSet::EMPTY,
+    });
+    client.handle(ServerMessage::Styles {
+        allowed: srr::game::StyleSet::all(),
+    });
+    let mut game = Headless::new(Game::new(client));
+    game.skip_intro();
+    game.tap(&[srr::game::Key::T]);
+    assert!(game.game().is_practising_online());
+    let skin = srr::game::Skin::of_player(srr::game::Style::Realistic, PlayerId(0));
+    assert!(
+        !game.game_mut().set_skin(skin).is_empty(),
+        "tells the server"
+    );
+    game.game_mut().client_mut().handle(ServerMessage::SkinOf {
+        player: PlayerId(0),
+        skin,
+    });
+    assert_eq!(game.game().skin(), skin, "once the server confirms it");
+}
+
+#[test]
 fn online_back_leaves_the_practice_fight() {
     let mut client = Client::online(MatchConfig::default(), 0);
     client.handle(ServerMessage::Welcome {
@@ -396,6 +494,111 @@ fn online_back_leaves_the_practice_fight() {
     assert_eq!(notice, "P2 is here - BACK: leave the practice");
     game.tap_at(at(Screen::Fight, "BACK"));
     assert!(!game.game().is_practising_online());
+}
+
+#[test]
+fn the_toggle_button_hides_the_controls_and_brings_them_back() {
+    let mut game = Headless::practice();
+    game.skip_intro();
+    game.touch(&[(640.0, 300.0)]);
+    assert_eq!(game.game().screen(), Screen::Fight);
+    assert!(game.game().touch_controls(), "shown at first");
+    assert!(game.frame().text().contains("SPECIAL"));
+    assert!(
+        !game.frame().text().contains("Punch:"),
+        "the buttons replace the key reminder"
+    );
+
+    game.tap_at(at(Screen::Fight, "TOGGLE"));
+    assert!(!game.game().touch_controls(), "hidden");
+    let hidden = game.frame();
+    assert!(!hidden.text().contains("SPECIAL"));
+    assert!(!hidden.text().contains("LP"), "only the toggle stays");
+    assert!(hidden.text().contains("TOGGLE"), "the way back");
+    assert!(
+        hidden.labels.iter().any(|l| l.y >= CONTROLS_Y),
+        "the fight is in the clear"
+    );
+
+    game.tap_at(at(Screen::Fight, "TOGGLE"));
+    assert!(game.game().touch_controls(), "back");
+    assert!(game.frame().text().contains("SPECIAL"));
+    assert!(!game.frame().text().contains("Punch:"), "again");
+
+    // While a finger holds the toggle button (hidden or shown), it lights up.
+    game.game_mut().set_touches(&[at(Screen::Fight, "TOGGLE")]);
+    assert!(
+        game.frame().rects.iter().any(|r| r.color == HELD
+            && (r.y == 14.0 || r.y > 14.0 && r.y < 14.0 + 36.0 && r.x < 14.0 + 78.0)),
+        "the toggle under a finger"
+    );
+    game.game_mut().toggle_touch_controls();
+    game.game_mut().set_touches(&[at(Screen::Fight, "TOGGLE")]);
+    assert!(
+        game.frame()
+            .rects
+            .iter()
+            .any(|r| r.color == HELD && r.x < 14.0 + 78.0),
+        "the lone toggle under a finger"
+    );
+}
+
+#[test]
+fn the_toggle_key_hides_the_controls_like_the_button() {
+    let mut game = Headless::practice();
+    game.skip_intro();
+    game.touch(&[(640.0, 300.0)]);
+    assert!(game.game().touch_controls());
+    game.tap(&[srr::game::Key::X]);
+    assert!(!game.game().touch_controls());
+    game.tap(&[srr::game::Key::X]);
+    assert!(game.game().touch_controls());
+}
+
+#[test]
+fn the_toggle_leaves_the_keyboard_player_alone() {
+    let mut game = Headless::practice();
+    game.skip_intro();
+    assert!(!game.game().touch_mode());
+    game.tap(&[srr::game::Key::X]);
+    assert!(game.game().touch_controls(), "nothing to hide");
+}
+
+#[test]
+fn a_tap_on_a_card_selects_the_character_a_second_tap_picks_it() {
+    let mut game = Headless::practice();
+    while !game.game().intro().can_skip() {
+        game.idle(1);
+    }
+    game.touch(&[(640.0, 300.0)]);
+    game.tap_at(at(Screen::Intro, "START"));
+    assert_eq!(game.game().screen(), Screen::Select);
+
+    // A tap on Brick's card selects it; a tap on the same card again picks it.
+    let card = brick_card();
+    game.tap_at(card);
+    assert_eq!(game.game().select().selected(), Character::Brick);
+    assert_eq!(game.game().screen(), Screen::Select, "still choosing");
+    game.tap_at(card);
+    assert_eq!(game.game().screen(), Screen::Fight);
+    assert_eq!(game.game().character(), Character::Brick);
+}
+
+#[test]
+fn a_tap_next_to_the_cards_changes_nothing() {
+    let mut game = Headless::practice();
+    while !game.game().intro().can_skip() {
+        game.idle(1);
+    }
+    game.tap(&[srr::game::Key::Enter]);
+    assert_eq!(game.game().screen(), Screen::Select);
+    game.tap_at((10.0, 10.0));
+    assert_eq!(
+        game.game().select().selected(),
+        Character::Chalk,
+        "no card there"
+    );
+    assert_eq!(game.game().screen(), Screen::Select);
 }
 
 #[test]

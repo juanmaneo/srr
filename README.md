@@ -143,13 +143,20 @@ alone) and **turn the phone sideways**. As soon as you touch the screen, on-scre
 appear (a keyboard player never sees them):
 
 * on the title: **START** and **PRACTICE**;
-* on the select screen and in the pause menu: a directional pad (the arrows), **OK** and
+* on the select screen: **tap a character's card** to choose it (tap it again to fight),
+  **OK** and **BACK**; in the pause menu: a directional pad (the arrows), **OK** and
   **BACK**;
-* in the fight: the **pad** on the left (left / right to walk, up to jump, down to crouch;
-  push it diagonally for down + a direction to turn around, or up + a direction to jump
-  sideways), **WALL** / **STREET** to sidestep next to it; on the right the six attacks
-  (**LK MK HK** above, **LP MP HP** below), **GRAB** and **SPECIAL**; at the top **BACK**,
-  **READY** (between rounds), **RIVAL** (practice), **VIEW** (3D) and **PAUSE**.
+* in the fight: the **floating stick** on the left (left / right to walk, up to jump,
+  down to crouch; push it diagonally for down + a direction to turn around, or up + a
+  direction to jump sideways), **WALL** / **STREET** to sidestep next to it; on the right
+  the six attacks (**LK MK HK** above, **LP MP HP** below), **GRAB** and **SPECIAL**; at
+  the top **BACK**, **READY** (between rounds), **RIVAL** (practice), **VIEW** (3D) and
+  **PAUSE**.
+
+The controls are translucent and the stick is a smooth joystick (a ring with a knob that
+follows the thumb), so the fight is always in view. Like GeForce Now's virtual controller,
+they can be hidden and brought back: the small **TOGGLE** button (or the `X` key) flips
+them; while they are hidden only that button stays in the corner.
 
 Several fingers press several buttons, so the judo techniques work as on a keyboard (**MP** +
 **HK** for the sweep, **MK** + **HK** for the throw). The buttons press the keys of your

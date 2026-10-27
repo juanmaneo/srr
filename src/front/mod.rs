@@ -130,6 +130,10 @@ pub const CONTROLS_KEY: Key = Key::C;
 /// rival of a practice fight ([`Practice::next`]). It cannot be bound to an action.
 pub const PRACTICE_KEY: Key = Key::T;
 
+/// The key flipping the on-screen touch controls between shown and hidden (what the TOGGLE
+/// button of the touch controls does). It cannot be bound to an action.
+pub const TOGGLE_KEY: Key = Key::X;
+
 /// What the game is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Screen {
@@ -243,6 +247,13 @@ pub struct Game {
     touches: Vec<(f32, f32)>,
     /// Whether the screen was ever touched: the touch controls are shown from then on.
     touch_mode: bool,
+    /// Whether the touch controls are drawn right now, or only the TOGGLE button that brings
+    /// them back: they are hidden after the TOGGLE button (or [`TOGGLE_KEY`]) and shown the
+    /// same way.
+    touch_controls: bool,
+    /// The character whose card a finger tapped on the select screen, to pick on the next
+    /// tick.
+    tapped_character: Option<Character>,
     /// The buttons held on the gamepads, and where their left sticks lean (merged).
     gamepads: gamepad::GamepadState,
 }
@@ -268,6 +279,8 @@ impl Game {
             practise_after_select: false,
             touches: Vec::new(),
             touch_mode: false,
+            touch_controls: true,
+            tapped_character: None,
             gamepads: gamepad::GamepadState::new(),
             client,
         };
@@ -369,16 +382,37 @@ impl Game {
 
     /// The fingers on the screen now, in virtual screen coordinates (see
     /// [`Viewport::to_virtual`]); the next [`Game::tick`] presses the keys of the touch
-    /// controls under them. The first touch turns the touch controls on for good.
+    /// controls under them. The first touch turns the touch controls on for good. A tap on a
+    /// character's card of the select screen selects it.
     pub fn set_touches(&mut self, touches: &[(f32, f32)]) {
         self.touches.clear();
         self.touches.extend_from_slice(touches);
         self.touch_mode |= !touches.is_empty();
+        self.tapped_character = None;
+        if self.screen == Screen::Select && !touches.is_empty() {
+            // A finger on a button or on the stick is not a tap on the card under it.
+            self.tapped_character = touches
+                .iter()
+                .filter(|&&touch| self.touch_pad().keys(&[touch], &self.bindings).is_empty())
+                .find_map(|&touch| self.select.card_at(touch));
+        }
     }
 
     /// Whether the touch controls are shown: the screen was touched at least once.
     pub fn touch_mode(&self) -> bool {
         self.touch_mode
+    }
+
+    /// Whether the touch controls are drawn right now, or only the TOGGLE button that brings
+    /// them back: they are hidden after the TOGGLE button (or [`TOGGLE_KEY`]) and shown the
+    /// same way.
+    pub fn touch_controls(&self) -> bool {
+        self.touch_controls
+    }
+
+    /// Hides the touch controls when they are shown, brings them back when they are hidden.
+    pub fn toggle_touch_controls(&mut self) {
+        self.touch_controls = !self.touch_controls;
     }
 
     /// Tells the game what is held on the gamepads connected to this machine (every pad
@@ -487,6 +521,12 @@ impl Game {
         let mut fresh: Vec<Key> = pressed.difference(&self.held).copied().collect();
         fresh.sort_unstable();
         let mut outgoing = Vec::new();
+        // A finger on the toggle button, or a press of its key, flips the touch controls.
+        if self.touch_mode
+            && (self.touch_pad().toggled(&self.touches) || pressed.contains(&TOGGLE_KEY))
+        {
+            self.toggle_touch_controls();
+        }
         match self.screen {
             Screen::Intro => {
                 self.intro.tick();
@@ -501,7 +541,11 @@ impl Game {
                     self.open_select(false);
                 }
             }
-            Screen::Select => match self.select.tick(&fresh) {
+            Screen::Select => match self
+                .select_tapped()
+                .or_else(|| Some(self.select.tick(&fresh)))
+                .unwrap_or(Choice::Browsing)
+            {
                 Choice::Browsing => {}
                 Choice::Back => self.screen = Screen::Intro,
                 Choice::Picked(character) => {
@@ -552,6 +596,21 @@ impl Game {
         self.update_bars();
         self.update_music();
         outgoing
+    }
+
+    /// The choice a tap on the select screen makes: a tap on a character's card selects it
+    /// (and picks it, like Enter, if the card was already the chosen one).
+    fn select_tapped(&mut self) -> Option<Choice> {
+        let (tapped, keep) = (self.tapped_character, self.select.selected());
+        self.tapped_character = None;
+        tapped.map(|character| {
+            self.select.set_selected(character);
+            if character == keep {
+                Choice::Picked(character)
+            } else {
+                Choice::Browsing
+            }
+        })
     }
 
     /// `page` showing the current character and practice choice.
@@ -724,16 +783,21 @@ impl Game {
     pub fn frame(&self) -> Frame {
         let mut frame = self.screen_frame();
         if self.touch_mode {
-            if self.screen == Screen::Fight {
-                frame.labels.retain(|label| label.y < hud::CONTROLS_Y);
-                // The practice notice moves up, under the top buttons, clear of the others.
-                for label in &mut frame.labels {
-                    if label.y == hud::NOTICE_Y {
-                        label.y = touch::NOTICE_Y;
+            if self.touch_controls {
+                if self.screen == Screen::Fight {
+                    frame.labels.retain(|label| label.y < hud::CONTROLS_Y);
+                    // The practice notice moves up, under the top buttons, clear of the others.
+                    for label in &mut frame.labels {
+                        if label.y == hud::NOTICE_Y {
+                            label.y = touch::NOTICE_Y;
+                        }
                     }
                 }
+                self.touch_pad().draw(&mut frame, &self.touches);
+            } else {
+                // Only the TOGGLE button stays, to bring the controls back.
+                self.touch_pad().draw_toggle(&mut frame, &self.touches);
             }
-            self.touch_pad().draw(&mut frame, &self.touches);
         }
         frame
     }

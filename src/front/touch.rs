@@ -6,19 +6,26 @@
 //! so the judo techniques (two attack buttons together) and turning around (down + a
 //! direction) work like on a keyboard.
 //!
-//! * On the fight screen: a directional pad on the left (left, right, jump, crouch, and the
-//!   diagonals in between), the two sidesteps next to it, the six attacks on the right (kicks
-//!   above, punches below, from low to high), grab and special move under them, and small
-//!   buttons for Escape (back: leave an online practice fight), Enter (ready), `T` (practice
-//!   rival), `Tab` (view) and `P` (pause) at the top.
+//! * On the fight screen: a floating stick on the left (a ring the thumb drags a knob in:
+//!   left, right, jump, crouch and the diagonals in between), the two sidesteps next to it,
+//!   the six attacks on the right (kicks above, punches below, from low to high), grab and
+//!   special move under them, and small buttons for Escape (back: leave an online practice
+//!   fight), Enter (ready), `T` (practice rival), `Tab` (view) and `P` (pause) at the top.
 //!   The fight's buttons press the keys of the [`KeyBindings`] played with, so they follow
 //!   any layout.
 //! * On the select screen and the controls page (the pause menu): the pad (the arrow keys),
-//!   OK (Enter) and BACK (Escape).
+//!   OK (Enter) and BACK (Escape); a tap on a character card picks it.
 //! * On the title: START (Enter) and PRACTICE (`T`).
 //!
+//! Like GeForce Now's virtual controller, the controls can be hidden (the whole game is then
+//! in the clear) and brought back: every pad has a small **TOGGLE** button, drawn even while
+//! the controls are hidden (alone, in the corner); pressing it (or the `X` key) flips the
+//! controls.
+//!
 //! Everything is drawn into the [`Frame`] like the rest of the game, so every engine shows it
-//! and the tests can look at it.
+//! and the tests can look at it. The stick is drawn as a fine disc plus a ring and a knob, so
+//! it stays perfectly round at every scale; the buttons are translucent so the game shows
+//! through them.
 
 use std::collections::HashSet;
 
@@ -26,28 +33,37 @@ use super::Screen;
 use super::scene::{Align, Frame, Rgba};
 use crate::game::{Key, KeyBindings};
 
-/// Centre of the directional pad.
+/// Centre of the stick's ring.
 pub const PAD_CENTER: (f32, f32) = (150.0, 560.0);
-/// Radius of the directional pad: touches further away are not on it.
+/// Radius of the stick: touches further away are not on it.
 pub const PAD_RADIUS: f32 = 110.0;
+/// Radius of the knob the thumb drags inside the ring.
+const KNOB_RADIUS: f32 = 34.0;
+/// Radius of the thin circle drawn around the stick's area.
+const RING_RADIUS: f32 = 86.0;
+/// Rows the stick's disc is drawn with: fine enough to look perfectly round.
+const DISC_ROWS: u32 = 72;
 /// Where the fight screen's small notice line (the practice notice) goes with the touch
 /// controls: under the top buttons, clear of the others.
 pub const NOTICE_Y: f32 = 156.0;
 /// Around the pad's centre, a touch presses no direction (so a resting thumb is harmless).
 pub const PAD_DEAD_ZONE: f32 = 24.0;
 
+/// The empty part of a button or of the stick: the game shows through it.
 const BUTTON: Rgba = Rgba {
     r: 1.0,
     g: 1.0,
     b: 1.0,
     a: 0.12,
 };
+/// A button under a finger.
 const BUTTON_HELD: Rgba = Rgba {
     r: 1.0,
     g: 1.0,
     b: 1.0,
     a: 0.38,
 };
+/// The special move's button, tinted so it stands out.
 const SPECIAL: Rgba = Rgba {
     r: 1.0,
     g: 0.37,
@@ -60,6 +76,29 @@ const LABEL: Rgba = Rgba {
     b: 1.0,
     a: 0.8,
 };
+/// The thin ring around the stick's area.
+const RING: Rgba = Rgba {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 0.25,
+};
+/// The knob the thumb drags, resting in the middle of the ring.
+const KNOB: Rgba = Rgba {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 0.30,
+};
+/// The knob under a thumb.
+const KNOB_HELD: Rgba = Rgba {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 0.55,
+};
+/// Rows a rounded corner is drawn with.
+const CORNER_ROWS: u32 = 16;
 
 /// What a button presses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -68,15 +107,23 @@ pub enum Press {
     Key(Key),
     /// The key bound to the action at this index of [`KeyBindings::ACTIONS`].
     Action(usize),
+    /// Hide the controls when they are shown, bring them back when they are hidden.
+    Toggle,
 }
 
 impl Press {
-    /// The key pressed with `bindings`.
-    pub fn key(self, bindings: &KeyBindings) -> Key {
+    /// The key pressed with `bindings` ([`None`] for the toggle, which is not a key).
+    pub fn key(self, bindings: &KeyBindings) -> Option<Key> {
         match self {
-            Press::Key(key) => key,
-            Press::Action(action) => bindings.keys()[action],
+            Press::Key(key) => Some(key),
+            Press::Action(action) => Some(bindings.keys()[action]),
+            Press::Toggle => None,
         }
+    }
+
+    /// Whether this press is the toggle.
+    pub fn is_toggle(self) -> bool {
+        self == Press::Toggle
     }
 }
 
@@ -134,8 +181,11 @@ const RIGHT: usize = 1;
 const JUMP: usize = 2;
 const DOWN: usize = 10;
 
+/// The button that hides the controls, drawn even while they are hidden.
+const TOGGLE: Button = button!("TOGGLE", (14.0, 14.0, 78.0, 36.0), Press::Toggle);
+
 /// The buttons of the fight screen.
-const FIGHT: [Button; 15] = [
+const FIGHT: [Button; 16] = [
     button!("WALL", (275.0, 450.0, 86.0, 54.0), Press::Action(11)),
     button!("STREET", (275.0, 616.0, 86.0, 54.0), Press::Action(12)),
     button!("LK", (920.0, 430.0, 82.0, 82.0), Press::Action(6)),
@@ -151,27 +201,34 @@ const FIGHT: [Button; 15] = [
     button!("RIVAL", (994.0, 104.0, 84.0, 40.0), Press::Key(Key::T)),
     button!("VIEW", (1088.0, 104.0, 84.0, 40.0), Press::Key(Key::Tab)),
     button!("PAUSE", (1182.0, 104.0, 84.0, 40.0), Press::Key(Key::P)),
+    TOGGLE,
 ];
 
 /// The buttons of the select screen and of the controls page.
-const MENU: [Button; 2] = [
+const MENU: [Button; 3] = [
     button!(
         "BACK",
         (1050.0, 450.0, 170.0, 64.0),
         Press::Key(Key::Escape),
     ),
     button!("OK", (1050.0, 530.0, 170.0, 96.0), Press::Key(Key::Enter)),
+    TOGGLE,
 ];
 
 /// The buttons of the title.
-const TITLE: [Button; 2] = [
+const TITLE: [Button; 3] = [
     button!("PRACTICE", (1010.0, 450.0, 210.0, 64.0), Press::Key(Key::T)),
     button!(
         "START",
         (1010.0, 530.0, 210.0, 96.0),
         Press::Key(Key::Enter),
     ),
+    TOGGLE,
 ];
+
+/// The corners of every screen's buttons are rounded by the same radius, capped by the
+/// smallest button.
+const CORNER: f32 = 14.0;
 
 /// The touch controls of one screen.
 ///
@@ -224,7 +281,8 @@ impl TouchPad {
     }
 
     /// The keys held by fingers on `touches` (points of the virtual screen), with
-    /// `bindings` for the fight's buttons.
+    /// `bindings` for the fight's buttons. The toggle presses no key (it is handled by the
+    /// [`Game`](super::Game)); a finger on the stick leans it like the pad does.
     pub fn keys(&self, touches: &[(f32, f32)], bindings: &KeyBindings) -> HashSet<Key> {
         let mut keys = HashSet::new();
         for &touch in touches {
@@ -235,17 +293,22 @@ impl TouchPad {
                 self.buttons
                     .iter()
                     .filter(|button| button.contains(touch))
-                    .map(|button| button.press.key(bindings)),
+                    .filter_map(|button| button.press.key(bindings)),
             );
         }
         keys
+    }
+
+    /// Whether a finger on `touches` presses the toggle button.
+    pub fn toggled(&self, touches: &[(f32, f32)]) -> bool {
+        touches.iter().any(|&touch| TOGGLE.contains(touch))
     }
 
     /// Draws the controls over `frame`; the buttons and pad directions under a finger of
     /// `touches` are lit.
     pub fn draw(&self, frame: &mut Frame, touches: &[(f32, f32)]) {
         if self.pad.is_some() {
-            draw_pad(frame, touches);
+            draw_stick(frame, touches);
         }
         for button in self.buttons {
             let held = touches.iter().any(|&touch| button.contains(touch));
@@ -254,7 +317,15 @@ impl TouchPad {
                 (false, Press::Action(13)) => SPECIAL,
                 (false, _) => BUTTON,
             };
-            frame.rect(button.x, button.y, button.width, button.height, color);
+            round_rect(
+                frame,
+                button.x,
+                button.y,
+                button.width,
+                button.height,
+                color,
+                CORNER,
+            );
             let size = if button.height < 50.0 { 14.0 } else { 18.0 };
             frame.label(
                 button.label,
@@ -265,6 +336,63 @@ impl TouchPad {
                 Align::Center,
             );
         }
+    }
+
+    /// Draws only the toggle button (the controls are hidden): a finger on it lights it up.
+    pub fn draw_toggle(&self, frame: &mut Frame, touches: &[(f32, f32)]) {
+        let held = touches.iter().any(|&touch| TOGGLE.contains(touch));
+        round_rect(
+            frame,
+            TOGGLE.x,
+            TOGGLE.y,
+            TOGGLE.width,
+            TOGGLE.height,
+            if held { BUTTON_HELD } else { BUTTON },
+            CORNER,
+        );
+        frame.label(
+            TOGGLE.label,
+            TOGGLE.x + TOGGLE.width / 2.0,
+            TOGGLE.y + (TOGGLE.height - 14.0) / 2.0,
+            14.0,
+            LABEL,
+            Align::Center,
+        );
+    }
+}
+
+/// A rectangle with corners rounded by `radius`, as five rectangles plus the four corners
+/// drawn row by row.
+fn round_rect(
+    frame: &mut Frame,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: Rgba,
+    radius: f32,
+) {
+    let radius = radius.min(width / 2.0).min(height / 2.0);
+    frame.rect(x + radius, y, width - 2.0 * radius, height, color);
+    frame.rect(x, y + radius, radius, height - 2.0 * radius, color);
+    frame.rect(
+        x + width - radius,
+        y + radius,
+        radius,
+        height - 2.0 * radius,
+        color,
+    );
+    let rows = CORNER_ROWS.max(1);
+    let step = radius / rows as f32;
+    for row in 0..rows {
+        let along = (row as f32 + 0.5) * step;
+        let inset = radius - (radius * radius - along * along).sqrt();
+        let (dy_top, dy_bottom) = (
+            y + row as f32 * step,
+            y + height - radius + row as f32 * step,
+        );
+        frame.rect(x + radius - inset, dy_top, radius + inset, step, color);
+        frame.rect(x + radius - inset, dy_bottom, radius + inset, step, color);
     }
 }
 
@@ -313,14 +441,16 @@ pub fn pad_keys(pad: Pad, (x, y): (f32, f32), bindings: &KeyBindings) -> Vec<Key
     pressed
 }
 
-/// The pad: a disc of squares (the frame only has rectangles) and its four arrows, the one a
-/// finger pushes lit.
-fn draw_pad(frame: &mut Frame, touches: &[(f32, f32)]) {
+/// The stick: a faint translucent disc, a thin ring around its edge, and a round knob that
+/// follows the thumb and springs back to the middle when the finger is lifted (a floating
+/// joystick, like the virtual controllers of GeForce Now and mobile fighting games). All of
+/// it is drawn as rows of rectangles (the frame only has rectangles), fine enough
+/// ([`DISC_ROWS`] rows) to look perfectly round at every scale.
+fn draw_stick(frame: &mut Frame, touches: &[(f32, f32)]) {
     let (cx, cy) = PAD_CENTER;
-    // The disc, as rows of rectangles.
-    let rows = 12;
-    let step = 2.0 * PAD_RADIUS / rows as f32;
-    for row in 0..rows {
+    // The disc, fine rows so the edge is smooth.
+    let step = 2.0 * PAD_RADIUS / DISC_ROWS as f32;
+    for row in 0..DISC_ROWS {
         let middle = -PAD_RADIUS + (row as f32 + 0.5) * step;
         let half = (PAD_RADIUS * PAD_RADIUS - middle * middle).sqrt();
         frame.rect(
@@ -331,31 +461,61 @@ fn draw_pad(frame: &mut Frame, touches: &[(f32, f32)]) {
             BUTTON,
         );
     }
-    let reach = PAD_RADIUS * 0.62;
-    let arrows = [
-        ("<", (-reach, 0.0), Key::ArrowLeft),
-        (">", (reach, 0.0), Key::ArrowRight),
-        ("^", (0.0, -reach), Key::ArrowUp),
-        ("v", (0.0, reach), Key::ArrowDown),
-    ];
-    let pushed: Vec<Key> = touches
+    // The ring: a thin band just inside the disc's edge.
+    draw_ring(frame, cx, cy, RING_RADIUS);
+    // The knob: centred on the thumb when one leans on the stick, clamped inside the ring;
+    // resting in the middle otherwise.
+    let lean = touches
         .iter()
-        .flat_map(|&touch| pad_keys(Pad::Arrows, touch, &KeyBindings::STANDARD))
-        .collect();
-    for (label, (dx, dy), arrow) in arrows {
-        let side = 52.0;
-        let color = if pushed.contains(&arrow) {
-            BUTTON_HELD
-        } else {
-            BUTTON
-        };
+        .map(|&touch| (touch.0 - cx, touch.1 - cy))
+        .find(|&(dx, dy)| dx.hypot(dy) <= PAD_RADIUS);
+    let (knob_x, knob_y) = match lean {
+        Some((dx, dy)) => {
+            let far = dx.hypot(dy);
+            let reach = RING_RADIUS - KNOB_RADIUS;
+            if far > reach {
+                (cx + dx / far * reach, cy + dy / far * reach)
+            } else {
+                (cx + dx, cy + dy)
+            }
+        }
+        None => (cx, cy),
+    };
+    let rows = 36;
+    let step = 2.0 * KNOB_RADIUS / rows as f32;
+    for row in 0..rows {
+        let middle = -KNOB_RADIUS + (row as f32 + 0.5) * step;
+        let half = (KNOB_RADIUS * KNOB_RADIUS - middle * middle).sqrt();
+        let color = if lean.is_some() { KNOB_HELD } else { KNOB };
         frame.rect(
-            cx + dx - side / 2.0,
-            cy + dy - side / 2.0,
-            side,
-            side,
+            knob_x - half,
+            knob_y - KNOB_RADIUS + row as f32 * step,
+            2.0 * half,
+            step,
             color,
         );
-        frame.label(label, cx + dx, cy + dy - 11.0, 22.0, LABEL, Align::Center);
+    }
+}
+
+/// A thin circle of radius `radius` centred on `(cx, cy)`: each row is drawn as the two bands
+/// between the outer and the inner edge of the circle.
+fn draw_ring(frame: &mut Frame, cx: f32, cy: f32, radius: f32) {
+    let thickness = 3.0;
+    let rows = 96;
+    let outer = radius + thickness / 2.0;
+    let inner = (radius - thickness / 2.0).max(0.0);
+    let step = 2.0 * outer / rows as f32;
+    for row in 0..rows {
+        let middle = -outer + (row as f32 + 0.5) * step;
+        let half = (outer * outer - middle * middle).sqrt();
+        let inner_half = if middle.abs() >= inner {
+            0.0
+        } else {
+            (inner * inner - middle * middle).sqrt()
+        };
+        let y = cy - outer + row as f32 * step;
+        let band = half - inner_half;
+        frame.rect(cx - half, y, band, step, RING);
+        frame.rect(cx + inner_half, y, band, step, RING);
     }
 }

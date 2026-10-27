@@ -18,14 +18,18 @@ use crate::game::{
     AttackPhase, Character, Facing, FighterState, Input, Key, Match, MatchConfig, PlayerId, Roster,
 };
 
-/// Width of a card.
-pub const CARD_WIDTH: f32 = 280.0;
-/// Space between two cards.
-pub const CARD_GAP: f32 = 24.0;
 /// Top of the cards.
 pub const CARD_TOP: f32 = 140.0;
 /// Height of a card.
 pub const CARD_HEIGHT: f32 = 470.0;
+/// Space between two cards.
+pub const CARD_GAP: f32 = 24.0;
+/// The left edge of the cards: the row is centred, all the cards and gaps together.
+const CARD_LEFT: f32 = (SCREEN_WIDTH
+    - (Character::ALL.len() as f32 * CARD_WIDTH + (Character::ALL.len() as f32 - 1.0) * CARD_GAP))
+    / 2.0;
+/// Width of a card.
+pub const CARD_WIDTH: f32 = 280.0;
 /// Ticks a preview holds each of its two poses (the guard, then the special move).
 pub const PREVIEW_TICKS: u32 = 45;
 
@@ -125,6 +129,35 @@ impl SelectPage {
         self.selected
     }
 
+    /// Chooses `character` (as the arrows do), e.g. for a tap on its card.
+    pub fn set_selected(&mut self, character: Character) {
+        self.selected = character;
+    }
+
+    /// The character whose card `(x, y)` of the virtual screen is on, if any: a tap on a
+    /// card selects its character (a tap on the already chosen card picks it, like Enter).
+    ///
+    /// ```
+    /// use srr::front::select::SelectPage;
+    /// use srr::game::Character;
+    ///
+    /// let page = SelectPage::new(Character::Chalk);
+    /// let torch = (628.0, 400.0);
+    /// assert_eq!(page.card_at(torch), Some(Character::Torch));
+    /// assert_eq!(page.card_at((10.0, 10.0)), None, "the title, not a card");
+    /// ```
+    pub fn card_at(&self, (x, y): (f32, f32)) -> Option<Character> {
+        Character::ALL
+            .into_iter()
+            .enumerate()
+            .find(|&(index, _)| {
+                let left = CARD_LEFT + index as f32 * (CARD_WIDTH + CARD_GAP);
+                (left..=left + CARD_WIDTH).contains(&x)
+                    && (CARD_TOP..=CARD_TOP + CARD_HEIGHT).contains(&y)
+            })
+            .map(|(_, character)| character)
+    }
+
     /// One tick with the keys freshly pressed, in [`Key`] order; only the first one counts.
     pub fn tick(&mut self, fresh: &[Key]) -> Choice {
         self.ticks = self.ticks.wrapping_add(1);
@@ -155,19 +188,17 @@ impl SelectPage {
             Align::Center,
         );
         frame.label(
-            "Left / Right: choose   Enter: fight   Esc: back",
+            "Left / Right or a tap: choose   Enter / tap again: fight   Esc: back",
             center,
             108.0,
             16.0,
             HELP,
             Align::Center,
         );
-        let count = Character::ALL.len() as f32;
-        let left = (SCREEN_WIDTH - count * CARD_WIDTH - (count - 1.0) * CARD_GAP) / 2.0;
         for ((index, character), preview) in
             Character::ALL.into_iter().enumerate().zip(&self.previews)
         {
-            let x = left + index as f32 * (CARD_WIDTH + CARD_GAP);
+            let x = CARD_LEFT + index as f32 * (CARD_WIDTH + CARD_GAP);
             self.draw_card(frame, x, character, preview);
         }
         frame.label(

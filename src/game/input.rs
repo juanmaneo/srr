@@ -468,9 +468,13 @@ impl Key {
 
     /// Whether the key can be bound to an action: every key but Enter and Escape, which drive
     /// the menus (and the readiness for the next match), `P`, which pauses the fight, `Tab`,
-    /// which switches its view, and `T`, which drives practice.
+    /// which switches its view, `T`, which drives practice, and `X`, which flips the on-screen
+    /// touch controls.
     pub fn is_bindable(self) -> bool {
-        !matches!(self, Key::Enter | Key::Escape | Key::P | Key::Tab | Key::T)
+        !matches!(
+            self,
+            Key::Enter | Key::Escape | Key::P | Key::Tab | Key::T | Key::X
+        )
     }
 
     /// Every key, in [`Key::at`] order.

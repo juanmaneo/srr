@@ -653,11 +653,14 @@ fn keys_are_ordered_as_declared() {
 }
 
 #[test]
-fn only_the_menu_pause_view_and_practice_keys_cannot_be_bound() {
+fn only_the_menu_pause_view_practice_and_toggle_keys_cannot_be_bound() {
     for key in ALL_KEYS {
         assert_eq!(
             key.is_bindable(),
-            !matches!(key, Key::Enter | Key::Escape | Key::P | Key::Tab | Key::T),
+            !matches!(
+                key,
+                Key::Enter | Key::Escape | Key::P | Key::Tab | Key::T | Key::X
+            ),
             "{key:?}"
         );
     }
@@ -665,6 +668,7 @@ fn only_the_menu_pause_view_and_practice_keys_cannot_be_bound() {
     assert!(!layout.bind(0, Key::P));
     assert!(!layout.bind(0, Key::Tab));
     assert!(!layout.bind(0, Key::T));
+    assert!(!layout.bind(0, Key::X));
     assert_eq!(layout, KeyBindings::STANDARD);
 }
 
