@@ -814,3 +814,38 @@ fn binding_refuses_menu_keys_and_unknown_actions() {
     assert!(!b.bind(usize::MAX, Key::K));
     assert_eq!(b, KeyBindings::STANDARD);
 }
+
+#[test]
+fn saved_layouts_round_trip_through_their_bytes() {
+    for (_, preset) in KeyBindings::PRESETS {
+        assert_eq!(KeyBindings::from_bytes(&preset.to_bytes()), Some(preset));
+    }
+
+    let mut mine = KeyBindings::WASD;
+    assert!(mine.bind(9, Key::K));
+    assert!(mine.bind(0, Key::Numpad4));
+    assert_eq!(KeyBindings::from_bytes(&mine.to_bytes()), Some(mine));
+}
+
+#[test]
+fn loading_layout_bytes_refuses_the_wrong_ones() {
+    assert_eq!(KeyBindings::from_bytes(&[]), None, "too short");
+    assert_eq!(
+        KeyBindings::from_bytes(&[0; Input::BITS as usize]),
+        None,
+        "the same key twice"
+    );
+    assert_eq!(
+        KeyBindings::from_bytes(&[u8::MAX; Input::BITS as usize]),
+        None,
+        "not the number of a key"
+    );
+}
+
+#[test]
+fn keys_round_trip_through_their_numbers() {
+    for key in Key::ALL {
+        assert_eq!(Key::at(key.index()), Some(key));
+    }
+    assert_eq!(Key::ALL.len(), 44, "every key is numbered");
+}

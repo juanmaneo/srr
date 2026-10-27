@@ -43,6 +43,7 @@ mod projectile;
 mod replay;
 mod roster;
 mod simulation;
+pub mod storage;
 mod style;
 mod technique;
 

@@ -55,7 +55,7 @@ cpal = { version = "=0.17.1", optional = true, features = ["wasm-bindgen"] }
 # listeners, console messages). Same versions as the ones Bevy already pulls in.
 js-sys = { version = "0.3.106", optional = true }
 wasm-bindgen = { version = "0.2.129", optional = true }
-web-sys = { version = "0.3.106", optional = true, features = ["AudioContext", "AudioContextState", "BinaryType", "CloseEvent", "console", "Event", "EventTarget", "Location", "MessageEvent", "WebSocket", "Window"] }
+web-sys = { version = "0.3.106", optional = true, features = ["AudioContext", "AudioContextState", "BinaryType", "CloseEvent", "console", "Event", "EventTarget", "Location", "MessageEvent", "Storage", "WebSocket", "Window"] }
 
 [workspace]
 members = ["xtask", "server"]

@@ -472,6 +472,78 @@ impl Key {
     pub fn is_bindable(self) -> bool {
         !matches!(self, Key::Enter | Key::Escape | Key::P | Key::Tab | Key::T)
     }
+
+    /// Every key, in [`Key::at`] order.
+    pub const ALL: [Key; 44] = [
+        Key::ArrowLeft,
+        Key::ArrowRight,
+        Key::ArrowUp,
+        Key::ArrowDown,
+        Key::Numpad0,
+        Key::Numpad1,
+        Key::Numpad2,
+        Key::Numpad3,
+        Key::Numpad4,
+        Key::Numpad5,
+        Key::Numpad6,
+        Key::Numpad7,
+        Key::Numpad8,
+        Key::Numpad9,
+        Key::Enter,
+        Key::Escape,
+        Key::Tab,
+        Key::Space,
+        Key::A,
+        Key::B,
+        Key::C,
+        Key::D,
+        Key::E,
+        Key::F,
+        Key::G,
+        Key::H,
+        Key::I,
+        Key::J,
+        Key::K,
+        Key::L,
+        Key::M,
+        Key::N,
+        Key::O,
+        Key::P,
+        Key::Q,
+        Key::R,
+        Key::S,
+        Key::T,
+        Key::U,
+        Key::V,
+        Key::W,
+        Key::X,
+        Key::Y,
+        Key::Z,
+    ];
+
+    /// Position in [`Key::ALL`]: the key's number for a saved layout (see
+    /// [`KeyBindings::to_bytes`]).
+    ///
+    /// ```
+    /// use srr::game::Key;
+    ///
+    /// assert_eq!(Key::at(Key::W.index()), Some(Key::W));
+    /// ```
+    pub const fn index(self) -> usize {
+        let mut i = 0;
+        while i < Key::ALL.len() {
+            if Key::ALL[i] as u8 == self as u8 {
+                return i;
+            }
+            i += 1;
+        }
+        unreachable!()
+    }
+
+    /// The key number `index` stands for (see [`Key::index`]).
+    pub fn at(index: usize) -> Option<Key> {
+        Key::ALL.get(index).copied()
+    }
 }
 
 /// The keys of the local player.
@@ -730,6 +802,50 @@ impl KeyBindings {
             sidestep_out,
             special,
         }
+    }
+}
+
+impl KeyBindings {
+    /// The layout as the bytes of [`Key::index`] for each bound key in [`KeyBindings::keys`]
+    /// order: what a platform saves to restore the layout later (e.g. the browser's local
+    /// storage).
+    ///
+    /// ```
+    /// use srr::game::KeyBindings;
+    ///
+    /// assert_eq!(
+    ///         KeyBindings::from_bytes(&KeyBindings::STANDARD.to_bytes()),
+    ///         Some(KeyBindings::STANDARD)
+    /// );
+    /// ```
+    pub fn to_bytes(&self) -> [u8; Input::BITS as usize] {
+        self.keys().map(|key| key.index() as u8)
+    }
+
+    /// The layout [`bytes`](KeyBindings::to_bytes) stands for, or `None` when a byte is not
+    /// the number of a key, two actions share a key, or the length is wrong: a saved layout
+    /// may not load (an old save, a changed key set), and the game then keeps its default.
+    ///
+    /// ```
+    /// use srr::game::{Key, KeyBindings};
+    ///
+    /// let mut mine = KeyBindings::WASD;
+    /// assert!(mine.bind(9, Key::K)); // grab on K...
+    /// assert_eq!(KeyBindings::from_bytes(&mine.to_bytes()), Some(mine));
+    ///
+    /// assert_eq!(KeyBindings::from_bytes(&[]), None); // too short
+    /// ```
+    pub fn from_bytes(bytes: &[u8]) -> Option<KeyBindings> {
+        let keys: Vec<Key> = bytes
+            .iter()
+            .map(|&index| Key::at(usize::from(index)))
+            .collect::<Option<_>>()?;
+        let keys: [Key; Input::BITS as usize] = keys.try_into().ok()?;
+        let distinct: HashSet<Key> = keys.iter().copied().collect();
+        if distinct.len() != keys.len() {
+            return None;
+        }
+        Some(KeyBindings::from_keys(keys))
     }
 }
 

@@ -13,7 +13,8 @@ use web_sys::{BinaryType, Event, MessageEvent, WebSocket};
 use super::sound::{Sound, report};
 use crate::audio::MusicControl;
 use crate::front::{Game, SoundState};
-use crate::game::MatchConfig;
+use crate::game::storage;
+use crate::game::{KeyBindings, MatchConfig};
 use crate::net::{Client, INPUT_DELAY};
 
 /// The DOM events that count as a user gesture for the autoplay policy.
@@ -157,6 +158,32 @@ pub(super) fn practice_requested() -> bool {
     web_sys::window()
         .and_then(|window| window.location().search().ok())
         .is_some_and(|query| query.contains("practice"))
+}
+
+/// The key of the saved keyboard layout in the browser's local storage.
+const BINDINGS_KEY: &str = "srr-bindings";
+
+/// The keyboard layout saved by [`save_bindings`], if the browser has one and it still loads
+/// (see [`storage::load`]).
+pub(super) fn saved_bindings() -> Option<KeyBindings> {
+    web_sys::window()?
+        .local_storage()
+        .ok()
+        .flatten()?
+        .get_item(BINDINGS_KEY)
+        .ok()
+        .flatten()
+        .and_then(|saved| storage::load(&saved))
+}
+
+/// Saves `bindings` in the browser's local storage, so the player keeps them next time; the
+/// page's own script calls it (from `Shell::tick`), and a hidden element reports when it
+/// cannot.
+pub(super) fn save_bindings(bindings: &KeyBindings) {
+    let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) else {
+        return;
+    };
+    let _ = storage.set_item(BINDINGS_KEY, &storage::store(bindings));
 }
 
 /// `ws://<host of the page>/ws` (`wss://` when the page is served over HTTPS).

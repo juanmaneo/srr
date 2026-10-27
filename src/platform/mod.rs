@@ -23,10 +23,11 @@ use crate::net::Client;
 pub mod sound;
 #[cfg(target_arch = "wasm32")]
 mod web;
-
 /// The running game as seen by an engine backend.
 pub struct Shell {
     game: Game,
+    /// The layout when the game was last ticked: saved once it changes.
+    saved_bindings: crate::game::KeyBindings,
     #[cfg(target_arch = "wasm32")]
     connection: Option<web::Connection>,
     /// Owns the music once a gesture started it.
@@ -63,11 +64,16 @@ impl Shell {
                 web::connect()
             };
             let mut game = Game::new(client);
+            let saved = web::saved_bindings();
+            if let Some(bindings) = saved {
+                game.set_bindings(bindings);
+            }
             let audio = web::AudioUnlock::install(game.music().clone());
             if audio.is_none() {
                 game.set_sound(crate::front::SoundState::Unavailable);
             }
             Shell {
+                saved_bindings: *game.bindings(),
                 game,
                 connection,
                 audio,
@@ -85,6 +91,7 @@ impl Shell {
                 SoundState::Unavailable
             });
             Shell {
+                saved_bindings: *game.bindings(),
                 game,
                 _sound: sound,
             }
@@ -96,6 +103,11 @@ impl Shell {
     /// [`Viewport::to_virtual`](crate::front::Viewport::to_virtual)) and the state of the
     /// gamepads, and sends this tick's input.
     pub fn tick(&mut self, pressed: &HashSet<Key>, touches: &[(f32, f32)], gamepads: GamepadState) {
+        #[cfg(target_arch = "wasm32")]
+        if *self.game.bindings() != self.saved_bindings {
+            web::save_bindings(self.game.bindings());
+            self.saved_bindings = *self.game.bindings();
+        }
         self.game.set_touches(touches);
         self.game.set_gamepad(gamepads);
         #[cfg(target_arch = "wasm32")]
