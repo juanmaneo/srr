@@ -62,16 +62,31 @@ pub(crate) fn decode(text: &str) -> Vec<u8> {
 
 /// The layout `saved` stands for, or `None` when it does not decode (see
 /// [`KeyBindings::from_bytes`]).
+///
+/// Saves are [`versioned`](store) (`"srr1:..."`); one without a prefix is what the first
+/// version of the feature wrote, and still loads.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn load(saved: &str) -> Option<KeyBindings> {
+    if let Some(rest) = saved.strip_prefix(FORMAT) {
+        return KeyBindings::from_bytes(&decode(rest));
+    }
+    // A save of an unknown format version: ignored, the game keeps its default layout.
+    if saved.contains(':') {
+        return None;
+    }
     KeyBindings::from_bytes(&decode(saved))
 }
 
 /// The layout as text for the browser's local storage.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn store(bindings: &KeyBindings) -> String {
-    encode(&bindings.to_bytes())
+    format!("{FORMAT}{}", encode(&bindings.to_bytes()))
 }
+
+/// The marker every save starts with, so the format can evolve: a save of another version
+/// (`srr2`, ...) is [`ignored`](load) instead of misread, and this one can change shape under
+/// a new marker when the layout itself gains actions.
+const FORMAT: &str = "srr1:";
 
 #[cfg(test)]
 mod tests {
@@ -107,6 +122,44 @@ mod tests {
         assert_eq!(text.len(), 20);
         assert!(text.ends_with('='));
         assert_eq!(decode(&text), bytes);
+    }
+
+    #[test]
+    fn saves_carry_a_version() {
+        let stored = store(&KeyBindings::WASD);
+        assert!(stored.starts_with("srr1:"));
+    }
+
+    #[test]
+    fn versioned_saves_load_back() {
+        let mut mine = KeyBindings::WASD;
+        assert!(mine.bind(9, Key::L));
+        let stored = store(&mine);
+        assert!(stored.starts_with("srr1:"));
+        assert_eq!(load(&stored), Some(mine));
+    }
+
+    #[test]
+    fn unversioned_saves_still_load_and_are_migrated_on_the_next_save() {
+        // What v3 wrote: the bare base 64 of the layout bytes, no "srr1:" prefix.
+        let mut mine = KeyBindings::WASD;
+        assert!(mine.bind(9, Key::L));
+        let v3_save = encode(&mine.to_bytes());
+        assert!(!v3_save.contains(':'));
+        assert_eq!(load(&v3_save), Some(mine));
+        // The next save of the same layout is versioned.
+        let migrated = store(&load(&v3_save).unwrap());
+        assert!(migrated.starts_with("srr1:"));
+        assert_eq!(load(&migrated), Some(mine));
+    }
+
+    #[test]
+    fn saves_of_an_unknown_version_are_ignored() {
+        assert_eq!(load("srr2:AAAA"), None);
+        assert_eq!(load("srr999:AAAA"), None);
+        assert_eq!(load("srr1"), None);
+        assert_eq!(load(":"), None);
+        assert_eq!(load("srr1:"), None);
     }
 
     #[test]
