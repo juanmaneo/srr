@@ -65,6 +65,7 @@ pub mod gamepad;
 pub mod headless;
 pub mod hud;
 pub mod intro;
+pub mod manga;
 pub mod render;
 mod scene;
 pub mod select;

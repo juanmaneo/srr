@@ -71,7 +71,7 @@ fn errors() {
     assert_eq!(parse(&["--styles"]), error("`--styles` needs a value"));
     assert_eq!(
         parse(&["--styles", "nope"]),
-        error("unknown style `nope` (stick, realistic, manga)")
+        error("unknown style `nope` (stick, manga)")
     );
     assert_eq!(parse(&["--port", "-1"]), error("invalid port `-1`"));
     assert_eq!(parse(&["serve"]), error("unexpected argument `serve`"));

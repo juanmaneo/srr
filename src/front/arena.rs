@@ -261,8 +261,17 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
         (Reverse(f.z()), layer)
     });
     for fighter in order {
-        // Every fighter wears the skin its player picked, whatever the others wear.
-        super::skin::draw_inked(frame, &figure(fighter), &client.skin(fighter.player()));
+        // Every fighter wears the skin its player picked, whatever the others wear. The
+        // chalk is drawn by the stick engine (the debug view); the manga fighter is its
+        // AI-art sprite, drawn by the image primitive (the art carries the look).
+        let skin = client.skin(fighter.player());
+        if let Some(name) = super::skin::sprite_name_of(&skin) {
+            let (x, y) = feet(fighter, config);
+            let risen = rise(fighter, config);
+            frame.image(name, x, y - risen, 150.0, fighter.facing().sign() > 0);
+        } else {
+            super::skin::draw_inked(frame, &figure(fighter), &skin);
+        }
     }
     for shot in current.projectiles() {
         draw_fireball(frame, shot_center(shot, config), shot.facing(), fight_ticks);

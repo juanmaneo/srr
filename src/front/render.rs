@@ -243,6 +243,63 @@ fn paint_rects(frame: &Frame, mapping: Mapping, width: usize, height: usize) -> 
     image
 }
 
+/// Paints `image` (the sprite named by it) onto `target`: its feet on its `(x, y)`, its
+/// `height` target pixels tall, mirrored when it faces left. Nearest-neighbour sampling
+/// with the sprite's own alpha, over the rectangles.
+fn paint_image(target: &mut Pixmap, mapping: Mapping, image: &crate::front::scene::Image) {
+    let Some(sprite) = crate::front::skin::sprite_by_name(image.name) else {
+        return;
+    };
+    // The sprite's box on the target: `height` target pixels tall, its own aspect ratio.
+    let target_h = image.height * mapping.scale_y;
+    let target_w = target_h * sprite.width as f32 / sprite.height.max(1) as f32;
+    if target_h < 1.0 || target_w < 1.0 {
+        return;
+    }
+    // The feet at the bottom-centre of the box.
+    let feet_x = mapping.offset_x + image.x * mapping.scale_x;
+    let feet_y = mapping.offset_y + image.y * mapping.scale_y;
+    let left = feet_x - target_w / 2.0;
+    let top = feet_y - target_h;
+    for row in 0..target_h.ceil() as usize {
+        let ty = top + row as f32;
+        if ty < 0.0 || ty >= target.height as f32 {
+            continue;
+        }
+        // The source row, nearest-neighbour (the sprite's top is row 0).
+        let sy = (((row as f32 / target_h) * sprite.height as f32) as usize).min(sprite.height - 1);
+        for column in 0..target_w.ceil() as usize {
+            let tx = left + column as f32;
+            if tx < 0.0 || tx >= target.width as f32 {
+                continue;
+            }
+            // The source column, mirrored when facing left.
+            let sx = ((column as f32 / target_w) * sprite.width as f32) as usize;
+            let sx = if image.facing_right {
+                sx.min(sprite.width - 1)
+            } else {
+                sprite.width - 1 - sx.min(sprite.width - 1)
+            };
+            let i = (sy * sprite.width + sx) * 4;
+            let alpha = f32::from(sprite.pixels[i + 3]) / 255.0;
+            if alpha <= 0.0 {
+                continue;
+            }
+            let source = [
+                f32::from(sprite.pixels[i]) / 255.0,
+                f32::from(sprite.pixels[i + 1]) / 255.0,
+                f32::from(sprite.pixels[i + 2]) / 255.0,
+            ];
+            let px = target.width * (ty as usize) + tx as usize;
+            for (channel, value) in target.pixels[px].iter_mut().zip(source) {
+                let below = f32::from(*channel) / 255.0;
+                let mixed = below + (value - below) * alpha;
+                *channel = (mixed * 255.0).round() as u8;
+            }
+        }
+    }
+}
+
 /// Rows of a glyph of the bitmap font.
 pub const FONT_ROWS: usize = 7;
 /// Columns of a glyph of the bitmap font.
@@ -313,6 +370,9 @@ pub fn screenshot(frame: &Frame, width: usize, height: usize) -> Pixmap {
         offset_y: viewport.offset_y,
     };
     let mut image = paint_rects(frame, mapping, width, height);
+    for sprite in &frame.images {
+        paint_image(&mut image, mapping, sprite);
+    }
     for label in &frame.labels {
         paint_label(&mut image, mapping, label);
     }

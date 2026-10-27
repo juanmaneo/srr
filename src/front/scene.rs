@@ -151,6 +151,22 @@ impl Label {
     }
 }
 
+/// An RGBA sprite the frame can draw (see [`Frame::image`]): premultiplied pixels, row
+/// by row from the top-left corner.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Image {
+    /// The name the sprite is registered under (see [`crate::front::skin::sprite`]).
+    pub name: &'static str,
+    /// Where its feet stand: the bottom-centre of the sprite lands on `(x, y)`.
+    pub x: f32,
+    pub y: f32,
+    /// The height to draw it at, in virtual pixels (the width follows the sprite's own
+    /// aspect ratio).
+    pub height: f32,
+    /// `false` mirrors it (facing left).
+    pub facing_right: bool,
+}
+
 /// Everything to draw for one frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Frame {
@@ -160,6 +176,8 @@ pub struct Frame {
     pub rects: Vec<Rect>,
     /// Drawn above every rectangle, in order.
     pub labels: Vec<Label>,
+    /// Sprites, drawn between the rectangles and the labels: the manga fighters.
+    pub images: Vec<Image>,
 }
 
 impl Frame {
@@ -169,6 +187,7 @@ impl Frame {
             background,
             rects: Vec::new(),
             labels: Vec::new(),
+            images: Vec::new(),
         }
     }
 
@@ -180,6 +199,18 @@ impl Frame {
             width: width.max(0.0),
             height: height.max(0.0),
             color,
+        });
+    }
+
+    /// Adds a sprite: its feet on `(x, y)`, `height` tall, mirrored when not
+    /// `facing_right`. The sprite must be registered (see [`Image::name`]).
+    pub fn image(&mut self, name: &'static str, x: f32, y: f32, height: f32, facing_right: bool) {
+        self.images.push(Image {
+            name,
+            x,
+            y,
+            height,
+            facing_right,
         });
     }
 

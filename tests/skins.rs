@@ -13,17 +13,16 @@ use srr::net::{Client, ClientMessage, DecodeError, ServerMessage};
 #[test]
 fn the_three_styles_and_their_labels() {
     assert_eq!(Style::default(), Style::Stick);
-    assert_eq!(Style::ALL.len(), 3);
+    assert_eq!(Style::ALL.len(), 2);
     assert_eq!(Style::Stick.label(), "Stick (chalk)");
-    assert_eq!(Style::Realistic.label(), "Realistic");
     assert_eq!(Style::Manga.label(), "Manga");
     for style in Style::ALL {
         assert_eq!(Style::from_index(style.index()), Some(style));
         assert_eq!(style.next().previous(), style);
     }
-    assert_eq!(Style::from_index(3), None);
+    assert_eq!(Style::from_index(2), None);
     assert!(!Style::Stick.is_skinned());
-    assert!(Style::Realistic.is_skinned() && Style::Manga.is_skinned());
+    assert!(Style::Manga.is_skinned());
 }
 
 #[test]
@@ -56,34 +55,28 @@ fn a_skin_is_a_style_wearing_a_variant() {
             assert_eq!(Skin::from_index(skin.index()), Some(skin));
         }
     }
-    // 0 is the chalk, 1..=10 the realistic variants, 11..=20 the manga ones.
+    // 0 is the chalk, 1..=10 the manga variants.
     assert_eq!(
         Skin::from_index(1),
-        Some(Skin::styled(Style::Realistic, Variant::Brunette))
-    );
-    assert_eq!(
-        Skin::from_index(11),
         Some(Skin::styled(Style::Manga, Variant::Brunette))
     );
     assert_eq!(
-        Skin::from_index(20),
+        Skin::from_index(10),
         Some(Skin::styled(Style::Manga, Variant::Mystic))
     );
-    assert_eq!(Skin::from_index(21), None);
+    assert_eq!(Skin::from_index(11), None);
     // The label names both.
     assert_eq!(Skin::STICK.label(), "Stick (chalk)");
     assert_eq!(
-        Skin::styled(Style::Realistic, Variant::Blonde).label(),
-        "Realistic (the blonde)"
+        Skin::styled(Style::Manga, Variant::Blonde).label(),
+        "Manga (the blonde)"
     );
 }
 
 #[test]
 fn the_allowed_styles_of_a_server() {
     let all = StyleSet::all();
-    assert!(
-        all.contains(Style::Stick) && all.contains(Style::Realistic) && all.contains(Style::Manga)
-    );
+    assert!(all.contains(Style::Stick) && all.contains(Style::Manga));
     // The chalk is always allowed, even on a server that allows nothing.
     let none = StyleSet::none();
     assert!(none.contains(Style::Stick));
@@ -91,7 +84,7 @@ fn the_allowed_styles_of_a_server() {
     assert_eq!(none.with(Style::Manga).without(Style::Manga), none);
     // The bits go on the wire; the bits that name no style are dropped.
     assert_eq!(StyleSet::from_bits(all.bits()), all);
-    assert_eq!(StyleSet::from_bits(0xff).styles().count(), 3);
+    assert_eq!(StyleSet::from_bits(0xff).styles().count(), 2);
     // Cycling sticks to the allowed ones.
     let manga_only = StyleSet::none().with(Style::Manga);
     assert_eq!(Style::Stick.next_allowed(manga_only), Style::Manga);
@@ -115,28 +108,28 @@ fn the_allowed_styles_of_a_server() {
 fn the_skin_messages_encode_and_decode() {
     let manga = Skin::styled(Style::Manga, Variant::Blonde);
     let skin = ClientMessage::Skin { skin: manga };
-    assert_eq!(skin.encode(), vec![10, 12]);
+    assert_eq!(skin.encode(), vec![10, 2]);
     assert_eq!(ClientMessage::decode(&skin.encode()), Ok(skin));
     // The server names a player's skin, and the styles it allows.
     let told = ServerMessage::SkinOf {
         player: PlayerId(3),
         skin: manga,
     };
-    assert_eq!(told.encode(), vec![11, 3, 12]);
+    assert_eq!(told.encode(), vec![11, 3, 2]);
     assert_eq!(ServerMessage::decode(&told.encode()), Ok(told));
     let styles = ServerMessage::Styles {
-        allowed: StyleSet::none().with(Style::Realistic),
+        allowed: StyleSet::none().with(Style::Manga),
     };
     assert_eq!(styles.encode(), vec![12, 2]);
     assert_eq!(ServerMessage::decode(&styles.encode()), Ok(styles));
     // A byte that names no skin is refused, not guessed.
     assert_eq!(
-        ClientMessage::decode(&[10, 21]),
-        Err(DecodeError::UnknownSkin(21))
+        ClientMessage::decode(&[10, 11]),
+        Err(DecodeError::UnknownSkin(11))
     );
     assert_eq!(
-        ServerMessage::decode(&[11, 0, 21]),
-        Err(DecodeError::UnknownSkin(21))
+        ServerMessage::decode(&[11, 0, 11]),
+        Err(DecodeError::UnknownSkin(11))
     );
 }
 
@@ -162,7 +155,7 @@ fn a_client_wears_what_the_server_tells_everybody() {
         "the chalk until told"
     );
     // Picking a skin tells the server...
-    let mine = Skin::styled(Style::Realistic, Variant::Ace);
+    let mine = Skin::styled(Style::Manga, Variant::Ace);
     assert_eq!(
         client.set_skin(mine),
         Some(ClientMessage::Skin { skin: mine }.encode())
@@ -173,12 +166,19 @@ fn a_client_wears_what_the_server_tells_everybody() {
         player: PlayerId(0),
     });
     strict.handle(ServerMessage::Styles {
+        allowed: StyleSet::none(),
+    });
+    assert_eq!(strict.set_skin(mine), None, "manga is not allowed");
+    let mut lax = Client::online(MatchConfig::default(), 0);
+    lax.handle(ServerMessage::Welcome {
+        player: PlayerId(0),
+    });
+    lax.handle(ServerMessage::Styles {
         allowed: StyleSet::none().with(Style::Manga),
     });
-    assert_eq!(strict.set_skin(mine), None, "realistic is not allowed");
     assert_eq!(
-        strict.set_skin(manga),
-        Some(ClientMessage::Skin { skin: manga }.encode())
+        lax.set_skin(mine),
+        Some(ClientMessage::Skin { skin: mine }.encode())
     );
 }
 
@@ -208,48 +208,45 @@ fn every_variant_of_every_style_has_its_own_palette() {
 
 #[test]
 fn a_fighter_wearing_a_skin_is_drawn_in_its_colours() {
+    // The manga fighter is its AI-art sprite: the sprite's own dominant colour must show
+    // on screen once the skin is worn — where the chalk showed none of it.
+    let variant = Variant::of(PlayerId(0));
+    let sprite = srr::front::skin::sprite(variant);
+    // The sprite's most common opaque colour: its dominant colour.
+    let mut counts: std::collections::HashMap<[u8; 3], usize> = Default::default();
+    for px in sprite.pixels.chunks(4) {
+        if px[3] > 200 {
+            *counts.entry([px[0], px[1], px[2]]).or_default() += 1;
+        }
+    }
+    let (&dominant, _) = counts
+        .iter()
+        .max_by_key(|(_, n)| **n)
+        .expect("an opaque colour");
+    let near = |p: [u8; 3]| {
+        (i32::from(p[0]) - i32::from(dominant[0])).abs() < 12
+            && (i32::from(p[1]) - i32::from(dominant[1])).abs() < 12
+            && (i32::from(p[2]) - i32::from(dominant[2])).abs() < 12
+    };
+    let pixels =
+        |shot: &srr::front::render::Pixmap| shot.pixels().iter().filter(|&&p| near(p)).count();
     let mut game = Headless::practice();
     game.skip_intro();
-    // The chalk is drawn as the plain ink: none of the variant's hair colour on screen.
-    let hair = Palette::of(Variant::of(PlayerId(0))).hair;
-    let near = |a: u8, c: f32| (f32::from(a) / 255.0 - c).abs() < 0.04;
-    let hair_pixels = |shot: &srr::front::render::Pixmap| {
-        shot.pixels()
-            .iter()
-            .filter(|&&[r, g, b]| near(r, hair.r) && near(g, hair.g) && near(b, hair.b))
-            .count()
-    };
-    let before = hair_pixels(&game.screenshot());
-    // Dress player 1 in the manga take of their variant: its hair shows at once.
+    let before = pixels(&game.screenshot());
+    // Dress player 1 in the manga take of their variant: the sprite shows at once.
     game.game_mut().client_mut().handle(ServerMessage::SkinOf {
         player: PlayerId(0),
         skin: Skin::of_player(Style::Manga, PlayerId(0)),
     });
-    let after = hair_pixels(&game.screenshot());
+    let after = pixels(&game.screenshot());
     assert!(
-        after > before + 40,
-        "the manga hair shows: {before} pixels before, {after} after"
+        after > before + 200,
+        "the manga sprite shows: {before} pixels before, {after} after"
     );
-    // A realistic skin shows its outfit too — compared with the bare chalk, since the
-    // two skinned styles share each variant's palette.
-    let outfit = Palette::of(Variant::of(PlayerId(0))).outfit;
-    let outfit_pixels = |shot: &srr::front::render::Pixmap| {
-        shot.pixels()
-            .iter()
-            .filter(|&&[r, g, b]| near(r, outfit.r) && near(g, outfit.g) && near(b, outfit.b))
-            .count()
-    };
-    let mut fresh = Headless::practice();
-    fresh.skip_intro();
-    let bare = outfit_pixels(&fresh.screenshot());
-    fresh.game_mut().client_mut().handle(ServerMessage::SkinOf {
-        player: PlayerId(0),
-        skin: Skin::of_player(Style::Realistic, PlayerId(0)),
-    });
-    let dressed = outfit_pixels(&fresh.screenshot());
-    assert!(
-        dressed > bare + 40,
-        "the realistic outfit shows: {bare} pixels before, {dressed} after"
+    // And the sprite it wears is the variant's own.
+    assert_eq!(
+        srr::front::skin::sprite_name_of(&Skin::of_player(Style::Manga, PlayerId(0))),
+        Some("brunette")
     );
 }
 
@@ -274,15 +271,10 @@ fn the_skin_row_of_the_pause_menu_changes_the_fighter_at_once() {
     // A practice game is local: the fighter wears the new skin at once.
     assert_eq!(
         game.game().skin(),
-        Skin::of_player(Style::Realistic, PlayerId(0))
-    );
-    let text = game.text_snapshot(200, 60);
-    assert!(text.contains("Realistic.(the.brunette)"), "{text}");
-    game.tap(&[Key::ArrowRight]);
-    assert_eq!(
-        game.game().skin(),
         Skin::of_player(Style::Manga, PlayerId(0))
     );
+    let text = game.text_snapshot(200, 60);
+    assert!(text.contains("Manga.(the.brunette)"), "{text}");
     // And back to the chalk.
     game.tap(&[Key::ArrowRight]);
     assert_eq!(game.game().skin(), Skin::STICK);

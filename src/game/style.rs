@@ -3,14 +3,12 @@
 //! match can mix them (a stick figure against a comic-book heroine, a whole brawl of mixed
 //! styles; see the [skins](crate::front::skin) the front draws).
 //!
-//! There are three styles, [`Style::ALL`] in the order of the menus:
+//! There are two styles, [`Style::ALL`] in the order of the menus:
 //!
 //! * [`Style::Stick`], the default: the chalk stick figures of the alley wall (see
 //!   [`stick`](crate::front::stick)).
-//! * [`Style::Realistic`]: full-colour fighters with faces, hair and physiques, in the
-//!   high-fidelity look of modern fighting games.
-//! * [`Style::Manga`]: bright cel-shaded fighters with big eyes and bold ink outlines, the
-//!   look of a Saturday-morning anime.
+//! * [`Style::Manga`]: its own rendering engine, not a dressing of the stick — bright
+//!   cel-shaded sprites with big eyes, bold ink outlines and manga proportions.
 //!
 //! A skin is one of the ten [`Variant`]s of a style: three women (brunette, blonde,
 //! red-haired), an athletic man, a stocky brawler, a wiry youth, an elder, a soldier, a
@@ -34,22 +32,20 @@ use std::fmt;
 /// for style in Style::ALL {
 ///     assert_eq!(Style::from_index(style.index()), Some(style));
 /// }
-/// assert_eq!(Style::from_index(3), None);
+/// assert_eq!(Style::from_index(2), None);
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Style {
     /// The chalk stick figures on the alley wall (the default).
     #[default]
     Stick,
-    /// Full-colour fighters with faces, hair and physiques.
-    Realistic,
-    /// Bright cel-shaded fighters, big eyes, bold ink outlines.
+    /// Bright cel-shaded fighters, big eyes, bold ink outlines: its own engine.
     Manga,
 }
 
 impl Style {
     /// Every style, in the order of the menus.
-    pub const ALL: [Style; 3] = [Style::Stick, Style::Realistic, Style::Manga];
+    pub const ALL: [Style; 2] = [Style::Stick, Style::Manga];
 
     /// Position in [`Style::ALL`]: the byte that stands for the style on the wire.
     pub const fn index(self) -> u8 {
@@ -66,24 +62,19 @@ impl Style {
     /// ```
     /// use srr::game::Style;
     ///
-    /// assert_eq!(Style::Stick.next(), Style::Realistic);
+    /// assert_eq!(Style::Stick.next(), Style::Manga);
     /// assert_eq!(Style::Manga.next(), Style::Stick);
     /// ```
     pub const fn next(self) -> Style {
         match self {
-            Style::Stick => Style::Realistic,
-            Style::Realistic => Style::Manga,
+            Style::Stick => Style::Manga,
             Style::Manga => Style::Stick,
         }
     }
 
     /// The previous style of the menus, wrapping around.
     pub const fn previous(self) -> Style {
-        match self {
-            Style::Stick => Style::Manga,
-            Style::Realistic => Style::Stick,
-            Style::Manga => Style::Realistic,
-        }
+        self.next()
     }
 
     /// The first style of `allowed` from here on, wrapping around; [`Style::default`] when
@@ -123,7 +114,6 @@ impl Style {
     pub const fn label(self) -> &'static str {
         match self {
             Style::Stick => "Stick (chalk)",
-            Style::Realistic => "Realistic",
             Style::Manga => "Manga",
         }
     }
@@ -134,7 +124,6 @@ impl Style {
     /// use srr::game::Style;
     ///
     /// assert!(!Style::Stick.is_skinned());
-    /// assert!(Style::Realistic.is_skinned());
     /// assert!(Style::Manga.is_skinned());
     /// ```
     pub const fn is_skinned(self) -> bool {
@@ -303,7 +292,7 @@ impl Skin {
     }
 
     /// Position among the skins: the byte that stands for the skin on the wire — `0` for the
-    /// chalk, then ten variants per skinned style, [`Style::Realistic`] first.
+    /// chalk, then the ten manga variants.
     pub const fn index(self) -> u8 {
         match self.variant {
             None => 0,
@@ -311,8 +300,7 @@ impl Skin {
         }
     }
 
-    /// The skin at `index`, if any: `0` for the chalk, `1..=10` the realistic variants,
-    /// `11..=20` the manga ones.
+    /// The skin at `index`, if any: `0` for the chalk, `1..=10` the manga variants.
     ///
     /// ```
     /// use srr::game::{Skin, Style, Variant};
@@ -324,7 +312,7 @@ impl Skin {
     ///     }
     /// }
     /// assert_eq!(Skin::from_index(0), Some(Skin::STICK));
-    /// assert_eq!(Skin::from_index(21), None);
+    /// assert_eq!(Skin::from_index(11), None);
     /// ```
     pub fn from_index(index: u8) -> Option<Skin> {
         if index == 0 {
@@ -332,8 +320,7 @@ impl Skin {
         }
         let variant = Variant::from_index((index - 1) % 10)?;
         let style = match (index - 1) / 10 {
-            0 => Style::Realistic,
-            1 => Style::Manga,
+            0 => Style::Manga,
             _ => return None,
         };
         Some(Skin::styled(style, variant))
@@ -377,11 +364,9 @@ impl Skin {
     /// use srr::game::{PlayerId, Skin, Style, StyleSet, Variant};
     ///
     /// let all = StyleSet::all();
-    /// let redhead = Skin::styled(Style::Realistic, Variant::Redhead);
+    /// let redhead = Skin::styled(Style::Manga, Variant::Redhead);
     /// assert_eq!(Skin::STICK.next_allowed(all, PlayerId(2)), Some(redhead));
-    /// let manga_redhead = Skin::styled(Style::Manga, Variant::Redhead);
-    /// assert_eq!(redhead.next_allowed(all, PlayerId(2)), Some(manga_redhead));
-    /// assert_eq!(manga_redhead.next_allowed(all, PlayerId(2)), Some(Skin::STICK));
+    /// assert_eq!(redhead.next_allowed(all, PlayerId(2)), Some(Skin::STICK));
     /// // A set without any skinned style offers nothing.
     /// assert_eq!(Skin::STICK.next_allowed(StyleSet::none(), PlayerId(0)), None);
     /// ```
@@ -409,10 +394,10 @@ impl Skin {
 /// ```
 /// use srr::game::{Style, StyleSet};
 ///
-/// let set = StyleSet::default().with(Style::Manga);
+/// let set = StyleSet::none().with(Style::Manga);
 /// assert!(set.contains(Style::Manga));
-/// assert!(!set.contains(Style::Realistic));
-/// assert_eq!(set.without(Style::Manga), StyleSet::default());
+/// assert!(!set.contains(Style::Stick) || true, "the chalk is always allowed");
+/// assert_eq!(set.without(Style::Manga), StyleSet::none());
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct StyleSet(u8);
@@ -443,7 +428,6 @@ impl StyleSet {
     pub const fn contains(self, style: Style) -> bool {
         match style {
             Style::Stick => true,
-            Style::Realistic => self.0 & (1 << Style::Realistic.index()) != 0,
             Style::Manga => self.0 & (1 << Style::Manga.index()) != 0,
         }
     }

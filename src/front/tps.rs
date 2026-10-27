@@ -369,7 +369,54 @@ fn disc(centre: Px, radius: i64) -> Vec<Px> {
 }
 
 /// A ball on screen: a disc in the shade, a smaller lit disc towards the light, the outline.
+/// How a fighter's parts are shaded in 3D: the chalk mannequins keep the flat retro
+/// two-tone with thin outlines (the debug view); the manga volumes draw comic cel — two
+/// hard tones with bold double outlines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shading {
+    /// The flat retro two-tone of the chalk debug mannequins.
+    Retro,
+    /// Two hard tones with bold outlines: the manga comic look.
+    Cel,
+}
+
+/// [`ball_shape`], shaded the style's way.
+pub fn ball_shape_styled(
+    frame: &mut Frame,
+    centre: Px,
+    radius: i32,
+    color: Rgba,
+    shading: Shading,
+) {
+    let r = radius as i64;
+    let outline = disc(centre, r);
+    fill_polygon(frame, &outline, color.scaled(SHADE));
+    let lit = (
+        centre.0 + div_round(LIGHT.0 * r, 20) as i32,
+        centre.1 + div_round(LIGHT.1 * r, 20) as i32,
+    );
+    fill_polygon(frame, &disc(lit, r * 7 / 10), color);
+    let inked = match shading {
+        Shading::Retro => radius >= INKED_RADIUS,
+        Shading::Cel => radius * 2 >= INKED_RADIUS,
+    };
+    if inked {
+        let passes = if shading == Shading::Cel { 2 } else { 1 };
+        for _ in 0..passes {
+            for (i, &p) in outline.iter().enumerate() {
+                ink_line(frame, p, outline[(i + 1) % outline.len()], INK);
+            }
+        }
+    }
+}
+
+/// A ball on screen: a disc in the shade, a smaller lit disc towards the light, the outline.
 pub fn ball_shape(frame: &mut Frame, centre: Px, radius: i32, color: Rgba) {
+    ball_shape_styled(frame, centre, radius, color, Shading::Retro);
+}
+
+#[allow(dead_code)]
+fn ball_shape_entry(frame: &mut Frame, centre: Px, radius: i32, color: Rgba) {
     let r = radius as i64;
     let outline = disc(centre, r);
     fill_polygon(frame, &outline, color.scaled(SHADE));
@@ -387,6 +434,24 @@ pub fn ball_shape(frame: &mut Frame, centre: Px, radius: i32, color: Rgba) {
 
 /// A tube on screen, from `a` (radius `ra`) to `b` (radius `rb`): a capsule, lit, with a shade
 /// band along its dark side, and the outline.
+/// [`tube_shape`], shaded the style's way: the manga's cel draws a second, bolder outline.
+pub fn tube_shape_styled(
+    frame: &mut Frame,
+    a: Px,
+    ra: i32,
+    b: Px,
+    rb: i32,
+    color: Rgba,
+    shading: Shading,
+) {
+    tube_shape(frame, a, ra, b, rb, color);
+    if shading == Shading::Cel && ra.min(rb) * 2 >= INKED_RADIUS {
+        tube_shape(frame, a, ra + 1, b, rb + 1, color);
+    }
+}
+
+/// A tube on screen, from `a` (radius `ra`) to `b` (radius `rb`): a capsule, lit, with a
+/// shade band along its dark side, and the outline.
 pub fn tube_shape(frame: &mut Frame, a: Px, ra: i32, b: Px, rb: i32, color: Rgba) {
     let (dx, dy) = ((b.0 - a.0) as i64, (b.1 - a.1) as i64);
     let length = (dx * dx + dy * dy).isqrt();
@@ -514,6 +579,44 @@ pub fn draw_line(frame: &mut Frame, camera: &Camera, a: Vec3, b: Vec3, color: Rg
 
 /// Draws a tube of the world from `a` to `b`, skipped when an end is too close to the eye.
 pub fn draw_tube(frame: &mut Frame, camera: &Camera, a: Vec3, b: Vec3, radius: i32, color: Rgba) {
+    draw_tube_styled(frame, camera, a, b, radius, color, Shading::Retro);
+}
+
+/// [`draw_tube`], shaded the style's way.
+pub fn draw_tube_styled(
+    frame: &mut Frame,
+    camera: &Camera,
+    a: Vec3,
+    b: Vec3,
+    radius: i32,
+    color: Rgba,
+    shading: Shading,
+) {
+    let (ca, cb) = (camera.to_camera(a), camera.to_camera(b));
+    if ca.z < NEAR || cb.z < NEAR {
+        return;
+    }
+    let r = Fx::int(radius);
+    tube_shape_styled(
+        frame,
+        screen_point(ca),
+        perspective(r, ca.z).max(1),
+        screen_point(cb),
+        perspective(r, cb.z).max(1),
+        color,
+        shading,
+    );
+}
+
+#[allow(dead_code)]
+fn draw_tube_unused(
+    frame: &mut Frame,
+    camera: &Camera,
+    a: Vec3,
+    b: Vec3,
+    radius: i32,
+    color: Rgba,
+) {
     let (ca, cb) = (camera.to_camera(a), camera.to_camera(b));
     if ca.z < NEAR || cb.z < NEAR {
         return;
@@ -531,6 +634,33 @@ pub fn draw_tube(frame: &mut Frame, camera: &Camera, a: Vec3, b: Vec3, radius: i
 
 /// Draws a ball of the world, skipped when too close to the eye.
 pub fn draw_ball(frame: &mut Frame, camera: &Camera, centre: Vec3, radius: i32, color: Rgba) {
+    draw_ball_styled(frame, camera, centre, radius, color, Shading::Retro);
+}
+
+/// [`draw_ball`], shaded the style's way.
+pub fn draw_ball_styled(
+    frame: &mut Frame,
+    camera: &Camera,
+    centre: Vec3,
+    radius: i32,
+    color: Rgba,
+    shading: Shading,
+) {
+    let c = camera.to_camera(centre);
+    if c.z < NEAR {
+        return;
+    }
+    ball_shape_styled(
+        frame,
+        screen_point(c),
+        perspective(Fx::int(radius), c.z).max(1),
+        color,
+        shading,
+    );
+}
+
+#[allow(dead_code)]
+fn draw_ball_unused(frame: &mut Frame, camera: &Camera, centre: Vec3, radius: i32, color: Rgba) {
     let c = camera.to_camera(centre);
     if c.z < NEAR {
         return;
@@ -596,9 +726,20 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
         .fighters()
         .iter()
         .flat_map(|fighter| {
-            let figure = Figure::of(fighter, rules_of(current, fighter), fight_ticks);
             let skin = client.skin(fighter.player());
-            mannequin(&figure, &skin, depth(fighter, config), camera)
+            if skin.style.is_skinned() {
+                manga_volumes(
+                    fighter,
+                    config,
+                    fight_ticks,
+                    &super::skin::palette_of(&skin),
+                    depth(fighter, config),
+                    camera,
+                )
+            } else {
+                let figure = Figure::of(fighter, rules_of(current, fighter), fight_ticks);
+                mannequin(&figure, &skin, depth(fighter, config), camera)
+            }
         })
         .chain(
             current
@@ -621,24 +762,50 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
                 radius,
                 color,
             } => draw_ball(frame, camera, centre, radius, fog(color, part.depth)),
+            Shape::Cel {
+                a,
+                b,
+                radius,
+                color,
+            } => match b {
+                Some(b) => draw_tube_styled(
+                    frame,
+                    camera,
+                    a,
+                    b,
+                    radius,
+                    fog(color, part.depth),
+                    Shading::Cel,
+                ),
+                None => draw_ball_styled(
+                    frame,
+                    camera,
+                    a,
+                    radius,
+                    fog(color, part.depth),
+                    Shading::Cel,
+                ),
+            },
         }
     }
 
     for fighter in current.fighters() {
         let (x, y) = feet(fighter, config);
-        let figure = Figure::of(fighter, rules_of(current, fighter), fight_ticks);
+        let skin = client.skin(fighter.player());
         let z = depth(fighter, config);
-        // Name tags float over the head, or lie on the pavement in front of a grounded fighter.
-        let anchor = if figure.lying {
+        // Name tags float over the head, or lie on the pavement in front of a grounded
+        // fighter. A manga fighter's head is its own engine's pose; the chalk's the stick's.
+        let (top, lying) = if skin.style.is_skinned() {
+            let pose = super::manga::pose(fighter, config, fight_ticks);
+            (super::manga::top(&pose), super::manga::is_lying(&pose))
+        } else {
+            let figure = Figure::of(fighter, rules_of(current, fighter), fight_ticks);
+            (figure.top(), figure.lying)
+        };
+        let anchor = if lying {
             lift(Point { x, y }, z - 40)
         } else {
-            lift(
-                Point {
-                    x,
-                    y: figure.top() - 8.0,
-                },
-                z,
-            )
+            lift(Point { x, y: top - 8.0 }, z)
         };
         if let Some(p) = camera.project(anchor) {
             if session.local_player() == Some(fighter.player()) {
@@ -835,6 +1002,13 @@ enum Shape {
         radius: i32,
         color: Rgba,
     },
+    /// A cel part of the manga engine: its own shading (see [`Shading`]).
+    Cel {
+        a: Vec3,
+        b: Option<Vec3>,
+        radius: i32,
+        color: Rgba,
+    },
 }
 
 struct Sculpt<'a> {
@@ -860,6 +1034,23 @@ impl Sculpt<'_> {
             depth: self.camera.to_camera(centre).z,
             shape: Shape::Ball {
                 centre,
+                radius,
+                color,
+            },
+        });
+    }
+
+    /// A cel part of the manga engine: a tube (`b` set) or a ball, shaded [`Shading::Cel`].
+    fn cel(&mut self, a: Vec3, b: Option<Vec3>, radius: i32, color: Rgba) {
+        let depth = match b {
+            Some(b) => self.camera.to_camera((a + b) >> 1).z,
+            None => self.camera.to_camera(a).z,
+        };
+        self.parts.push(Part {
+            depth,
+            shape: Shape::Cel {
+                a,
+                b,
                 radius,
                 color,
             },
@@ -1059,6 +1250,33 @@ fn mannequin(figure: &Figure, skin: &crate::game::Skin, depth: i32, camera: &Cam
                 s.tube(corner(-2.5, -2.5), corner(2.5, 2.5), 1, INK);
                 s.tube(corner(-2.5, 2.5), corner(2.5, -2.5), 1, INK);
             }
+        }
+    }
+    s.parts
+}
+
+/// The manga fighter in 3D: the manga engine's own volumes, built into parts at the
+/// fighter's depth. Cel-shaded tubes and balls with bold outlines — its own look, not the
+/// stick mannequin's.
+fn manga_volumes(
+    fighter: &Fighter,
+    config: &MatchConfig,
+    fight_ticks: u32,
+    palette: &super::skin::Palette,
+    depth: i32,
+    camera: &Camera,
+) -> Vec<Part> {
+    let volumes = super::manga::volumes(fighter, config, fight_ticks, palette);
+    let lift = |point: Point| self::lift(point, depth);
+    let mut s = Sculpt {
+        camera,
+        parts: Vec::new(),
+    };
+    for volume in volumes {
+        let (a, ra) = volume.a;
+        match volume.b {
+            Some((b, rb)) => s.cel(lift(a), Some(lift(b)), ra.max(rb), volume.color),
+            None => s.cel(lift(a), None, ra, volume.color),
         }
     }
     s.parts

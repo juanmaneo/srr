@@ -452,7 +452,7 @@ fn a_skin_picked_while_practising_online_dresses_the_practice_fighter() {
     game.skip_intro();
     game.tap(&[srr::game::Key::T]);
     assert!(game.game().is_practising_online());
-    let skin = srr::game::Skin::of_player(srr::game::Style::Realistic, PlayerId(0));
+    let skin = srr::game::Skin::of_player(srr::game::Style::Manga, PlayerId(0));
     assert!(
         !game.game_mut().set_skin(skin).is_empty(),
         "tells the server"

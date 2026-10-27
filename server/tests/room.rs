@@ -928,9 +928,12 @@ fn a_room_allows_only_the_styles_it_was_given() {
             ),
         ]
     );
-    // ...a style the room does not allow is ignored.
-    let realistic = Skin::styled(Style::Realistic, Variant::Redhead);
-    assert_eq!(room.receive(1, &skin(realistic)), vec![]);
+    // ...a style the room does not allow is ignored: a room that allows nothing refuses
+    // the manga pick.
+    let mut strict = Room::with_styles(StyleSet::none());
+    strict.join(1);
+    assert_eq!(strict.receive(1, &skin(manga)), vec![]);
+    assert_eq!(strict.skin(PlayerId(0)), Skin::STICK, "the pick is refused");
     assert_eq!(room.skin(PlayerId(0)), manga, "the pick is kept");
 }
 

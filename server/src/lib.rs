@@ -117,7 +117,7 @@ matches of up to {MAX_PLAYERS} players, everybody for themselves.
 Options:
   --port PORT   TCP port to listen on (default {DEFAULT_PORT})
   --dir DIR     directory with the web build (default {DEFAULT_ROOT})
-  --styles LIST the skins the players may wear, comma-separated among: stick, realistic,
+  --styles LIST the skins the players may wear, comma-separated among: stick,
                 manga (default: all of them; the chalk stick figure is always allowed)
   -h, --help    show this message
 "
@@ -183,7 +183,7 @@ pub fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Com
     Ok(Command::Serve { port, root, styles })
 }
 
-/// The styles a `--styles` value names: comma-separated `stick`, `realistic`, `manga`.
+/// The styles a `--styles` value names: comma-separated `stick`, `manga`.
 ///
 /// # Errors
 ///
@@ -194,7 +194,7 @@ pub fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Com
 /// use srr_server::parse_styles;
 ///
 /// assert_eq!(parse_styles("all"), Ok(StyleSet::all()));
-/// assert_eq!(parse_styles("realistic, manga"), Ok(StyleSet::all().without(Style::Stick)));
+/// assert_eq!(parse_styles("manga"), Ok(StyleSet::all().without(Style::Stick)));
 /// assert!(parse_styles("nope").is_err());
 /// ```
 pub fn parse_styles(list: &str) -> Result<StyleSet, String> {
@@ -205,9 +205,8 @@ pub fn parse_styles(list: &str) -> Result<StyleSet, String> {
     for name in list.split(',') {
         let style = match name.trim().to_ascii_lowercase().as_str() {
             "stick" | "chalk" => Style::Stick,
-            "realistic" => Style::Realistic,
             "manga" => Style::Manga,
-            other => return Err(format!("unknown style `{other}` (stick, realistic, manga)")),
+            other => return Err(format!("unknown style `{other}` (stick, manga)")),
         };
         set = set.with(style);
     }
