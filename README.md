@@ -11,13 +11,18 @@ It MUST have a Docker setup to be able to build on any machine (via Docker).
 It is a versus type of game that can be played 1v1 (2 players) or 1v1v1 (3 players) or 2v1 (3 players).
 The goal is to be able to play up to 10 players online (on a local network in the first iterations) with any kind of alliance or as full brawler.
 
-The lore is inspired by games like Street Fighter, Tekken, Mortal Kombat but the idea of on purpose "glitches" to exploit comes from BERP (BErseRk online Passion), a fictional game in the manga/anime "Shangri-La Frontier".
+The lore is inspired by games like Street Fighter, Tekken and Mortal Kombat (as tone and genre
+references only — nothing is taken from them), and the idea of on-purpose "glitches" to exploit is
+inspired by BERP (BErseRk online Passion), a fictional game in the manga/anime "Shangri-La
+Frontier".
 
-The street look comes from **Streets of Rage**: like its cover art, the title is splashed over
-the city as graffiti, the fights happen in back alleys, and the soundtrack is club music — here
-a 90s dark acid techno groove generated live, as if played in a New York basement. The
-grappling borrows from Brazilian jiu-jitsu and MMA (clinch, takedown, mount, submission) and
-from judo: two-key throws that end in a pin or an armlock.
+The street look is inspired by **Streets of Rage**: like on its cover art, the title is splashed
+over the city as graffiti, the fights happen in back alleys, and the soundtrack is club music — here
+a 90s dark acid techno groove generated live, as if played in a New York basement. To be clear,
+no art, music or code from Streets of Rage or any other game is used: everything is original work
+made for SRR, and only the general mood is a homage. The grappling is inspired by Brazilian
+jiu-jitsu and MMA (clinch, takedown, mount, submission) and by judo: two-key throws that end in
+a pin or an armlock.
 
 **Art direction:** the fighters are single-line stick figures in the style of **XKCD** and
 Osvaldo Cavandoli's **"La Linea"**: a hollow round head, one line for the body, two-segment
@@ -324,7 +329,8 @@ The 3D is drawn by the game itself, the old-school way (`src/front/space.rs`,
 `src/front/tps.rs`): integer fixed-point maths, a quaternion camera, the painter's algorithm
 and everything snapped to a 2-pixel grain, for the look of a 90s console. The figures become
 wooden mannequins (every bone a tube, every joint a ball) in a comic-book style: flat two-tone
-shading and dark ink outlines, in the Streets of Rage colours of the title. Like every screen,
+shading and dark ink outlines, in a colour palette evoking the Streets of Rage title screen
+(a nod to its mood; no palette or asset is copied from it). Like every screen,
 the result is only rectangles and labels, so both engines draw it unchanged. The rules are
 the same in both views; this is where sidesteps read best: the mannequins stand on the line
 they stepped to, and the camera follows yours.
