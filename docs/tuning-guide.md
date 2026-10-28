@@ -37,6 +37,30 @@ combination (`5` + `9`, `8` + `9`; zero would mean the very same tick).
 | Blocking                | `block_reduction_percent` | 75 (a blocked strike deals a quarter) |
 | Round / countdown       | `round_time_ticks`, `countdown_ticks` | 99 s / 2 s            |
 
+## The intentional glitches
+
+Every exploit is a `Glitch` in `MatchConfig::glitches` (`GlitchSet`, a bit per
+switch), on by default; below the numbers each one uses. Turn one off and the
+corresponding behaviour disappears completely — the tests of `tests/glitches.rs`
+check exactly that.
+
+| Glitch | Numbers (field / default) | What they do |
+| --- | --- | --- |
+| Animation cancel | — | a jump pressed in an attack's recovery cancels it |
+| Super jump | `super_jump_bonus` / 10 | extra take-off velocity of the bounce |
+| Reversal | — | grab on the first tick of being grabbed swaps the roles |
+| Echo barrage | `echo_punches` / 5, `echo_damage` / 2 | a landed unblocked punch rings that many copies around the victim, each hitting once per tick for that much — unblockable, no push, no stun |
+| Stretch strike | `stretch_reach` / 60, `fist_lifetime` / 15, `fist_damage` / 6 | punches reach that much further, and a fully whiffed one breaks its fist off, which floats for that many ticks and still hits for that much (blockable) |
+| Quick draw | — | a punch pressed in a punch's recovery restarts the punch at once |
+| Crater slam | `slam_radius` / 150, `slam_damage` / 8 | a landed judo throw quakes the ground: everybody standing within the radius of the landing point loses that much health |
+| Phantom warp | `warp_distance` / 80 | an unblocked hit taken in the air snaps the victim that far along the hit's direction, on top of the knockback |
+
+Tuning tips: the echo barrage rewards landing a single clean punch, so keep its total
+(`echo_punches` × `echo_damage`) below a heavy attack's damage; the stretch reach turns
+pokes into long-range threats, so mind its sum with `range` against `walk_speed`;
+the slam turns a throw into area denial — raise `slam_radius` and a throw into a crowd
+becomes the play.
+
 The six attacks (start-up, active, recovery, range, damage, knockback, hitstun):
 
 | Attack          | start-up | active | recovery | **total** | range | damage | knockback | hitstun |

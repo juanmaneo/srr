@@ -53,7 +53,7 @@ pub use config::{
     AttackData, ConfigError, Glitch, GlitchSet, GrappleData, MatchConfig, TICKS_PER_SECOND,
     TechniqueData,
 };
-pub use fighter::{AttackPhase, Facing, Fighter, FighterState};
+pub use fighter::{AttackPhase, DetachedFist, Facing, Fighter, FighterState};
 pub use grapple::{Grapple, GrapplePosition, GrappleRole};
 pub use input::{Attack, Input, Key, KeyBindings, Limb, Strength};
 pub use projectile::Projectile;

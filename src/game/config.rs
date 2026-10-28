@@ -28,11 +28,42 @@ pub enum Glitch {
     /// A grabbed fighter that freshly presses grab on its first tick in the grapple (the tick
     /// right after the grab connected) swaps the roles: it takes the top of a fresh clinch.
     Reversal,
+    /// A punch that connects without being blocked desyncs the attacker: lag copies of it
+    /// appear in a ring around the target and rain [`MatchConfig::echo_punches`] extra hits,
+    /// one per tick, each for [`MatchConfig::echo_damage`] — from every direction, so they
+    /// cannot be blocked, but they only hurt: no push, no stun.
+    EchoBarrage,
+    /// The fighter's arms stretch: every punch gains [`MatchConfig::stretch_reach`] extra
+    /// range, and a punch that reaches its recovery without connecting breaks its fist off at
+    /// full stretch. The detached fist keeps existing for [`MatchConfig::fist_lifetime`] ticks and can
+    /// still hit (and be blocked) like the punch that lost it.
+    StretchStrike,
+    /// A punch pressed while a punch is in its recovery restarts a fresh punch at once: the
+    /// recovery is thrown away, whichever strength is held. Held down, the button keeps the
+    /// fists flying — a flurry no recovery can slow down.
+    QuickDraw,
+    /// A judo throw that lands does not just hurt the thrown fighter: the impact quakes the
+    /// ground, and everybody else standing within [`MatchConfig::slam_radius`] of the landing
+    /// point loses [`MatchConfig::slam_damage`] health, allies included (subject to friendly
+    /// fire). No push, no stun: the floor does the damage.
+    CraterSlam,
+    /// An unblocked hit taken in the air desyncs the victim's model: besides the knockback it
+    /// snaps [`MatchConfig::warp_distance`] further along the direction the hit travels.
+    PhantomWarp,
 }
 
 impl Glitch {
     /// Every glitch, in declaration order.
-    pub const ALL: [Glitch; 3] = [Glitch::AnimationCancel, Glitch::SuperJump, Glitch::Reversal];
+    pub const ALL: [Glitch; 8] = [
+        Glitch::AnimationCancel,
+        Glitch::SuperJump,
+        Glitch::Reversal,
+        Glitch::EchoBarrage,
+        Glitch::StretchStrike,
+        Glitch::QuickDraw,
+        Glitch::CraterSlam,
+        Glitch::PhantomWarp,
+    ];
 
     const fn bit(self) -> u8 {
         1 << self as u8
@@ -41,8 +72,8 @@ impl Glitch {
 
 /// A set of enabled glitches.
 ///
-/// Stored as a bit mask, so the set is `Copy` and every operation is O(1). The builder methods
-/// take and return the set by value.
+/// Stored as a bit mask (one bit per glitch of [`Glitch::ALL`]), so the set is `Copy` and every
+/// operation is O(1). The builder methods take and return the set by value.
 ///
 /// ```
 /// use srr::game::{Glitch, GlitchSet};
@@ -299,6 +330,22 @@ pub struct MatchConfig {
     pub glitches: GlitchSet,
     /// Extra take-off velocity of a [`Glitch::SuperJump`].
     pub super_jump_bonus: i32,
+    /// Hits of the [`Glitch::EchoBarrage`] barrage.
+    pub echo_punches: u32,
+    /// Damage of each hit of the [`Glitch::EchoBarrage`] barrage.
+    pub echo_damage: i32,
+    /// Extra range [`Glitch::StretchStrike`] gives every punch.
+    pub stretch_reach: i32,
+    /// Ticks a broken-off fist of [`Glitch::StretchStrike`] keeps existing (and hitting).
+    pub fist_lifetime: u32,
+    /// Damage of a broken-off fist of [`Glitch::StretchStrike`].
+    pub fist_damage: i32,
+    /// Radius of the [`Glitch::CraterSlam`] impact.
+    pub slam_radius: i32,
+    /// Damage of the [`Glitch::CraterSlam`] impact on every fighter standing in it.
+    pub slam_damage: i32,
+    /// Distance a [`Glitch::PhantomWarp`] snaps an airborne victim along the hit's direction.
+    pub warp_distance: i32,
     /// The grab and the grappling ladder.
     pub grapple: GrappleData,
     /// Width of a fighter's push box: two fighters on the floor (or at nearly the same height)
@@ -410,6 +457,14 @@ impl Default for MatchConfig {
             friendly_fire: false,
             glitches: GlitchSet::all(),
             super_jump_bonus: 10,
+            echo_punches: 5,
+            echo_damage: 2,
+            stretch_reach: 60,
+            fist_lifetime: 15,
+            fist_damage: 6,
+            slam_radius: 150,
+            slam_damage: 8,
+            warp_distance: 80,
             grapple: GrappleData::default(),
             body_width: 50,
             body_height: 90,
@@ -591,6 +646,12 @@ impl MatchConfig {
             ("walk_speed", self.walk_speed),
             ("attack_height", self.attack_height),
             ("super_jump_bonus", self.super_jump_bonus),
+            ("echo_damage", self.echo_damage),
+            ("stretch_reach", self.stretch_reach),
+            ("fist_damage", self.fist_damage),
+            ("slam_radius", self.slam_radius),
+            ("slam_damage", self.slam_damage),
+            ("warp_distance", self.warp_distance),
             ("body_width", self.body_width),
             ("body_height", self.body_height),
             ("arena_depth", self.arena_depth),

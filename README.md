@@ -18,6 +18,16 @@ references only — nothing is taken from them), and the idea of on-purpose "gli
 inspired by BERP (BErseRk online Passion), a fictional game in the manga/anime "Shangri-La
 Frontier".
 
+**The glitches are not bugs to avoid: they are the game.** SRR is built around the idea
+that a fighting game's broken physics is not a defect but a *skill ceiling*: every
+exploit is a move you learn, time and combo, exactly like a fireball or a throw. The
+fun is not playing around the glitches — it is playing *with* them: the player who has
+mastered the desyncs, the phantom copies and the stretched limbs wins, the player who
+ignores them loses. In the spirit of the trash games that inspired the idea, the
+"bugs" here are documented, tested (they have their own test file) and deliberately
+switchable — a match can turn each one on or off, but they are all on by default,
+because exploiting them is the whole point.
+
 The street look is inspired by **Streets of Rage**: like on its cover art, the title is splashed
 over the city as graffiti, the fights happen in back alleys, and the soundtrack is club music — here
 a 90s dark acid techno groove generated live, as if played in a New York basement. To be clear,
@@ -490,10 +500,19 @@ strategy is a new implementation.
 
 After a round alone, `Enter` starts the next one at once.
 
-The intentional glitches are on: cancelling an attack's recovery with a jump, a super
-jump when jumping again on the very tick you land, and the grapple **reversal**: pressing
-grab on the very first tick you are grabbed swaps the roles (not during a judo projection,
-which has its own counter).
+The intentional glitches are on by default — each one is a learned move, not an
+accident, and each can be switched off in the configuration:
+
+| Glitch | What it does |
+| --- | --- |
+| **Recovery cancel** | a jump pressed during an attack's *recovery* throws the rest of it away and takes off at once |
+| **Super jump** | a jump pressed again on the very tick you land re-launches you, higher than a normal jump (held down, you keep bouncing) |
+| **Reversal** | pressing grab on the very first tick you are grabbed swaps the roles (not during a judo projection, which has its own counter) |
+| **Echo barrage** | a punch that lands unblocked desyncs the attacker: lag copies of it appear in a ring around the victim and rain extra hits, one per tick, from every direction — they cannot be blocked, but they only hurt: no push, no stun |
+| **Stretch strike** | your arms lengthen: every punch reaches further than its frame data says, and a punch that whiffs its way to the end of its timeline breaks its fist off at full stretch. The floating fist keeps existing and can still hit — blockable, like the punch that lost it |
+| **Quick draw** | a punch pressed while a punch is in its recovery restarts a fresh punch at once, whichever strength is held: held down, the button keeps the fists flying — a flurry no recovery can slow down |
+| **Crater slam** | a judo throw that lands does not just hurt the thrown fighter: the impact quakes the ground, and everybody standing near the landing point — allies included — loses health, no push, no stun: the floor does the damage |
+| **Phantom warp** | an unblocked hit taken in the air desyncs your model: besides the knockback, you snap further along the direction the hit travels |
 
 ### Play on your local network (2 to 10 players)
 

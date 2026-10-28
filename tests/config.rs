@@ -916,10 +916,19 @@ fn config_error_is_a_std_error() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn there_are_three_glitches_in_declaration_order() {
+fn every_glitch_is_declared_exactly_once_in_order() {
     assert_eq!(
         Glitch::ALL,
-        [Glitch::AnimationCancel, Glitch::SuperJump, Glitch::Reversal]
+        [
+            Glitch::AnimationCancel,
+            Glitch::SuperJump,
+            Glitch::Reversal,
+            Glitch::EchoBarrage,
+            Glitch::StretchStrike,
+            Glitch::QuickDraw,
+            Glitch::CraterSlam,
+            Glitch::PhantomWarp,
+        ]
     );
 }
 

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use super::config::{AttackData, ConfigError, MatchConfig};
+use super::config::{AttackData, ConfigError, Glitch, MatchConfig};
 use super::fighter::{AttackPhase, Facing, Fighter};
 use super::grapple::{GrappleRole, Hold, Turn, separate, snap};
 use super::input::Input;
@@ -398,6 +398,9 @@ impl Match {
         }
         self.resolve_collisions();
         self.resolve_attacks();
+        for fighter in self.fighters.iter_mut() {
+            fighter.tick_detached();
+        }
         self.resolve_projectiles();
         self.release_orphans();
         self.play_grapples();
@@ -445,9 +448,12 @@ impl Match {
     }
 
     /// Finds every hit against the post-update state first, then applies them, so that
-    /// simultaneous attacks trade hits.
+    /// simultaneous attacks trade hits. An unblocked punch from a fighter whose
+    /// [`Glitch::EchoBarrage`] is on rings lag copies around the target, which start their
+    /// barrage; then every broken-off fist ([`Glitch::StretchStrike`]) resolves like a strike.
     fn resolve_attacks(&mut self) {
-        for hit in self.collect_hits() {
+        let hits = self.collect_hits();
+        for hit in &hits {
             self.fighters[hit.attacker].record_hit(hit.target, hit.blocked);
             // An earlier hit of this step may already have knocked the target out.
             let target = &mut self.fighters[hit.target];
@@ -459,6 +465,44 @@ impl Match {
                     &self.rules[hit.target],
                 );
             }
+            let attacker = &self.rules[hit.attacker];
+            let unblocked_punch = !hit.blocked
+                && self.fighters[hit.attacker]
+                    .attack()
+                    .is_some_and(|attack| attack.limb == super::input::Limb::Punch);
+            if unblocked_punch
+                && attacker.glitches.contains(Glitch::EchoBarrage)
+                && !self.fighters[hit.target].is_knocked_out()
+            {
+                self.fighters[hit.target].barrage(attacker.echo_punches);
+            }
+        }
+        self.resolve_fists();
+    }
+
+    /// Every broken-off fist still in existence ([`Glitch::StretchStrike`]) resolves like a
+    /// strike frozen in the air: it hits the first enemy in roster order that stands on it —
+    /// and can be blocked by stepping back, like the punch that lost it.
+    fn resolve_fists(&mut self) {
+        for a in 0..self.fighters.len() {
+            if !self.rules[a].glitches.contains(Glitch::StretchStrike) {
+                continue;
+            }
+            let Some(fist) = self.fighters[a].detached_fist().copied() else {
+                continue;
+            };
+            let Some(target) = (0..self.fighters.len()).find(|&t| {
+                t != a
+                    && !self.fighters[t].is_knocked_out()
+                    && self.fighters[a].detached_reaches(&self.fighters[t], &self.rules[a])
+                    && self.may_hurt(self.fighters[a].player(), self.fighters[t].player())
+            }) else {
+                continue;
+            };
+            let direction = self.fighters[a].facing();
+            let blocked = self.fighters[target].guards_against(direction);
+            self.fighters[target].take_hit(&fist.data, direction, blocked, &self.rules[target]);
+            self.fighters[a].consume_detached();
         }
     }
 
@@ -601,12 +645,20 @@ impl Match {
     /// Plays one tick of the grapple `hold` between the fighters at positions `top` and
     /// `bottom`.
     fn play_grapple(&mut self, top: usize, bottom: usize, mut hold: Hold) {
+        let landing = hold.position().is_projection();
         let turn = hold.tick(
             self.fighters[top].fresh(),
             self.fighters[bottom].fresh(),
             self.fighters[bottom].combo(),
             &self.config,
         );
+        if let Turn::Continue { damage } = turn
+            && damage > 0
+            && landing
+            && self.config.glitches.contains(Glitch::CraterSlam)
+        {
+            self.quake(bottom);
+        }
         let data = &self.config.grapple;
         match turn {
             Turn::Continue { damage } => {
@@ -634,6 +686,31 @@ impl Match {
                 self.fighters[top].leave_grapple(top_x, stun);
                 self.fighters[bottom].leave_grapple(bottom_x, 0);
             }
+        }
+    }
+
+    /// The glitched landing of a judo throw ([`Glitch::CraterSlam`]): the impact quakes the
+    /// ground, and every other fighter standing within `slam_radius` of the landing point —
+    /// the thrown fighter's position — loses `slam_damage` health, allies included (subject to
+    /// friendly fire). No push, no stun: the floor does the damage.
+    fn quake(&mut self, landed: usize) {
+        let center = self.fighters[landed].x();
+        let radius = self.config.slam_radius;
+        let damage = self.config.slam_damage;
+        let victims: Vec<usize> = (0..self.fighters.len())
+            .filter(|&index| {
+                index != landed
+                    && !self.fighters[index].is_knocked_out()
+                    && !self.fighters[index].is_airborne()
+                    && (self.fighters[index].x() - center).abs() <= radius
+                    && self.may_hurt(
+                        self.fighters[landed].player(),
+                        self.fighters[index].player(),
+                    )
+            })
+            .collect();
+        for index in victims {
+            self.fighters[index].suffer(damage);
         }
     }
 

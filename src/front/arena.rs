@@ -15,8 +15,8 @@ use super::hud::tag;
 use super::scene::{Align, Frame, Rgba, SCREEN_WIDTH};
 use super::stick::{FIRE, Figure, Point, ring};
 use crate::game::{
-    Facing, Fighter, FighterState, GrapplePosition, GrappleRole, Match, MatchConfig, PlayerId,
-    Projectile, Strength,
+    DetachedFist, Facing, Fighter, FighterState, GrapplePosition, GrappleRole, Match, MatchConfig,
+    PlayerId, Projectile, Strength,
 };
 use crate::net::Client;
 
@@ -183,6 +183,40 @@ pub fn shot_center(shot: &Projectile, config: &MatchConfig) -> Point {
     }
 }
 
+/// Where a broken-off fist ([`DetachedFist`]) floats on screen, at the height it snapped off.
+pub fn fist_center(fist: &DetachedFist, config: &MatchConfig) -> Point {
+    let scale = scale(config);
+    Point {
+        x: ARENA_LEFT + fist.x() as f32 * scale,
+        y: FLOOR_Y
+            - fist.y() as f32 * scale
+            - FIREBALL_HEIGHT
+            - fist.z() as f32 * scale * DEPTH_RISE,
+    }
+}
+
+/// A fist broken off at full stretch, hanging in the air: the chalk-white outline of a fist,
+/// trembling where it floats.
+pub fn draw_fist(frame: &mut Frame, center: Point, fight_ticks: u32) {
+    let jitter = ((fight_ticks % 4) as f32 - 1.5) * 1.5;
+    for (dx, dy) in [(0.0, -5.0), (0.0, 5.0), (-5.0, 0.0), (5.0, 0.0)] {
+        frame.rect(
+            center.x + dx + jitter - 2.0,
+            center.y + dy - 2.0,
+            4.0,
+            4.0,
+            Rgba::hex(0xfff6d8),
+        );
+    }
+    frame.rect(
+        center.x + jitter - 3.0,
+        center.y - 3.0,
+        6.0,
+        6.0,
+        Rgba::hex(0xe8e8e8),
+    );
+}
+
 /// A fireball centred on `center`, flying towards `facing`: a flickering trail of flames
 /// behind it, then glowing rings from the red rim to the white-hot core.
 pub fn draw_fireball(frame: &mut Frame, center: Point, facing: Facing, fight_ticks: u32) {
@@ -276,6 +310,11 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
     }
     for shot in current.projectiles() {
         draw_fireball(frame, shot_center(shot, config), shot.facing(), fight_ticks);
+    }
+    for fighter in current.fighters() {
+        if let Some(fist) = fighter.detached_fist() {
+            draw_fist(frame, fist_center(fist, config), fight_ticks);
+        }
     }
     // A session only exists for a local player who is in the match, so there is one fighter;
     // a spectator watches nobody in particular, so no fighter is marked.

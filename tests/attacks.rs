@@ -10,7 +10,7 @@ mod common;
 
 use common::*;
 use srr::game::{
-    Attack, AttackData, AttackPhase, FighterState, Input, Limb, MatchConfig, Strength,
+    Attack, AttackData, AttackPhase, FighterState, GlitchSet, Input, Limb, MatchConfig, Strength,
 };
 
 const LOW_PUNCH: Attack = Attack::punch(Strength::Low);
@@ -191,6 +191,7 @@ fn each_attack_has_its_own_knockback_and_hit_stun() {
 fn the_default_attacks_hit_exactly_within_their_range_for_their_damage() {
     let config = MatchConfig {
         countdown_ticks: 0,
+        glitches: GlitchSet::none(),
         ..MatchConfig::default()
     };
     for attack in Attack::ALL {

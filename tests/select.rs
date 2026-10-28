@@ -493,3 +493,39 @@ fn a_figure_can_be_shifted_sideways() {
     assert_eq!(moved.legs[1].end.x, figure.legs[1].end.x + 50.0);
     assert_eq!(moved.arms[0].joint.x, figure.arms[0].joint.x + 50.0);
 }
+
+#[test]
+fn a_broken_off_fist_floats_where_it_snapped_off() {
+    use srr::front::arena::{draw_fist, fist_center};
+    use srr::game::AttackData;
+    use srr::game::DetachedFist;
+
+    let config = MatchConfig {
+        countdown_ticks: 0,
+        ..MatchConfig::default()
+    };
+    let fist = DetachedFist::new(
+        300,
+        20,
+        0,
+        5,
+        AttackData {
+            damage: 6,
+            knockback: 0,
+            hitstun: 0,
+            ..*config.attack(srr::game::Attack::punch(srr::game::Strength::Low))
+        },
+    );
+    let center = fist_center(&fist, &config);
+    assert_eq!(
+        center.y,
+        srr::front::arena::FLOOR_Y
+            - 20.0 * arena::scale(&config)
+            - srr::front::arena::FIREBALL_HEIGHT
+    );
+    let before = Frame::new(Rgba::hex(0));
+    let mut drawn = Frame::new(Rgba::hex(0));
+    draw_fist(&mut drawn, center, 0);
+    assert!(drawn.rects.len() > before.rects.len());
+    assert_eq!(rects_of(&drawn, Rgba::hex(0xfff6d8)), 4);
+}

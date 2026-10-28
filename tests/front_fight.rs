@@ -3611,3 +3611,54 @@ fn a_spectator_shows_the_winner_and_the_next_match_on_its_own() {
     assert_eq!(game.client().session().unwrap().tick(), 0);
     assert_eq!(game.client().session().unwrap().id(), session + 1);
 }
+
+// ---------------------------------------------------------------------------------------------
+// The glitched fist of StretchStrike, drawn on the arena
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_broken_off_fist_is_drawn_where_it_floats() {
+    // StretchStrike on: a whiffed punch breaks its fist off, and the arena draws it.
+    let config = MatchConfig {
+        glitches: GlitchSet::none().with(srr::game::Glitch::StretchStrike),
+        ..cfg()
+    };
+    let mut client = duel(config.clone(), 0);
+    // Player 0 turns away from player 1 first, so the punch travels into nothing.
+    play(
+        &mut client,
+        srr::game::Input {
+            left: true,
+            down: true,
+            ..Input::NONE
+        },
+        Input::NONE,
+    );
+    for _ in 0..6 {
+        play(&mut client, punch(), Input::NONE);
+    }
+    let fist = client
+        .session()
+        .map(|session| session.current())
+        .and_then(|m| m.fighter(PlayerId(0)))
+        .and_then(|f| f.detached_fist().copied())
+        .expect("the punch whiffed its fist off");
+    assert_eq!(
+        fist.x(),
+        0,
+        "it broke off at the wall, facing away from the rival"
+    );
+    let mut frame = Frame::new(arena::BACKGROUND);
+    arena::draw(&mut frame, &client, 1);
+    let center = arena::ARENA_LEFT + fist.x() as f32 * arena::scale(client.config());
+    let fists: Vec<&Rect> = frame
+        .rects
+        .iter()
+        .filter(|r| (r.x - center).abs() < 8.0 && r.width <= 6.0 && r.height <= 6.0)
+        .collect();
+    assert!(!fists.is_empty(), "the fist is drawn where it floats");
+    assert!(
+        fists.iter().any(|r| r.color == Rgba::hex(0xe8e8e8)),
+        "the chalk-white fist core"
+    );
+}

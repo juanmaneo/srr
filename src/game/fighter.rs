@@ -165,6 +165,69 @@ impl Strike {
     }
 }
 
+/// A fist a [`Glitch::StretchStrike`](super::Glitch::StretchStrike) punch broke off at full
+/// stretch: it keeps existing for a while and can still hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DetachedFist {
+    /// Where along the arena it snapped off.
+    pub(crate) x: i32,
+    /// Height above the floor it snapped off at.
+    pub(crate) y: i32,
+    /// Line across the arena it snapped off on.
+    pub(crate) z: i32,
+    /// Ticks it keeps existing.
+    pub(crate) remaining: u32,
+    /// The hit it deals: the punch's frame data, hurt only — no push, no stun.
+    pub(crate) data: AttackData,
+}
+
+impl DetachedFist {
+    /// A fist floating at (`x`, `y`, `z`) for `remaining` ticks, hitting for `data`.
+    ///
+    /// ```
+    /// use srr::game::{Attack, AttackData, DetachedFist, MatchConfig, Strength};
+    ///
+    /// let hit = *MatchConfig::default().attack(Attack::punch(Strength::Low));
+    /// let fist = DetachedFist::new(300, 20, 0, 5, hit);
+    /// assert_eq!((fist.x(), fist.y(), fist.z(), fist.remaining()), (300, 20, 0, 5));
+    /// assert_eq!(fist.hit().damage, hit.damage);
+    /// ```
+    pub fn new(x: i32, y: i32, z: i32, remaining: u32, data: AttackData) -> Self {
+        DetachedFist {
+            x,
+            y,
+            z,
+            remaining,
+            data,
+        }
+    }
+
+    /// Where along the arena the fist floats.
+    pub fn x(&self) -> i32 {
+        self.x
+    }
+
+    /// Height above the floor it floats at.
+    pub fn y(&self) -> i32 {
+        self.y
+    }
+
+    /// Line across the arena it floats on.
+    pub fn z(&self) -> i32 {
+        self.z
+    }
+
+    /// Ticks it keeps existing (and hitting).
+    pub fn remaining(&self) -> u32 {
+        self.remaining
+    }
+
+    /// The hit it deals.
+    pub fn hit(&self) -> &AttackData {
+        &self.data
+    }
+}
+
 /// What drives a fighter's next update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -234,6 +297,12 @@ pub struct Fighter {
     cooldown: u32,
     /// The projectile the special move threw during the last update, if any.
     launched: Option<ProjectileData>,
+    /// Hits of the [`Glitch::EchoBarrage`](super::Glitch::EchoBarrage) barrage the fighter is
+    /// caught in: one unblocked punch from a barraging attacker rings lag copies around it,
+    /// which rain this many single-damage hits, one per tick.
+    echo: u32,
+    /// The fist the fighter's punch broke off during the last update ([`Glitch::StretchStrike`]).
+    detached: Option<DetachedFist>,
     /// Whether high attacks from the floor pass over the special move (from the rules).
     low_profile: bool,
     /// Whether hits taken during the special move's start-up neither stun nor push.
@@ -269,6 +338,8 @@ impl Fighter {
             combo_hits: 0,
             cooldown: 0,
             launched: None,
+            echo: 0,
+            detached: None,
             low_profile: config.special.low_profile,
             armored: config.special.armored,
             action: Action::Free,
@@ -403,6 +474,20 @@ impl Fighter {
         self.combo_hits
     }
 
+    /// The fist the fighter's last whiffed punch broke off, if any
+    /// ([`Glitch::StretchStrike`](super::Glitch::StretchStrike)); the match takes it over every
+    /// tick it exists.
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert!(m.fighter(PlayerId(0)).unwrap().detached_fist().is_none());
+    /// ```
+    pub fn detached_fist(&self) -> Option<&DetachedFist> {
+        self.detached.as_ref()
+    }
+
     /// The grapple the fighter is locked in, if any, seen from its side.
     ///
     /// ```
@@ -422,6 +507,7 @@ impl Fighter {
     pub(crate) fn update(&mut self, input: Input, config: &MatchConfig) {
         self.stride = 0;
         self.launched = None;
+        self.play_echo(config);
         self.cooldown = self.cooldown.saturating_sub(1);
         self.fresh = input.pressed_since(self.previous);
         self.previous = input;
@@ -447,6 +533,19 @@ impl Fighter {
             // Grapplers stay put on the floor; the match plays the grapple.
             Action::Grappling(_) => {}
             Action::Free => self.update_free(input, config),
+        }
+    }
+
+    /// One tick of the lag-copy barrage ([`Glitch::EchoBarrage`]): the rings of copies around
+    /// a freshly unblocked-punched fighter rain their extra hits, one per tick, that nobody can
+    /// block — but that neither push nor stun, so the victim can act.
+    fn play_echo(&mut self, config: &MatchConfig) {
+        if self.echo > 0 {
+            self.echo -= 1;
+            self.health = self.health.saturating_sub(config.echo_damage).max(0);
+            if self.health == 0 {
+                self.knock_out();
+            }
         }
     }
 
@@ -487,6 +586,17 @@ impl Fighter {
         }
         let data = strike_data(strike.kind, config);
         let active_end = data.startup.saturating_add(data.active);
+        // Glitch: in the recovery of a punch, a pressed punch button starts a fresh punch at
+        // once — the flurry no recovery can slow down.
+        if strike.frame > active_end
+            && config.glitches.contains(Glitch::QuickDraw)
+            && matches!(strike.kind, Move::Attack(attack) if attack.limb == Limb::Punch)
+            && let Some(punch) = input.attack().filter(|next| next.limb == Limb::Punch)
+            && !strike.connected
+        {
+            self.set_strike(Strike::new(Move::Attack(punch)), config);
+            return;
+        }
         let converted = Technique::ALL.into_iter().find(|&technique| {
             strike.frame <= data.startup
                 && matches!(strike.kind, Move::Attack(attack) if technique.buttons().contains(&attack))
@@ -555,7 +665,35 @@ impl Fighter {
     /// Puts the fighter at the step of `strike`. A special move starts its cooldown on its
     /// first step, rushes forward by its lunge on every start-up and active step, and throws
     /// its projectile on its first active step.
+    ///
+    /// A punch that whiffed its way into this call at the very end of its timeline breaks its
+    /// fist off at full stretch ([`Glitch::StretchStrike`]): the detached fist keeps existing
+    /// and can still hit.
     fn set_strike(&mut self, strike: Strike, config: &MatchConfig) {
+        if config.glitches.contains(Glitch::StretchStrike)
+            && strike.frame >= strike_data(strike.kind, config).total()
+            && !strike.connected
+            && matches!(strike.kind, Move::Attack(attack) if attack.limb == Limb::Punch)
+            && let Move::Attack(attack) = strike.kind
+            && let Some(x) = self.x.checked_add(
+                self.facing
+                    .sign()
+                    .saturating_mul(config.attack(attack).range + config.stretch_reach),
+            )
+        {
+            self.detached = Some(DetachedFist::new(
+                x.clamp(0, config.arena_width),
+                self.y,
+                self.z,
+                config.fist_lifetime,
+                AttackData {
+                    damage: config.fist_damage,
+                    knockback: 0,
+                    hitstun: 0,
+                    ..*config.attack(attack)
+                },
+            ));
+        }
         let data = strike_data(strike.kind, config);
         let phase = phase_at(strike.frame, data.startup, data.active);
         self.action = Action::Attacking(strike);
@@ -829,6 +967,37 @@ impl Fighter {
     }
 
     /// Whether the fighter has a push box: everybody but knocked-out and grappling fighters.
+    /// Starts (or restarts) the lag-copy barrage of an unblocked punch.
+    pub(crate) fn barrage(&mut self, hits: u32) {
+        self.echo = hits;
+    }
+
+    /// The broken-off fist spent itself on its hit: it shatters and is gone.
+    pub(crate) fn consume_detached(&mut self) {
+        self.detached = None;
+    }
+
+    /// One tick less of existence for the broken-off fist.
+    pub(crate) fn tick_detached(&mut self) {
+        if let Some(fist) = &mut self.detached {
+            fist.remaining = fist.remaining.saturating_sub(1);
+            if fist.remaining == 0 {
+                self.detached = None;
+            }
+        }
+    }
+
+    /// Whether the broken-off fist reaches `target`: the fighter's body overlaps the point the
+    /// fist floats at, within `attack_height` along the arena and above the floor, and within
+    /// `attack_depth` across.
+    pub(crate) fn detached_reaches(&self, target: &Fighter, config: &MatchConfig) -> bool {
+        self.detached.is_some_and(|fist| {
+            (target.x - fist.x).abs() <= config.attack_height
+                && (target.y - fist.y).abs() <= config.attack_height
+                && (i64::from(target.z) - i64::from(fist.z)).abs() <= i64::from(config.attack_depth)
+        })
+    }
+
     pub(crate) fn is_solid(&self) -> bool {
         !matches!(self.action, Action::KnockedOut | Action::Grappling(_))
     }
@@ -853,7 +1022,11 @@ impl Fighter {
         matches!(self.action, Action::Attacking(strike) if {
             let high = matches!(strike.kind, Move::Attack(attack) if attack.strength == Strength::High);
             let over_the_head = high && !self.airborne && target.ducks();
-            !over_the_head && self.in_box(target, strike_data(strike.kind, config).range, config)
+            let stretched = matches!(strike.kind, Move::Attack(attack) if attack.limb == Limb::Punch)
+                && config.glitches.contains(Glitch::StretchStrike);
+            let range = strike_data(strike.kind, config).range
+                + i32::from(stretched) * config.stretch_reach;
+            !over_the_head && self.in_box(target, range, config)
         })
     }
 
@@ -919,6 +1092,17 @@ impl Fighter {
         if flinches {
             self.walk_by(direction.sign().saturating_mul(data.knockback), config);
             self.combo_hits = self.combo_hits.saturating_add(1);
+        }
+        // Glitch: an unblocked hit taken in the air snaps the victim further along the hit.
+        if !blocked
+            && self.airborne
+            && config.glitches.contains(Glitch::PhantomWarp)
+            && !self.is_knocked_out()
+        {
+            self.walk_by(
+                direction.sign().saturating_mul(config.warp_distance),
+                config,
+            );
         }
 
         if self.health == 0 {
