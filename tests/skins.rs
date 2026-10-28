@@ -35,12 +35,12 @@ fn the_ten_variants_cycle_with_the_players() {
     assert_eq!(Variant::from_index(10), None);
     // The players wear their own: the ten players of a brawl each look different.
     assert_eq!(Variant::of(PlayerId(0)), Variant::Brunette);
-    assert_eq!(Variant::of(PlayerId(9)), Variant::Mystic);
+    assert_eq!(Variant::of(PlayerId(9)), Variant::Raven);
     assert_eq!(Variant::of(PlayerId(10)), Variant::Brunette);
     // Three women, then seven others.
     assert_eq!(Variant::Brunette.label(), "the brunette");
     assert_eq!(Variant::Redhead.label(), "the redhead");
-    assert_eq!(Variant::Ace.label(), "the ace");
+    assert_eq!(Variant::Pink.label(), "the pink");
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn a_skin_is_a_style_wearing_a_variant() {
     // The chalk wears none; the skinned styles always do.
     assert_eq!(Skin::default(), Skin::STICK);
     assert_eq!(Skin::STICK.index(), 0);
-    assert_eq!(Skin::styled(Style::Stick, Variant::Ace), Skin::STICK);
+    assert_eq!(Skin::styled(Style::Stick, Variant::Pink), Skin::STICK);
     for style in Style::ALL {
         for variant in Variant::ALL {
             let skin = Skin::styled(style, variant);
@@ -62,7 +62,7 @@ fn a_skin_is_a_style_wearing_a_variant() {
     );
     assert_eq!(
         Skin::from_index(10),
-        Some(Skin::styled(Style::Manga, Variant::Mystic))
+        Some(Skin::styled(Style::Manga, Variant::Raven))
     );
     assert_eq!(Skin::from_index(11), None);
     // The label names both.
@@ -155,7 +155,7 @@ fn a_client_wears_what_the_server_tells_everybody() {
         "the chalk until told"
     );
     // Picking a skin tells the server...
-    let mine = Skin::styled(Style::Manga, Variant::Ace);
+    let mine = Skin::styled(Style::Manga, Variant::Pink);
     assert_eq!(
         client.set_skin(mine),
         Some(ClientMessage::Skin { skin: mine }.encode())
@@ -211,18 +211,22 @@ fn a_fighter_wearing_a_skin_is_drawn_in_its_colours() {
     // The manga fighter is its AI-art sprite: the sprite's own dominant colour must show
     // on screen once the skin is worn — where the chalk showed none of it.
     let variant = Variant::of(PlayerId(0));
-    let sprite = srr::front::skin::sprite(variant);
-    // The sprite's most common opaque colour: its dominant colour.
+    let sprite = srr::front::skin::sprite(variant, srr::front::skin::Pose::Stand);
+    // The sprite's most common saturated opaque colour: its signature colour (the red of
+    // the dress, not the dark of the hair, which the arena also has).
     let mut counts: std::collections::HashMap<[u8; 3], usize> = Default::default();
     for px in sprite.pixels.chunks(4) {
-        if px[3] > 200 {
-            *counts.entry([px[0], px[1], px[2]]).or_default() += 1;
+        let [r, g, b, a] = *px.first_chunk::<4>().expect("rgba");
+        let saturated = i32::from(r).max(i32::from(g)).max(i32::from(b))
+            - i32::from(r).min(i32::from(g)).min(i32::from(b));
+        if a > 200 && saturated > 40 {
+            *counts.entry([r, g, b]).or_default() += 1;
         }
     }
     let (&dominant, _) = counts
         .iter()
         .max_by_key(|(_, n)| **n)
-        .expect("an opaque colour");
+        .expect("a saturated opaque colour");
     let near = |p: [u8; 3]| {
         (i32::from(p[0]) - i32::from(dominant[0])).abs() < 12
             && (i32::from(p[1]) - i32::from(dominant[1])).abs() < 12
@@ -271,11 +275,60 @@ fn the_skin_row_of_the_pause_menu_changes_the_fighter_at_once() {
     // A practice game is local: the fighter wears the new skin at once.
     assert_eq!(
         game.game().skin(),
-        Skin::of_player(Style::Manga, PlayerId(0))
+        Skin::styled(Style::Manga, Variant::Brunette)
     );
-    let text = game.text_snapshot(200, 60);
-    assert!(text.contains("Manga.(the.brunette)"), "{text}");
-    // And back to the chalk.
+    // The ten fighters, one per press.
+    for variant in Variant::ALL.iter().skip(1) {
+        game.tap(&[Key::ArrowRight]);
+        assert_eq!(
+            game.game().skin(),
+            Skin::styled(Style::Manga, *variant),
+            "the row cycles the fighters"
+        );
+    }
+    // ...and back to the chalk.
     game.tap(&[Key::ArrowRight]);
     assert_eq!(game.game().skin(), Skin::STICK);
+    // Left goes back through the same cycle.
+    game.tap(&[Key::ArrowLeft]);
+    assert_eq!(
+        game.game().skin(),
+        Skin::styled(Style::Manga, Variant::Raven)
+    );
+}
+
+#[test]
+fn a_manga_fighter_poses_with_its_state() {
+    use srr::front::Headless;
+    use srr::front::skin::Pose;
+    use srr::game::Key;
+
+    // Every pose of every fighter decodes: all ten women, all nine poses.
+    for variant in Variant::ALL {
+        for pose in Pose::ALL {
+            let sprite = srr::front::skin::sprite(variant, pose);
+            assert!(
+                sprite.width > 0 && sprite.height > 0,
+                "{variant:?} {pose:?}"
+            );
+            assert_eq!(sprite.pixels.len(), sprite.width * sprite.height * 4);
+        }
+    }
+
+    // And the fight animates: walking alternates the two frames.
+    let mut game = Headless::practice();
+    game.skip_intro();
+    game.game_mut().client_mut().handle(ServerMessage::SkinOf {
+        player: PlayerId(0),
+        skin: Skin::of_player(Style::Manga, PlayerId(0)),
+    });
+    game.idle(MatchConfig::default().countdown_ticks);
+    game.hold(&[Key::ArrowRight], 1);
+    let current = game.game().shown_match().expect("the fight");
+    let fighter = &current.fighters()[0];
+    let pose = srr::front::skin::pose_of(fighter, game.ticks() as u32);
+    assert!(
+        pose == Pose::WalkA || pose == Pose::WalkB || pose == Pose::Stand,
+        "walking poses the fighter: {pose:?}"
+    );
 }

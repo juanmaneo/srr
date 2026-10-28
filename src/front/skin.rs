@@ -18,7 +18,7 @@
 
 use super::scene::{Frame, Rgba};
 use super::stick::{Bone, Figure, HEAD_RADIUS, Point, ring, stroke};
-use crate::game::{Skin, Variant};
+use crate::game::{Fighter, FighterState, Limb, Skin, Variant};
 
 /// The clean outline ink of the manga sprites: pure black, thin.
 const INK: Rgba = Rgba::hex(0x100c14);
@@ -252,7 +252,7 @@ impl Palette {
                     ..Look::WOMAN
                 },
             ),
-            Variant::Ace => palette(
+            Variant::Pink => palette(
                 Rgba::hex(0x2a2422),
                 skin,
                 Rgba::hex(0x2e52a0),
@@ -260,7 +260,7 @@ impl Palette {
                 Rgba::hex(0x282834),
                 Look::MAN,
             ),
-            Variant::Boulder => palette(
+            Variant::White => palette(
                 Rgba::hex(0x4a4a4a),
                 Rgba::hex(0xeab27e),
                 Rgba::hex(0x7a5a34),
@@ -276,7 +276,7 @@ impl Palette {
                     ..Look::MAN
                 },
             ),
-            Variant::Spark => palette(
+            Variant::Black => palette(
                 Rgba::hex(0xf0982c),
                 skin,
                 Rgba::hex(0x38b872),
@@ -292,7 +292,7 @@ impl Palette {
                     ..Look::MAN
                 },
             ),
-            Variant::Elder => palette(
+            Variant::Green => palette(
                 Rgba::hex(0xdcd8d4),
                 Rgba::hex(0xf0c090),
                 Rgba::hex(0x6a5678),
@@ -303,7 +303,7 @@ impl Palette {
                     ..Look::MAN
                 },
             ),
-            Variant::Trooper => palette(
+            Variant::Violet => palette(
                 Rgba::hex(0x3e3832),
                 skin,
                 Rgba::hex(0x4c5a42),
@@ -311,7 +311,7 @@ impl Palette {
                 Rgba::hex(0x3a4a2e),
                 Look::MAN,
             ),
-            Variant::Punk => palette(
+            Variant::Cyan => palette(
                 Rgba::hex(0x3ab860),
                 Rgba::hex(0xf8d8b0),
                 Rgba::hex(0x24242e),
@@ -323,7 +323,7 @@ impl Palette {
                     ..Look::MAN
                 },
             ),
-            Variant::Mystic => palette(
+            Variant::Raven => palette(
                 Rgba::hex(0x9060e8),
                 Rgba::hex(0xe0bca0),
                 Rgba::hex(0x30304a),
@@ -986,17 +986,150 @@ pub fn palette_of(skin: &Skin) -> Palette {
 /// The sprite bytes of a variant: a little-endian `u32` width, then height, then the RGBA
 /// pixels, row by row from the top-left corner — generated once by the art pipeline and
 /// embedded, so every engine draws the same art.
-const SPRITES: [&[u8]; 10] = [
+/// Every action the sprite engine animates: the poses generated for each fighter, plus
+/// the standing pose (the bare name). A fighter without a pose falls back to standing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Pose {
+    /// Standing in guard (the fighter's own bare sprite).
+    Stand,
+    /// The two walk frames, alternating with the steps.
+    WalkA,
+    WalkB,
+    /// A straight punch.
+    Punch,
+    /// A high kick.
+    Kick,
+    /// Crouching low.
+    Crouch,
+    /// In the air.
+    Jump,
+    /// Recoiling from a hit.
+    Hit,
+    /// Lying knocked out.
+    Ko,
+}
+
+impl Pose {
+    /// Every pose, in the order of the asset names.
+    pub const ALL: [Pose; 9] = [
+        Pose::Stand,
+        Pose::WalkA,
+        Pose::WalkB,
+        Pose::Punch,
+        Pose::Kick,
+        Pose::Crouch,
+        Pose::Jump,
+        Pose::Hit,
+        Pose::Ko,
+    ];
+
+    /// The pose's suffix on the asset name ("" for the standing sprite).
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Pose::Stand => "",
+            Pose::WalkA => "-walk-a",
+            Pose::WalkB => "-walk-b",
+            Pose::Punch => "-punch",
+            Pose::Kick => "-kick",
+            Pose::Crouch => "-crouch",
+            Pose::Jump => "-jump",
+            Pose::Hit => "-hit",
+            Pose::Ko => "-ko",
+        }
+    }
+}
+
+const SPRITES: [&[u8]; 90] = [
     include_bytes!("../../assets/skins/brunette.rgba"),
+    include_bytes!("../../assets/skins/brunette-walk-a.rgba"),
+    include_bytes!("../../assets/skins/brunette-walk-b.rgba"),
+    include_bytes!("../../assets/skins/brunette-punch.rgba"),
+    include_bytes!("../../assets/skins/brunette-kick.rgba"),
+    include_bytes!("../../assets/skins/brunette-crouch.rgba"),
+    include_bytes!("../../assets/skins/brunette-jump.rgba"),
+    include_bytes!("../../assets/skins/brunette-hit.rgba"),
+    include_bytes!("../../assets/skins/brunette-ko.rgba"),
     include_bytes!("../../assets/skins/blonde.rgba"),
+    include_bytes!("../../assets/skins/blonde-walk-a.rgba"),
+    include_bytes!("../../assets/skins/blonde-walk-b.rgba"),
+    include_bytes!("../../assets/skins/blonde-punch.rgba"),
+    include_bytes!("../../assets/skins/blonde-kick.rgba"),
+    include_bytes!("../../assets/skins/blonde-crouch.rgba"),
+    include_bytes!("../../assets/skins/blonde-jump.rgba"),
+    include_bytes!("../../assets/skins/blonde-hit.rgba"),
+    include_bytes!("../../assets/skins/blonde-ko.rgba"),
     include_bytes!("../../assets/skins/redhead.rgba"),
-    include_bytes!("../../assets/skins/ace.rgba"),
-    include_bytes!("../../assets/skins/boulder.rgba"),
-    include_bytes!("../../assets/skins/spark.rgba"),
-    include_bytes!("../../assets/skins/elder.rgba"),
-    include_bytes!("../../assets/skins/trooper.rgba"),
-    include_bytes!("../../assets/skins/punk.rgba"),
-    include_bytes!("../../assets/skins/mystic.rgba"),
+    include_bytes!("../../assets/skins/redhead-walk-a.rgba"),
+    include_bytes!("../../assets/skins/redhead-walk-b.rgba"),
+    include_bytes!("../../assets/skins/redhead-punch.rgba"),
+    include_bytes!("../../assets/skins/redhead-kick.rgba"),
+    include_bytes!("../../assets/skins/redhead-crouch.rgba"),
+    include_bytes!("../../assets/skins/redhead-jump.rgba"),
+    include_bytes!("../../assets/skins/redhead-hit.rgba"),
+    include_bytes!("../../assets/skins/redhead-ko.rgba"),
+    include_bytes!("../../assets/skins/pink.rgba"),
+    include_bytes!("../../assets/skins/pink-walk-a.rgba"),
+    include_bytes!("../../assets/skins/pink-walk-b.rgba"),
+    include_bytes!("../../assets/skins/pink-punch.rgba"),
+    include_bytes!("../../assets/skins/pink-kick.rgba"),
+    include_bytes!("../../assets/skins/pink-crouch.rgba"),
+    include_bytes!("../../assets/skins/pink-jump.rgba"),
+    include_bytes!("../../assets/skins/pink-hit.rgba"),
+    include_bytes!("../../assets/skins/pink-ko.rgba"),
+    include_bytes!("../../assets/skins/white.rgba"),
+    include_bytes!("../../assets/skins/white-walk-a.rgba"),
+    include_bytes!("../../assets/skins/white-walk-b.rgba"),
+    include_bytes!("../../assets/skins/white-punch.rgba"),
+    include_bytes!("../../assets/skins/white-kick.rgba"),
+    include_bytes!("../../assets/skins/white-crouch.rgba"),
+    include_bytes!("../../assets/skins/white-jump.rgba"),
+    include_bytes!("../../assets/skins/white-hit.rgba"),
+    include_bytes!("../../assets/skins/white-ko.rgba"),
+    include_bytes!("../../assets/skins/black.rgba"),
+    include_bytes!("../../assets/skins/black-walk-a.rgba"),
+    include_bytes!("../../assets/skins/black-walk-b.rgba"),
+    include_bytes!("../../assets/skins/black-punch.rgba"),
+    include_bytes!("../../assets/skins/black-kick.rgba"),
+    include_bytes!("../../assets/skins/black-crouch.rgba"),
+    include_bytes!("../../assets/skins/black-jump.rgba"),
+    include_bytes!("../../assets/skins/black-hit.rgba"),
+    include_bytes!("../../assets/skins/black-ko.rgba"),
+    include_bytes!("../../assets/skins/green.rgba"),
+    include_bytes!("../../assets/skins/green-walk-a.rgba"),
+    include_bytes!("../../assets/skins/green-walk-b.rgba"),
+    include_bytes!("../../assets/skins/green-punch.rgba"),
+    include_bytes!("../../assets/skins/green-kick.rgba"),
+    include_bytes!("../../assets/skins/green-crouch.rgba"),
+    include_bytes!("../../assets/skins/green-jump.rgba"),
+    include_bytes!("../../assets/skins/green-hit.rgba"),
+    include_bytes!("../../assets/skins/green-ko.rgba"),
+    include_bytes!("../../assets/skins/violet.rgba"),
+    include_bytes!("../../assets/skins/violet-walk-a.rgba"),
+    include_bytes!("../../assets/skins/violet-walk-b.rgba"),
+    include_bytes!("../../assets/skins/violet-punch.rgba"),
+    include_bytes!("../../assets/skins/violet-kick.rgba"),
+    include_bytes!("../../assets/skins/violet-crouch.rgba"),
+    include_bytes!("../../assets/skins/violet-jump.rgba"),
+    include_bytes!("../../assets/skins/violet-hit.rgba"),
+    include_bytes!("../../assets/skins/violet-ko.rgba"),
+    include_bytes!("../../assets/skins/cyan.rgba"),
+    include_bytes!("../../assets/skins/cyan-walk-a.rgba"),
+    include_bytes!("../../assets/skins/cyan-walk-b.rgba"),
+    include_bytes!("../../assets/skins/cyan-punch.rgba"),
+    include_bytes!("../../assets/skins/cyan-kick.rgba"),
+    include_bytes!("../../assets/skins/cyan-crouch.rgba"),
+    include_bytes!("../../assets/skins/cyan-jump.rgba"),
+    include_bytes!("../../assets/skins/cyan-hit.rgba"),
+    include_bytes!("../../assets/skins/cyan-ko.rgba"),
+    include_bytes!("../../assets/skins/raven.rgba"),
+    include_bytes!("../../assets/skins/raven-walk-a.rgba"),
+    include_bytes!("../../assets/skins/raven-walk-b.rgba"),
+    include_bytes!("../../assets/skins/raven-punch.rgba"),
+    include_bytes!("../../assets/skins/raven-kick.rgba"),
+    include_bytes!("../../assets/skins/raven-crouch.rgba"),
+    include_bytes!("../../assets/skins/raven-jump.rgba"),
+    include_bytes!("../../assets/skins/raven-hit.rgba"),
+    include_bytes!("../../assets/skins/raven-ko.rgba"),
 ];
 
 /// A decoded sprite: the RGBA bytes, row by row, and its size.
@@ -1007,18 +1140,29 @@ pub struct Sprite<'a> {
     pub height: usize,
 }
 
-/// The sprite of `variant`: the AI-art character of the manga style.
+/// The sprite of `variant` in `pose` (the standing one for [`Pose::Stand`]).
 ///
 /// ```
-/// use srr::front::skin::sprite;
+/// use srr::front::skin::{sprite, Pose};
 /// use srr::game::Variant;
 ///
-/// let sprite = sprite(Variant::Brunette);
+/// let sprite = sprite(Variant::Brunette, Pose::Stand);
 /// assert!(sprite.width > 0 && sprite.height > 0);
 /// assert_eq!(sprite.pixels.len(), sprite.width * sprite.height * 4);
 /// ```
-pub fn sprite(variant: Variant) -> Sprite<'static> {
-    let bytes = SPRITES[variant.index() as usize];
+pub fn sprite(variant: Variant, pose: Pose) -> Sprite<'static> {
+    let index = variant.index() as usize * Pose::ALL.len()
+        + Pose::ALL.iter().position(|p| *p == pose).expect("a pose");
+    decode(SPRITES[index])
+}
+
+/// The sprite of `variant`, standing.
+pub fn sprite_standing(variant: Variant) -> Sprite<'static> {
+    sprite(variant, Pose::Stand)
+}
+
+/// Decodes the sprite bytes: a `u32` width, then height, then the RGBA pixels.
+fn decode(bytes: &[u8]) -> Sprite<'_> {
     let width = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
     let height = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
     Sprite {
@@ -1028,11 +1172,17 @@ pub fn sprite(variant: Variant) -> Sprite<'static> {
     }
 }
 
-/// The sprite named `name`, if any (the names are the variants' own).
-pub fn sprite_by_name(name: &str) -> Option<Sprite<'static>> {
-    Variant::ALL
-        .iter()
-        .find_map(|variant| (sprite_name_of_variant(*variant) == name).then(|| sprite(*variant)))
+/// The names of the fighters, in [`Variant::ALL`](crate::game::Variant::ALL) order: the
+/// standing sprite of each is the bare name.
+pub const SPRITE_NAMES: [&str; 10] = [
+    "brunette", "blonde", "redhead", "pink", "white", "black", "green", "violet", "cyan", "raven",
+];
+
+/// The sprite named `name` in `pose` (`None` when the name is no fighter).
+pub fn sprite_by_name(name: &str, pose: Pose) -> Option<Sprite<'static>> {
+    Variant::ALL.iter().find_map(|variant| {
+        (sprite_name_of_variant(*variant) == name).then(|| sprite(*variant, pose))
+    })
 }
 
 /// The name a variant's sprite is registered under.
@@ -1041,13 +1191,13 @@ fn sprite_name_of_variant(variant: Variant) -> &'static str {
         Variant::Brunette => "brunette",
         Variant::Blonde => "blonde",
         Variant::Redhead => "redhead",
-        Variant::Ace => "ace",
-        Variant::Boulder => "boulder",
-        Variant::Spark => "spark",
-        Variant::Elder => "elder",
-        Variant::Trooper => "trooper",
-        Variant::Punk => "punk",
-        Variant::Mystic => "mystic",
+        Variant::Pink => "pink",
+        Variant::White => "white",
+        Variant::Black => "black",
+        Variant::Green => "green",
+        Variant::Violet => "violet",
+        Variant::Cyan => "cyan",
+        Variant::Raven => "raven",
     }
 }
 
@@ -1058,12 +1208,39 @@ pub fn sprite_name_of(skin: &Skin) -> Option<&'static str> {
         Variant::Brunette => "brunette",
         Variant::Blonde => "blonde",
         Variant::Redhead => "redhead",
-        Variant::Ace => "ace",
-        Variant::Boulder => "boulder",
-        Variant::Spark => "spark",
-        Variant::Elder => "elder",
-        Variant::Trooper => "trooper",
-        Variant::Punk => "punk",
-        Variant::Mystic => "mystic",
+        Variant::Pink => "pink",
+        Variant::White => "white",
+        Variant::Black => "black",
+        Variant::Green => "green",
+        Variant::Violet => "violet",
+        Variant::Cyan => "cyan",
+        Variant::Raven => "raven",
     })
+}
+
+/// The pose `fighter` is in: the sprite the sprite engine draws for its state. Anything
+/// without its own pose (blocking, grabs, grapples, specials) stands in guard — the art
+/// carries the movement, the game's logic the rules.
+pub fn pose_of(fighter: &Fighter, fight_ticks: u32) -> Pose {
+    use crate::game::AttackPhase::Active;
+    match fighter.state() {
+        FighterState::Walking => {
+            // The two walk frames alternate with the screen's stride.
+            if (fight_ticks / 8).is_multiple_of(2) {
+                Pose::WalkA
+            } else {
+                Pose::WalkB
+            }
+        }
+        FighterState::Airborne => Pose::Jump,
+        FighterState::Crouching => Pose::Crouch,
+        FighterState::HitStun => Pose::Hit,
+        FighterState::Knockout => Pose::Ko,
+        FighterState::Attacking(Active) => match fighter.attack().map(|a| a.limb) {
+            Some(Limb::Punch) => Pose::Punch,
+            Some(Limb::Kick) => Pose::Kick,
+            None => Pose::Stand,
+        },
+        _ => Pose::Stand,
+    }
 }

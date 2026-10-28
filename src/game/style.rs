@@ -151,26 +151,26 @@ impl fmt::Display for Style {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Variant {
-    /// A graceful brunette woman.
+    /// The brunette: the base woman, brown twintails and a red fighting dress.
     Brunette,
-    /// A striking blonde woman.
+    /// The blonde: golden hair, a blue fighting dress.
     Blonde,
-    /// A fierce red-haired woman.
+    /// The redhead: fierce red hair, a gold-trimmed outfit.
     Redhead,
-    /// An athletic dark-haired man.
-    Ace,
-    /// A stocky bald brawler.
-    Boulder,
-    /// A wiry spiky-haired youth.
-    Spark,
-    /// A silver-haired elder.
-    Elder,
-    /// A crew-cut soldier.
-    Trooper,
-    /// A green-mohawked punk.
-    Punk,
-    /// A masked mystic.
-    Mystic,
+    /// The pink: pastel pink hair, a violet dress.
+    Pink,
+    /// The white: silver hair, a green dress.
+    White,
+    /// The black: navy-black hair, a cream dress.
+    Black,
+    /// The green: green hair, the red trims stay.
+    Green,
+    /// The violet: violet hair, a gold dress.
+    Violet,
+    /// The cyan: cyan hair, a magenta dress.
+    Cyan,
+    /// The raven: dark blue hair, a teal dress.
+    Raven,
 }
 
 impl Variant {
@@ -179,13 +179,13 @@ impl Variant {
         Variant::Brunette,
         Variant::Blonde,
         Variant::Redhead,
-        Variant::Ace,
-        Variant::Boulder,
-        Variant::Spark,
-        Variant::Elder,
-        Variant::Trooper,
-        Variant::Punk,
-        Variant::Mystic,
+        Variant::Pink,
+        Variant::White,
+        Variant::Black,
+        Variant::Green,
+        Variant::Violet,
+        Variant::Cyan,
+        Variant::Raven,
     ];
 
     /// Position in [`Variant::ALL`]: the byte that stands for the variant on the wire.
@@ -207,7 +207,7 @@ impl Variant {
     ///
     /// assert_eq!(Variant::of(PlayerId(0)), Variant::Brunette);
     /// assert_eq!(Variant::of(PlayerId(10)), Variant::Brunette);
-    /// assert_eq!(Variant::of(PlayerId(4)), Variant::Boulder);
+    /// assert_eq!(Variant::of(PlayerId(4)), Variant::White);
     /// ```
     pub const fn of(player: crate::game::PlayerId) -> Variant {
         let index = (player.0 % 10) as usize;
@@ -220,20 +220,20 @@ impl Variant {
     /// use srr::game::Variant;
     ///
     /// assert_eq!(Variant::Brunette.label(), "the brunette");
-    /// assert_eq!(Variant::Ace.label(), "the ace");
+    /// assert_eq!(Variant::Pink.label(), "the pink");
     /// ```
     pub const fn label(self) -> &'static str {
         match self {
             Variant::Brunette => "the brunette",
             Variant::Blonde => "the blonde",
             Variant::Redhead => "the redhead",
-            Variant::Ace => "the ace",
-            Variant::Boulder => "the boulder",
-            Variant::Spark => "the spark",
-            Variant::Elder => "the elder",
-            Variant::Trooper => "the trooper",
-            Variant::Punk => "the punk",
-            Variant::Mystic => "the mystic",
+            Variant::Pink => "the pink",
+            Variant::White => "the white",
+            Variant::Black => "the black",
+            Variant::Green => "the green",
+            Variant::Violet => "the violet",
+            Variant::Cyan => "the cyan",
+            Variant::Raven => "the raven",
         }
     }
 }
@@ -373,6 +373,59 @@ impl Skin {
     pub fn next_allowed(self, allowed: StyleSet, player: crate::game::PlayerId) -> Option<Skin> {
         let next = self.style.next_allowed(allowed);
         (next != self.style).then(|| Skin::of_player(next, player))
+    }
+
+    /// The next skin of the menus' own choice cycle: the chalk, then the ten manga
+    /// fighters (whatever the server allows is applied by the caller), wrapping around.
+    ///
+    /// ```
+    /// use srr::game::{Skin, Style, Variant};
+    ///
+    /// // From the chalk to the first fighter, through all ten, and back.
+    /// assert_eq!(
+    ///     Skin::STICK.next_choice(),
+    ///     Skin::styled(Style::Manga, Variant::Brunette)
+    /// );
+    /// assert_eq!(
+    ///     Skin::styled(Style::Manga, Variant::Raven).next_choice(),
+    ///     Skin::STICK
+    /// );
+    /// ```
+    pub fn next_choice(self) -> Skin {
+        let (_, variant) = self.choice_indices();
+        match variant {
+            None => Skin::styled(Style::Manga, Variant::ALL[0]),
+            Some(index) if index + 1 >= Variant::ALL.len() => Skin::STICK,
+            Some(index) => Skin::styled(Style::Manga, Variant::ALL[index + 1]),
+        }
+    }
+
+    /// The previous skin of the menus' own choice cycle, wrapping around.
+    ///
+    /// ```
+    /// use srr::game::{Skin, Style, Variant};
+    ///
+    /// assert_eq!(
+    ///     Skin::styled(Style::Manga, Variant::Brunette).previous_choice(),
+    ///     Skin::STICK
+    /// );
+    /// assert_eq!(Skin::STICK.previous_choice(), Skin::styled(Style::Manga, Variant::Raven));
+    /// ```
+    pub fn previous_choice(self) -> Skin {
+        let (_, variant) = self.choice_indices();
+        match variant {
+            None => Skin::styled(Style::Manga, Variant::ALL[Variant::ALL.len() - 1]),
+            Some(0) => Skin::STICK,
+            Some(index) => Skin::styled(Style::Manga, Variant::ALL[index - 1]),
+        }
+    }
+
+    /// `(style, variant index)`: where this skin sits in the choice cycle.
+    fn choice_indices(self) -> (Style, Option<usize>) {
+        (
+            self.style,
+            self.variant.map(|variant| variant.index() as usize),
+        )
     }
 
     /// The skin of the previous allowed style, worn with `player`'s own variant, wrapping

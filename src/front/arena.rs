@@ -268,7 +268,8 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
         if let Some(name) = super::skin::sprite_name_of(&skin) {
             let (x, y) = feet(fighter, config);
             let risen = rise(fighter, config);
-            frame.image(name, x, y - risen, 150.0, fighter.facing().sign() > 0);
+            let pose = super::skin::pose_of(fighter, fight_ticks);
+            frame.image(name, pose, x, y - risen, 150.0, fighter.facing().sign() > 0);
         } else {
             super::skin::draw_inked(frame, &figure(fighter), &skin);
         }

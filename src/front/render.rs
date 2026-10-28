@@ -247,7 +247,7 @@ fn paint_rects(frame: &Frame, mapping: Mapping, width: usize, height: usize) -> 
 /// `height` target pixels tall, mirrored when it faces left. Nearest-neighbour sampling
 /// with the sprite's own alpha, over the rectangles.
 fn paint_image(target: &mut Pixmap, mapping: Mapping, image: &crate::front::scene::Image) {
-    let Some(sprite) = crate::front::skin::sprite_by_name(image.name) else {
+    let Some(sprite) = crate::front::skin::sprite_by_name(image.name, image.pose) else {
         return;
     };
     // The sprite's box on the target: `height` target pixels tall, its own aspect ratio.

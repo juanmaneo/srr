@@ -104,6 +104,7 @@ fn build_app(shell: Shell, headless: Headless) -> App {
     app.insert_non_send_resource(ShellResource(shell))
         .insert_resource(Time::<Fixed>::from_hz(f64::from(TICKS_PER_SECOND)))
         .init_resource::<Pools>()
+        .init_resource::<Textures>()
         .init_resource::<Taps>()
         .init_resource::<TouchTaps>()
         .init_resource::<PadTaps>()
@@ -119,8 +120,22 @@ struct ShellResource(Shell);
 #[derive(Resource, Default)]
 struct Pools {
     rects: Vec<Entity>,
+    images: Vec<Entity>,
     labels: Vec<Entity>,
 }
+
+/// The sprite textures created so far, by name and pose.
+#[derive(Resource, Default)]
+struct Textures(
+    Vec<(
+        &'static str,
+        crate::front::skin::Pose,
+        Handle<bevy::image::Image>,
+    )>,
+);
+
+#[derive(Component)]
+struct ImageNode;
 
 /// Keys pressed since the last tick: a tap shorter than a tick still reaches the game.
 #[derive(Resource, Default)]
@@ -309,6 +324,12 @@ fn draw(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut clear: ResMut<ClearColor>,
     mut pools: ResMut<Pools>,
+    mut textures: ResMut<Textures>,
+    mut images: ResMut<bevy::asset::Assets<bevy::image::Image>>,
+    mut sprites: Query<
+        (&mut Sprite, &mut Transform, &mut Visibility),
+        (With<ImageNode>, Without<RectNode>, Without<LabelNode>),
+    >,
     mut rects: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<RectNode>>,
     mut labels: Query<
         (
@@ -370,6 +391,60 @@ fn draw(
     }
     for &entity in pools.rects.iter().skip(frame.rects.len()) {
         if let Ok((_, _, mut visibility)) = rects.get_mut(entity) {
+            visibility.set_if_neq(Visibility::Hidden);
+        }
+    }
+
+    // The sprites: the manga fighters, between the rectangles and the labels.
+    for (index, image) in frame.images.iter().enumerate() {
+        let Some(handle) = texture_of(
+            &mut commands,
+            &mut images,
+            &mut textures,
+            image.name,
+            image.pose,
+        ) else {
+            continue;
+        };
+        let height = image.height * viewport.scale;
+        let (ratio, _) = sprite_aspect(image.name, image.pose);
+        let custom_size = Some(Vec2::new(height * ratio, height));
+        let position = world(&viewport, size, image.x, image.y).extend(depth(index, false) + 250.0);
+        match pools.images.get(index).copied() {
+            Some(entity) => {
+                let Ok((mut sprite, mut transform, mut visibility)) = sprites.get_mut(entity)
+                else {
+                    continue;
+                };
+                sprite.image = handle.clone();
+                sprite.custom_size = custom_size;
+                sprite.anchor = Anchor::BottomCenter;
+                sprite.flip_x = !image.facing_right;
+                if transform.translation != position {
+                    transform.translation = position;
+                }
+                visibility.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                let entity = commands
+                    .spawn((
+                        Sprite {
+                            image: handle,
+                            custom_size,
+                            anchor: Anchor::BottomCenter,
+                            flip_x: !image.facing_right,
+                            ..default()
+                        },
+                        Transform::from_translation(position),
+                        ImageNode,
+                    ))
+                    .id();
+                pools.images.push(entity);
+            }
+        }
+    }
+    for &entity in pools.images.iter().skip(frame.images.len()) {
+        if let Ok((_, _, mut visibility)) = sprites.get_mut(entity) {
             visibility.set_if_neq(Visibility::Hidden);
         }
     }
@@ -738,5 +813,48 @@ impl Server {
                 .resource::<RenderDevice>()
                 .poll(wgpu::Maintain::Poll);
         }
+    }
+}
+
+/// The sprite texture of `name` in `pose`, created once (the bytes are embedded, so the
+/// texture is built directly, no asset IO).
+fn texture_of(
+    commands: &mut Commands,
+    images: &mut bevy::asset::Assets<bevy::image::Image>,
+    textures: &mut Textures,
+    name: &str,
+    pose: crate::front::skin::Pose,
+) -> Option<Handle<bevy::image::Image>> {
+    if let Some((_, _, handle)) = textures.0.iter().find(|(n, p, _)| *n == name && *p == pose) {
+        return Some(handle.clone());
+    }
+    let sprite = crate::front::skin::sprite_by_name(name, pose)?;
+    let pixels = sprite.pixels.to_vec();
+    let image = bevy::image::Image::new(
+        Extent3d {
+            width: sprite.width as u32,
+            height: sprite.height as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixels,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    let handle = images.add(image);
+    let static_name: &'static str = crate::front::skin::SPRITE_NAMES
+        .iter()
+        .copied()
+        .find(|n| *n == name)?;
+    textures.0.push((static_name, pose, handle.clone()));
+    let _ = commands;
+    Some(handle)
+}
+
+/// The aspect ratio (width per unit of height) of the sprite `name` in `pose`.
+fn sprite_aspect(name: &str, pose: crate::front::skin::Pose) -> (f32, f32) {
+    match crate::front::skin::sprite_by_name(name, pose) {
+        Some(sprite) => (sprite.width as f32 / sprite.height.max(1) as f32, 1.0),
+        None => (1.0, 1.0),
     }
 }

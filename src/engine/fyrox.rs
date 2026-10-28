@@ -43,12 +43,17 @@ use fyrox::gui::border::{Border, BorderBuilder};
 use fyrox::gui::brush::Brush;
 use fyrox::gui::canvas::{Canvas, CanvasBuilder};
 use fyrox::gui::font::{Font, FontResource, FontStyles};
+use fyrox::gui::image::{Image, ImageBuilder};
 use fyrox::gui::text::{Text, TextBuilder, TextMessage};
+use fyrox::gui::texture::{
+    TextureKind, TexturePixelKind, TextureResource, TextureResourceExtension,
+};
 use fyrox::gui::widget::{WidgetBuilder, WidgetMessage};
 use fyrox::gui::{Thickness, UiNode, UserInterface};
 use fyrox::keyboard::{KeyCode, PhysicalKey};
 use fyrox::plugin::error::GameResult;
 use fyrox::plugin::{Plugin, PluginContext};
+use fyrox::resource::ResourceKind;
 use fyrox::window::WindowAttributes;
 
 use crate::front::{Frame, GamepadState, Label, Rect, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH, Viewport};
@@ -318,12 +323,17 @@ struct View {
     font: FontResource,
     /// Holds the rectangles; drawn first.
     rect_layer: Handle<Canvas>,
-    /// Holds the labels; drawn above every rectangle.
+    /// Holds the sprites; drawn above every rectangle.
+    image_layer: Handle<Canvas>,
+    /// Holds the labels; drawn above everything.
     label_layer: Handle<Canvas>,
     /// The viewport the layers are placed on, once shown.
     viewport: Option<Viewport>,
     rects: Vec<Slot<Border, RectLook>>,
+    images: Vec<Slot<Image, ImageLook>>,
     labels: Vec<Slot<Text, LabelLook>>,
+    /// The sprite textures created so far, by name and pose.
+    textures: Vec<(&'static str, crate::front::skin::Pose, TextureResource)>,
 }
 
 /// A pooled widget and what it currently shows (`None` when hidden).
@@ -341,6 +351,14 @@ struct RectLook {
     color: Color,
 }
 
+/// What an image widget shows, in window pixels relative to the layer.
+#[derive(Debug, Clone)]
+struct ImageLook {
+    position: Vector2<f32>,
+    size: Vector2<f32>,
+    texture: TextureResource,
+}
+
 /// What a text widget shows, in window pixels relative to the layer.
 #[derive(Debug, Clone, PartialEq)]
 struct LabelLook {
@@ -352,16 +370,20 @@ struct LabelLook {
 
 impl View {
     fn new(ui: &mut UserInterface, font: FontResource) -> Self {
-        // Built in this order under the root, so the label layer is drawn on top.
+        // Built in this order under the root, so each layer is drawn above the last.
         let rect_layer = layer(ui);
+        let image_layer = layer(ui);
         let label_layer = layer(ui);
         View {
             font,
             rect_layer,
+            image_layer,
             label_layer,
             viewport: None,
             rects: Vec::new(),
+            images: Vec::new(),
             labels: Vec::new(),
+            textures: Vec::new(),
         }
     }
 
@@ -374,7 +396,7 @@ impl View {
                 (SCREEN_WIDTH * viewport.scale).round(),
                 (SCREEN_HEIGHT * viewport.scale).round(),
             );
-            for layer in [self.rect_layer, self.label_layer] {
+            for layer in [self.rect_layer, self.image_layer, self.label_layer] {
                 ui.send(layer, WidgetMessage::DesiredPosition(position));
                 ui.send(layer, WidgetMessage::Width(size.x));
                 ui.send(layer, WidgetMessage::Height(size.y));
@@ -396,6 +418,23 @@ impl View {
             }
         }
         for slot in self.rects.iter_mut().skip(frame.rects.len()) {
+            hide(ui, slot);
+        }
+
+        // The sprites: the manga fighters, between the rectangles and the labels.
+        for (index, image) in frame.images.iter().enumerate() {
+            let Some(look) = image_look(image, viewport.scale, &mut self.textures) else {
+                continue;
+            };
+            match self.images.get_mut(index) {
+                Some(slot) => update_image(ui, slot, look),
+                None => {
+                    let slot = self.new_image(ui, look);
+                    self.images.push(slot);
+                }
+            }
+        }
+        for slot in self.images.iter_mut().skip(frame.images.len()) {
             hide(ui, slot);
         }
 
@@ -426,6 +465,22 @@ impl View {
             .with_stroke_thickness(Thickness::uniform(0.0).into())
             .build(&mut ui.build_ctx());
         ui.link_nodes(handle, self.rect_layer, false);
+        Slot {
+            handle,
+            look: Some(look),
+        }
+    }
+
+    fn new_image(&self, ui: &mut UserInterface, look: ImageLook) -> Slot<Image, ImageLook> {
+        let widget = WidgetBuilder::new()
+            .with_hit_test_visibility(false)
+            .with_desired_position(look.position)
+            .with_width(look.size.x)
+            .with_height(look.size.y);
+        let handle = ImageBuilder::new(widget)
+            .with_texture(look.texture.clone())
+            .build(&mut ui.build_ctx());
+        ui.link_nodes(handle, self.image_layer, false);
         Slot {
             handle,
             look: Some(look),
@@ -499,6 +554,102 @@ fn update_rect(ui: &UserInterface, slot: &mut Slot<Border, RectLook>, look: Rect
             handle,
             WidgetMessage::Background(Brush::Solid(look.color).into()),
         );
+    }
+}
+
+/// `image` in window pixels: its feet on its `(x, y)`, `height` tall at the viewport's
+/// scale, mirrored when it faces left. The texture is created once per name.
+fn image_look(
+    image: &crate::front::scene::Image,
+    scale: f32,
+    textures: &mut Vec<(&'static str, crate::front::skin::Pose, TextureResource)>,
+) -> Option<ImageLook> {
+    let sprite = crate::front::skin::sprite_by_name(image.name, image.pose)?;
+    let texture = match textures
+        .iter()
+        .find(|(n, p, _)| *n == image.name && *p == image.pose)
+    {
+        Some((_, _, texture)) => texture.clone(),
+        None => {
+            let texture = sprite_texture(&sprite)?;
+            textures.push((sprite_name(image.name)?, image.pose, texture.clone()));
+            texture
+        }
+    };
+    let height = image.height * scale;
+    let width = height * sprite.width as f32 / sprite.height.max(1) as f32;
+    // Facing left: mirror the texture's own bytes (the widget's flip is vertical only).
+    let texture = if image.facing_right {
+        texture
+    } else {
+        mirrored_texture(&sprite)?
+    };
+    // The feet at the bottom-centre of the box.
+    let left = image.x * scale - width / 2.0;
+    let top = image.y * scale - height;
+    Some(ImageLook {
+        position: Vector2::new(left.round(), top.round()),
+        size: Vector2::new(width, height),
+        texture,
+    })
+}
+
+/// The sprite's texture with its columns reversed: the same fighter facing left.
+fn mirrored_texture(sprite: &crate::front::skin::Sprite) -> Option<TextureResource> {
+    let mut bytes = Vec::with_capacity(sprite.pixels.len());
+    for row in 0..sprite.height {
+        for column in (0..sprite.width).rev() {
+            let i = (row * sprite.width + column) * 4;
+            bytes.extend_from_slice(&sprite.pixels[i..i + 4]);
+        }
+    }
+    TextureResource::from_bytes(
+        fyrox::core::uuid::Uuid::new_v4(),
+        TextureKind::Rectangle {
+            width: sprite.width as u32,
+            height: sprite.height as u32,
+        },
+        TexturePixelKind::RGBA8,
+        bytes,
+        ResourceKind::Embedded,
+    )
+}
+
+/// The static name of the sprite `name` (a `&'static str` for the cache).
+fn sprite_name(name: &str) -> Option<&'static str> {
+    crate::front::skin::SPRITE_NAMES
+        .iter()
+        .copied()
+        .find(|n| *n == name)
+}
+
+/// The texture of a sprite, built directly from the embedded RGBA bytes.
+fn sprite_texture(sprite: &crate::front::skin::Sprite) -> Option<TextureResource> {
+    let mut bytes = Vec::with_capacity(sprite.pixels.len());
+    bytes.extend_from_slice(sprite.pixels);
+    Some(TextureResource::from_bytes(
+        fyrox::core::uuid::Uuid::new_v4(),
+        TextureKind::Rectangle {
+            width: sprite.width as u32,
+            height: sprite.height as u32,
+        },
+        TexturePixelKind::RGBA8,
+        bytes,
+        ResourceKind::Embedded,
+    )?)
+}
+
+fn update_image(ui: &UserInterface, slot: &mut Slot<Image, ImageLook>, look: ImageLook) {
+    let handle = slot.handle;
+    let old = show_slot(ui, slot, look.clone());
+    if old.is_none_or(|old| old.position != look.position) {
+        ui.send(handle, WidgetMessage::DesiredPosition(look.position));
+    }
+    if old.is_none_or(|old| old.size.x != look.size.x) {
+        ui.send(handle, WidgetMessage::Width(look.size.x));
+    }
+    if old.is_none_or(|old| old.size.y != look.size.y) {
+        ui.send(handle, WidgetMessage::Height(look.size.y));
     }
 }
 

@@ -155,8 +155,10 @@ impl Label {
 /// by row from the top-left corner.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Image {
-    /// The name the sprite is registered under (see [`crate::front::skin::sprite`]).
+    /// The fighter the sprite is registered under (see [`crate::front::skin::sprite`]).
     pub name: &'static str,
+    /// The pose it is drawn in (see [`crate::front::skin::Pose`]).
+    pub pose: crate::front::skin::Pose,
     /// Where its feet stand: the bottom-centre of the sprite lands on `(x, y)`.
     pub x: f32,
     pub y: f32,
@@ -202,11 +204,20 @@ impl Frame {
         });
     }
 
-    /// Adds a sprite: its feet on `(x, y)`, `height` tall, mirrored when not
+    /// Adds a sprite: its feet on `(x, y)`, `height` tall, in `pose`, mirrored when not
     /// `facing_right`. The sprite must be registered (see [`Image::name`]).
-    pub fn image(&mut self, name: &'static str, x: f32, y: f32, height: f32, facing_right: bool) {
+    pub fn image(
+        &mut self,
+        name: &'static str,
+        pose: crate::front::skin::Pose,
+        x: f32,
+        y: f32,
+        height: f32,
+        facing_right: bool,
+    ) {
         self.images.push(Image {
             name,
+            pose,
             x,
             y,
             height,

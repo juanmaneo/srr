@@ -29,6 +29,12 @@ pub const FIRST_ROW_Y: f32 = 150.0;
 pub const ROW_HEIGHT: f32 = 28.0;
 /// Where the names end and the keys start.
 pub const COLUMN_X: f32 = SCREEN_WIDTH / 2.0;
+/// Where the skin preview stands: on the right of the page, between the edge and the rows.
+pub const PREVIEW_X: f32 = SCREEN_WIDTH - 150.0;
+/// The feet of the skin preview: the rows leave the lower right of the page free.
+pub const PREVIEW_FEET_Y: f32 = 420.0;
+/// How tall the skin preview is drawn, in virtual pixels.
+pub const PREVIEW_HEIGHT: f32 = 230.0;
 
 const ROW_SIZE: f32 = 20.0;
 const TITLE: Rgba = Rgba::hex(0xffd84a);
@@ -363,12 +369,8 @@ impl ControlsPage {
                 self.character = self.character.next();
             }
             (Key::ArrowLeft, Row::Character) => self.character = self.character.previous(),
-            (Key::ArrowRight | Key::Enter, Row::Skin) => {
-                self.skin = Skin::of_player(self.skin.style.next(), self.player)
-            }
-            (Key::ArrowLeft, Row::Skin) => {
-                self.skin = Skin::of_player(self.skin.style.previous(), self.player)
-            }
+            (Key::ArrowRight | Key::Enter, Row::Skin) => self.skin = self.skin.next_choice(),
+            (Key::ArrowLeft, Row::Skin) => self.skin = self.skin.previous_choice(),
             (Key::ArrowRight | Key::Enter, Row::Practice) => {
                 self.practice = self.practice.next();
             }
@@ -471,5 +473,26 @@ impl ControlsPage {
             JUDO,
             Align::Center,
         );
+
+        // The preview of the chosen skin, standing on the right of the page: what the
+        // fighter will look like, live as the row is cycled.
+        if let Some(name) = crate::front::skin::sprite_name_of(&self.skin) {
+            frame.image(
+                name,
+                crate::front::skin::Pose::Stand,
+                PREVIEW_X,
+                PREVIEW_FEET_Y,
+                PREVIEW_HEIGHT,
+                true,
+            );
+            frame.label(
+                self.skin.variant.map(|v| v.label()).unwrap_or_default(),
+                PREVIEW_X,
+                PREVIEW_FEET_Y + 28.0,
+                16.0,
+                KEY,
+                Align::Center,
+            );
+        }
     }
 }
