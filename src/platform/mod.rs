@@ -27,7 +27,9 @@ mod web;
 /// The running game as seen by an engine backend.
 pub struct Shell {
     game: Game,
-    /// The layout when the game was last ticked: saved once it changes.
+    /// The layout when the game was last ticked: saved to localStorage once it changes
+    /// (browser only — there is nowhere to save it natively).
+    #[cfg(target_arch = "wasm32")]
     saved_bindings: crate::game::KeyBindings,
     #[cfg(target_arch = "wasm32")]
     connection: Option<web::Connection>,
@@ -92,7 +94,6 @@ impl Shell {
                 SoundState::Unavailable
             });
             Shell {
-                saved_bindings: *game.bindings(),
                 game,
                 _sound: sound,
             }

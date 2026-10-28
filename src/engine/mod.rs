@@ -25,6 +25,8 @@ use crate::platform::Shell;
 
 #[cfg(feature = "bevy")]
 mod bevy;
+#[cfg(feature = "bevy")]
+pub use bevy::{Capture, Headless, Pixels, Server, ServerError, boot_app, server_app};
 #[cfg(feature = "fyrox")]
 mod fyrox;
 

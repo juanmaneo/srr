@@ -62,6 +62,8 @@ pub enum Task {
     Serve,
     /// Play a scripted game headlessly and save PNG screenshots in `target/screenshots`.
     Screenshots,
+    /// Everything a push must pass: formatting, lints, tests, then the coverage ratchet.
+    DevCheck,
     /// Build the Docker image holding the toolchain.
     DockerImage,
     /// Runs the inner task inside the Docker image.
@@ -87,6 +89,7 @@ impl Task {
             Task::Dist => "dist",
             Task::Serve => "serve",
             Task::Screenshots => "screenshots",
+            Task::DevCheck => "dev-check",
             Task::DockerImage => "docker-image",
             Task::Docker(_) => "docker",
             Task::Help => "help",
@@ -102,6 +105,7 @@ impl Task {
             "dist" => Some(Task::Dist),
             "serve" => Some(Task::Serve),
             "screenshots" => Some(Task::Screenshots),
+            "dev-check" => Some(Task::DevCheck),
             "docker-image" => Some(Task::DockerImage),
             "help" => Some(Task::Help),
             _ => None,
@@ -111,7 +115,7 @@ impl Task {
     fn runs_in_docker(&self) -> bool {
         matches!(
             self,
-            Task::Build | Task::Test | Task::Coverage | Task::Dist | Task::Serve
+            Task::Build | Task::Test | Task::Coverage | Task::DevCheck | Task::Dist | Task::Serve
         )
     }
 }
@@ -139,12 +143,12 @@ impl fmt::Display for CliError {
             CliError::MissingDockerTask => {
                 write!(
                     f,
-                    "`docker` needs a task: build, test, coverage, dist or serve"
+                    "`docker` needs a task: build, test, coverage, dev-check, dist or serve"
                 )
             }
             CliError::InvalidDockerTask(name) => write!(
                 f,
-                "`{name}` cannot run in Docker; use build, test, coverage, dist or serve"
+                "`{name}` cannot run in Docker; use build, test, coverage, dev-check, dist or serve"
             ),
         }
     }
@@ -211,11 +215,12 @@ Tasks:
   build            compile the game to WASM and run wasm-bindgen (output in target/web)
   test             run every test of the workspace
   coverage         run the tests and fail below 100 % coverage (lines, regions, functions)
+  dev-check        everything a push must pass: fmt, clippy, tests, then coverage
   dist             build and assemble the playable web build in dist/
   serve            dist, then serve it on the local network (port 8080) for online play
   screenshots      play a scripted game headlessly (no window) and save PNGs in target/screenshots
   docker-image     build the Docker image holding the toolchain
-  docker <task>    run build, test, coverage, dist or serve inside the Docker image
+  docker <task>    run build, test, coverage, dev-check, dist or serve inside the Docker image
   help             show this message
 "
     .to_string()
@@ -341,10 +346,47 @@ pub fn plan(task: &Task, root: &Path) -> Vec<Step> {
                 "screenshots",
             ],
         ))],
+        Task::DevCheck => dev_check_steps(),
         Task::DockerImage => vec![docker_image_step()],
         Task::Docker(inner) => vec![docker_image_step(), docker_run_step(inner, root)],
         Task::Help => Vec::new(),
     }
+}
+
+/// The steps of [`Task::DevCheck`]: everything a push must pass, in the order that fails
+/// fastest first — formatting, lints (warnings are errors), tests, then the coverage
+/// ratchet. `dev-check` is the whole gate in one command.
+fn dev_check_steps() -> Vec<Step> {
+    vec![
+        Step::Run(CommandSpec::new("cargo", &["fmt", "--check"])),
+        Step::Run(CommandSpec::new(
+            "cargo",
+            &[
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        )),
+        Step::Run(CommandSpec::new("cargo", &["test", "--workspace"])),
+        Step::Run(CommandSpec::new(
+            "cargo",
+            &[
+                "llvm-cov",
+                "--workspace",
+                "--fail-under-lines",
+                "100",
+                "--fail-under-regions",
+                "100",
+                "--fail-under-functions",
+                "100",
+                "--ignore-filename-regex",
+                COVERAGE_IGNORE,
+            ],
+        )),
+    ]
 }
 
 fn build_steps() -> Vec<Step> {

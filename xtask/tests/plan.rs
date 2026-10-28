@@ -356,7 +356,13 @@ fn docker_serve_publishes_the_server_port_and_forwards_ctrl_c() {
 
 #[test]
 fn only_docker_serve_publishes_a_port() {
-    for inner in [Task::Build, Task::Test, Task::Coverage, Task::Dist] {
+    for inner in [
+        Task::Build,
+        Task::Test,
+        Task::Coverage,
+        Task::DevCheck,
+        Task::Dist,
+    ] {
         let all = commands(Task::Docker(Box::new(inner.clone())));
         let run = all.last().unwrap();
         assert!(
@@ -404,6 +410,43 @@ fn screenshots_run_the_headless_example_without_any_engine() {
 }
 
 #[test]
+fn dev_check_runs_the_whole_gate_fastest_failure_first() {
+    let all = commands(Task::DevCheck);
+    assert_eq!(all.len(), 4, "{:?}", all);
+    // The order that fails fastest first: formatting, lints, tests, coverage.
+    assert_eq!(all[0].args, ["fmt", "--check"], "{:?}", all[0]);
+    assert_eq!(
+        all[1].args,
+        [
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings"
+        ],
+        "{:?}",
+        all[1]
+    );
+    assert_eq!(all[2].args, ["test", "--workspace"], "{:?}", all[2]);
+    assert_eq!(all[3].args[0], "llvm-cov", "{:?}", all[3]);
+    // The ratchet: 100 % of the lines, the regions and the functions, engine excluded.
+    assert!(has_pair(&all[3].args, "--fail-under-lines", "100"));
+    assert!(has_pair(&all[3].args, "--fail-under-regions", "100"));
+    assert!(has_pair(&all[3].args, "--fail-under-functions", "100"));
+    for command in &all {
+        assert_eq!(command.program, "cargo", "{:?}", command);
+    }
+}
+
+#[test]
+fn dev_check_is_the_coverage_plan_after_fmt_clippy_and_tests() {
+    // The last step of `dev-check` is exactly the `coverage` plan: one gate, no drift
+    // between the two ways of running the ratchet.
+    assert_eq!(commands(Task::DevCheck)[3], commands(Task::Coverage)[0]);
+}
+
+#[test]
 fn help_does_nothing() {
     assert!(steps(Task::Help).is_empty());
 }
@@ -417,6 +460,7 @@ fn planning_is_deterministic() {
         Task::Dist,
         Task::Serve,
         Task::Screenshots,
+        Task::DevCheck,
         Task::DockerImage,
         Task::Help,
     ] {

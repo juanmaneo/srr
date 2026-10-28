@@ -8,10 +8,11 @@
 //! cargo xtask build                -> compile to WASM and run wasm-bindgen
 //! cargo xtask test                 -> run every test of the workspace
 //! cargo xtask coverage             -> run the tests and enforce 100 % coverage
+//! cargo xtask dev-check            -> fmt, clippy, tests, then the coverage ratchet
 //! cargo xtask dist                 -> build and assemble the distributable `dist/` folder
 //! cargo xtask serve                -> dist, then serve it on the local network for online play
 //! cargo xtask docker-image         -> build the Docker image
-//! cargo xtask docker <task>        -> run build | test | coverage | dist | serve inside the image
+//! cargo xtask docker <task>        -> run build | test | coverage | dev-check | dist | serve inside the image
 //! ```
 
 use xtask::{CliError, Task, parse, usage};
@@ -28,6 +29,7 @@ fn the_plain_tasks_are_recognised() {
     assert_eq!(parse_args(&["dist"]), Ok(Task::Dist));
     assert_eq!(parse_args(&["serve"]), Ok(Task::Serve));
     assert_eq!(parse_args(&["screenshots"]), Ok(Task::Screenshots));
+    assert_eq!(parse_args(&["dev-check"]), Ok(Task::DevCheck));
     assert_eq!(parse_args(&["docker-image"]), Ok(Task::DockerImage));
 }
 
@@ -45,6 +47,7 @@ fn docker_wraps_any_of_the_five_main_tasks() {
         ("build", Task::Build),
         ("test", Task::Test),
         ("coverage", Task::Coverage),
+        ("dev-check", Task::DevCheck),
         ("dist", Task::Dist),
         ("serve", Task::Serve),
     ] {
@@ -116,6 +119,7 @@ fn task_names_round_trip_through_the_parser() {
         Task::Dist,
         Task::Serve,
         Task::Screenshots,
+        Task::DevCheck,
         Task::DockerImage,
         Task::Help,
     ] {
@@ -131,6 +135,7 @@ fn tasks_have_stable_names() {
     assert_eq!(Task::Dist.name(), "dist");
     assert_eq!(Task::Serve.name(), "serve");
     assert_eq!(Task::Screenshots.name(), "screenshots");
+    assert_eq!(Task::DevCheck.name(), "dev-check");
     assert_eq!(Task::DockerImage.name(), "docker-image");
     assert_eq!(Task::Docker(Box::new(Task::Test)).name(), "docker");
     assert_eq!(Task::Help.name(), "help");
@@ -149,6 +154,7 @@ fn usage_lists_every_task() {
         "build",
         "test",
         "coverage",
+        "dev-check",
         "dist",
         "serve",
         "screenshots",

@@ -12,7 +12,7 @@ publish = false
 # backend is shared. The relay server only needs the rules and the protocol, so it depends on
 # this crate with `default-features = false` and never compiles an engine.
 default = ["bevy"]
-bevy = ["client", "dep:bevy"]
+bevy = ["client", "dep:bevy", "dep:wgpu"]
 fyrox = ["client", "dep:fyrox"]
 # Engine-independent client glue: browser WebSocket and the audio output of the music.
 client = ["dep:cpal", "dep:js-sys", "dep:wasm-bindgen", "dep:web-sys"]
@@ -44,6 +44,10 @@ fyrox = { version = "=1.0.1", optional = true }
 # which needs libudev natively but works in the browser as it is.
 # For faster native iteration use `cargo run --features bevy/dynamic_linking` (never for WASM).
 bevy = { version = "0.15", optional = true, default-features = false, features = ["bevy_asset", "bevy_core_pipeline", "bevy_gilrs", "bevy_render", "bevy_sprite", "bevy_text", "bevy_ui", "bevy_winit", "default_font", "multi_threaded", "webgl2", "x11"] }
+# The `wgpu` of the Bevy backend, pinned to the minor Bevy itself uses: the headless tests
+# request an adapter and a device by hand (there is no window surface to create them for
+# the renderer). Same version as the lock, so the build does not change.
+wgpu = { version = "23", optional = true, default-features = false, features = ["wgsl"] }
 
 # `ahash` (pulled in by Bevy) uses getrandom 0.3, which refuses to compile for the browser unless
 # its JavaScript backend is selected. Since 0.3.4 the `wasm_js` feature alone is enough (no

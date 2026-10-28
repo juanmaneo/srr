@@ -1,3 +1,5 @@
+[![CI](https://github.com/juanmaneo/srr/actions/workflows/ci.yml/badge.svg)](https://github.com/juanmaneo/srr/actions/workflows/ci.yml)
+
 Shattered Realm: Rampage (SRR): Emphasizes a chaotic, broken world built for intense combat encounters.
 
 This is a game created to test and push the limits of "vibe coding".
@@ -719,11 +721,12 @@ single crate per `links = "alsa"`).
 | `cargo xtask build`            | compile to `wasm32-unknown-unknown` and run `wasm-bindgen`     |
 | `cargo xtask test`             | run every test of the workspace                                |
 | `cargo xtask coverage`         | run the tests with `cargo llvm-cov`, fail below 100 % of the lines, regions or functions |
+| `cargo xtask dev-check`        | everything a push must pass: `fmt --check`, clippy with `-D warnings`, the tests, then `coverage` |
 | `cargo xtask dist`             | build and assemble the playable web build in `dist/`           |
 | `cargo xtask serve`            | `dist`, then run `srr-server` on port 8080 for LAN matches     |
 | `cargo xtask screenshots`      | play a scripted game headlessly, save PNGs in `target/screenshots` |
 | `cargo xtask docker-image`     | build the Docker image with the whole toolchain                |
-| `cargo xtask docker <task>`    | run `build`, `test`, `coverage`, `dist` or `serve` in that image |
+| `cargo xtask docker <task>`    | run `build`, `test`, `coverage`, `dev-check`, `dist` or `serve` in that image |
 
 Native requirements for the non-Docker tasks: the `wasm32-unknown-unknown` target,
 `wasm-bindgen-cli` (same version as the `wasm-bindgen` crate in `Cargo.lock`) and
@@ -857,6 +860,20 @@ fireball in both views, Brick's palm, Zip's slide) and the phone's touch control
 so no engine, window or GPU is needed: it works in CI or over SSH.
 
 ---
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+- **dev-check**: the whole gate in one command (`cargo xtask dev-check`): `cargo fmt
+  --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test
+  --workspace`, then the coverage ratchet (`cargo xtask coverage`): 100 % of the lines,
+  the regions and the functions. Mesa (llvmpipe/lavapipe) is installed first so the
+  headless engine test of `tests/render.rs` renders for real on the software rasterizer
+  instead of skipping
+- **no-default-features**: `cargo test -p srr --no-default-features`, proving the rules,
+  the protocol and the headless renderer build and pass without compiling any engine
+  (the relay server's configuration)
 
 ## License
 

@@ -1,0 +1,61 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The toolchain comes from rust-toolchain.toml (the single place naming the compiler,
+      # the components and the targets), like the Docker image installs it.
+      - name: Install the toolchain
+        run: rustup toolchain install
+
+      # WHY: `tests/render.rs` boots the real app headlessly; the SSR test renders through
+      # wgpu on a software rasterizer, which needs mesa's Vulkan and GL drivers present.
+      # llvmpipe (Vulkan) and lavapipe/swrast (GL) let `server_app` find an adapter on a
+      # runner with no GPU — the test skips loudly, not silently, when they are missing, so
+      # they never are on CI.
+      - name: Install the software rasterizers (mesa)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config mesa-vulkan-drivers libgl1-mesa-dri vulkan-tools
+
+      - name: Show the adapter the renderer will find
+        run: vulkaninfo --summary 2>/dev/null | head -12 || true
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: The engine feature builds without the default one
+        run: cargo test -p srr --no-default-features
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Lints
+        run: cargo clippy -p srr --all-targets -- -D warnings
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain
+        run: rustup toolchain install
+      # The same mesa as the test job: the SSR test renders for real under coverage too.
+      - name: Install the software rasterizers (mesa) and the audio/device headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config mesa-vulkan-drivers libgl1-mesa-dri
+      - name: Install the coverage tool
+        run: cargo install --locked cargo-llvm-cov
+      - name: Coverage (the 100 % ratchet, engine/platform excluded)
+        run: cargo xtask coverage

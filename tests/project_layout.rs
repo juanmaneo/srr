@@ -139,12 +139,19 @@ fn the_tests_run_headless() {
     let this_file = root().join("tests/project_layout.rs");
     files.retain(|path| path.extension().is_some_and(|ext| ext == "rs") && *path != this_file);
     assert!(!files.is_empty());
+    // WHY the exception: `tests/render.rs` boots the real engine app headlessly. The runtime
+    // wiring of `src/engine/` — a system reading a resource nothing initialises — is invisible
+    // to `cargo check` and clippy, and the PadTaps black screen of commit 203c1b6 shipped
+    // precisely because no test ever ran the app. That one integration test exercises the
+    // wiring; every other test stays engine-free.
+    let engine_exception = root().join("tests/render.rs");
     for path in files {
         let text = fs::read_to_string(&path).unwrap();
+        let allowed = path == engine_exception;
         for pattern in ["srr::engine", "srr::platform", "Shell::", "engine::run"] {
             assert!(
-                !text.contains(pattern),
-                "{} must not use `{pattern}`: tests run headless",
+                allowed || !text.contains(pattern),
+                "{} must not use `{pattern}`: tests run headless (only tests/render.rs boots the engine)",
                 path.display()
             );
         }
