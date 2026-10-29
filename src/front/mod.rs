@@ -351,6 +351,7 @@ impl Game {
                 None => {
                     let mut client = Client::versus(self.client.config().clone(), rival);
                     client.set_character(self.client.character());
+                    client.set_skin(self.client.my_skin());
                     self.practice = Some(client);
                 }
             },

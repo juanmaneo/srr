@@ -483,7 +483,7 @@ impl ControlsPage {
                 PREVIEW_X,
                 PREVIEW_FEET_Y,
                 PREVIEW_HEIGHT,
-                true,
+                crate::front::skin::Facing::Right,
             );
             frame.label(
                 self.skin.variant.map(|v| v.label()).unwrap_or_default(),

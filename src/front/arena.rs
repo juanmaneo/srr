@@ -303,7 +303,11 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
             let (x, y) = feet(fighter, config);
             let risen = rise(fighter, config);
             let pose = super::skin::pose_of(fighter, fight_ticks);
-            frame.image(name, pose, x, y - risen, 150.0, fighter.facing().sign() > 0);
+            let facing = match fighter.facing() {
+                crate::game::Facing::Right => super::skin::Facing::Right,
+                crate::game::Facing::Left => super::skin::Facing::Left,
+            };
+            frame.image(name, pose, x, y - risen, 150.0, facing);
         } else {
             figure(fighter).draw(frame);
         }

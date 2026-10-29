@@ -211,7 +211,11 @@ fn a_fighter_wearing_a_skin_is_drawn_in_its_colours() {
     // The manga fighter is its AI-art sprite: the sprite's own dominant colour must show
     // on screen once the skin is worn — where the chalk showed none of it.
     let variant = Variant::of(PlayerId(0));
-    let sprite = srr::front::skin::sprite(variant, srr::front::skin::Pose::Stand);
+    let sprite = srr::front::skin::sprite(
+        variant,
+        srr::front::skin::Pose::Stand,
+        srr::front::skin::Facing::Right,
+    );
     // The sprite's most common saturated opaque colour: its signature colour (the red of
     // the dress, not the dark of the hair, which the arena also has).
     let mut counts: std::collections::HashMap<[u8; 3], usize> = Default::default();
@@ -252,11 +256,73 @@ fn a_fighter_wearing_a_skin_is_drawn_in_its_colours() {
         srr::front::skin::sprite_name_of(&Skin::of_player(Style::Manga, PlayerId(0))),
         Some("brunette")
     );
+    // The renderer's clipping guards: a sprite drawn off-screen paints nothing (and does
+    // not panic), a zero-height one neither, an unknown name neither.
+    let mut frame = srr::front::Frame::new(srr::front::Rgba::rgb(0.0, 0.0, 0.0));
+    frame.image(
+        "brunette",
+        srr::front::skin::Pose::Stand,
+        -500.0,
+        -500.0,
+        150.0,
+        srr::front::skin::Facing::Right,
+    );
+    frame.image(
+        "brunette",
+        srr::front::skin::Pose::Stand,
+        32.0,
+        32.0,
+        0.0,
+        srr::front::skin::Facing::Left,
+    );
+    frame.image(
+        "ace",
+        srr::front::skin::Pose::Stand,
+        32.0,
+        32.0,
+        150.0,
+        srr::front::skin::Facing::Right,
+    );
+    let tiny = srr::front::render::screenshot(&frame, 64, 64);
+    assert!(
+        tiny.pixels()
+            .iter()
+            .all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0),
+        "off-screen, zero-height and unknown sprites paint nothing"
+    );
+    // A sprite straddling the left edge: its left columns are clipped, the rest paints
+    // (the column loop's bounds guard).
+    let mut frame = srr::front::Frame::new(srr::front::Rgba::rgb(0.0, 0.0, 0.0));
+    frame.image(
+        "brunette",
+        srr::front::skin::Pose::Stand,
+        4.0,
+        60.0,
+        120.0,
+        srr::front::skin::Facing::Right,
+    );
+    let clipped = srr::front::render::screenshot(&frame, 64, 64);
+    assert!(
+        clipped
+            .pixels()
+            .iter()
+            .any(|p| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]) > 0),
+        "the visible part of the edge-straddling sprite paints"
+    );
+    assert!(
+        clipped
+            .pixels()
+            .iter()
+            .take(64)
+            .all(|p| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]) == 0),
+        "the off-screen columns paint nothing"
+    );
 }
 
 #[test]
 fn the_skin_row_of_the_pause_menu_changes_the_fighter_at_once() {
     use srr::front::Screen;
+    use srr::front::skin::Pose;
     use srr::game::Key;
 
     let mut game = Headless::practice();
@@ -276,6 +342,37 @@ fn the_skin_row_of_the_pause_menu_changes_the_fighter_at_once() {
     assert_eq!(
         game.game().skin(),
         Skin::styled(Style::Manga, Variant::Brunette)
+    );
+    // The page draws the live preview of the worn skin: a sprite image on the frame,
+    // facing right, under its name.
+    let frame = game.frame();
+    let (preview_name, preview_facing) = frame
+        .images
+        .iter()
+        .find(|i| i.pose == Pose::Stand)
+        .map(|i| (i.name, i.facing))
+        .expect("the skin preview is drawn");
+    assert_eq!(preview_name, "brunette");
+    assert_eq!(preview_facing, srr::front::skin::Facing::Right);
+    let shot = game.screenshot();
+    let hair = Palette::of(Variant::Brunette).hair;
+    let [hr, hg, hb] = [
+        (hair.r * 255.0) as u8,
+        (hair.g * 255.0) as u8,
+        (hair.b * 255.0) as u8,
+    ];
+    let near = shot
+        .pixels()
+        .iter()
+        .filter(|&&p| {
+            (i32::from(p[0]) - i32::from(hr)).abs() < 24
+                && (i32::from(p[1]) - i32::from(hg)).abs() < 24
+                && (i32::from(p[2]) - i32::from(hb)).abs() < 24
+        })
+        .count();
+    assert!(
+        near > 20,
+        "the preview shows the brunette's hair: {near} pixels"
     );
     // The ten fighters, one per press.
     for variant in Variant::ALL.iter().skip(1) {
@@ -303,10 +400,10 @@ fn a_manga_fighter_poses_with_its_state() {
     use srr::front::skin::Pose;
     use srr::game::Key;
 
-    // Every pose of every fighter decodes: all ten women, all nine poses.
+    // Every pose of every fighter decodes: all ten women, all nineteen poses.
     for variant in Variant::ALL {
         for pose in Pose::ALL {
-            let sprite = srr::front::skin::sprite(variant, pose);
+            let sprite = srr::front::skin::sprite(variant, pose, srr::front::skin::Facing::Right);
             assert!(
                 sprite.width > 0 && sprite.height > 0,
                 "{variant:?} {pose:?}"
@@ -323,7 +420,7 @@ fn a_manga_fighter_poses_with_its_state() {
         skin: Skin::of_player(Style::Manga, PlayerId(0)),
     });
     game.idle(MatchConfig::default().countdown_ticks);
-    game.hold(&[Key::ArrowRight], 1);
+    game.hold(&[Key::D], 1);
     let current = game.game().shown_match().expect("the fight");
     let fighter = &current.fighters()[0];
     let pose = srr::front::skin::pose_of(fighter, game.ticks() as u32);
@@ -331,14 +428,45 @@ fn a_manga_fighter_poses_with_its_state() {
         pose == Pose::WalkA || pose == Pose::WalkB || pose == Pose::Stand,
         "walking poses the fighter: {pose:?}"
     );
+    // Both facings reach the arena's sprite draw: walk right, then turn (down + left)
+    // and walk left, and check the frame's images carry the matching skin::Facing.
+    let facings = |game: &Headless| -> Vec<srr::front::skin::Facing> {
+        game.frame().images.iter().map(|i| i.facing).collect()
+    };
+    game.idle(2);
+    let right = facings(&game);
+    assert!(
+        right.contains(&srr::front::skin::Facing::Right),
+        "the fighter faces right: {right:?}"
+    );
+    game.hold(&[Key::S, Key::A], 1);
+    game.hold(&[Key::A], 10);
+    game.idle(2);
+    let left = facings(&game);
+    assert!(
+        left.contains(&srr::front::skin::Facing::Left),
+        "the fighter turned and faces left: {left:?}"
+    );
+    // And the headless renderer paints both: the left-facing cell is the mirrored one,
+    // so the screenshot's fighter differs from the right-facing one.
+    let shot_right = game.screenshot();
+    game.hold(&[Key::S, Key::D], 1);
+    game.hold(&[Key::D], 10);
+    game.idle(2);
+    let shot_left = game.screenshot();
+    assert_ne!(
+        shot_right.pixels(),
+        shot_left.pixels(),
+        "facing left draws the mirrored cell, not the same one"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
 // The sprite sheets: one PNG per character, every movement in a fixed grid
 // ---------------------------------------------------------------------------------------------
 
-/// A tiny PNG built by hand: 3x3 cells of one opaque pixel each, written with the
-/// `filter` scanline filter, so the decode paths are exercised without a fixture file.
+/// A tiny PNG built by hand: one cell of opaque pixels, written with the `filter`
+/// scanline filter, so the decode paths are exercised without a fixture file.
 fn hand_png(_filter: u8, idat: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
     let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
     let mut ihdr = Vec::new();
@@ -377,35 +505,55 @@ fn stored(raw: &[u8]) -> Vec<u8> {
 
 #[test]
 fn the_sheet_grid_slices_every_pose_of_every_character() {
-    use srr::front::skin::{CELL_HEIGHT, CELL_WIDTH, Pose};
+    use srr::front::skin::{CELL_HEIGHT, CELL_WIDTH, Facing, Pose};
 
     // The grid: every cell the same box, the poses in the fixed order, every character
     // the same sheet layout — a manga girl fights a chalk stick at the same size.
-    assert_eq!(Pose::ALL.len(), 9);
+    assert_eq!(Pose::ALL.len(), 19);
     for (index, pose) in Pose::ALL.iter().enumerate() {
         assert_eq!(pose.index(), index);
     }
     for variant in Variant::ALL {
         for pose in Pose::ALL {
-            let sprite = srr::front::skin::sprite(variant, pose);
-            assert_eq!(sprite.width, CELL_WIDTH);
-            assert_eq!(sprite.height, CELL_HEIGHT);
-            assert_eq!(sprite.pixels.len(), CELL_WIDTH * CELL_HEIGHT * 4);
-            // The cell holds the girl: opaque pixels exist, the background is knocked out.
-            let opaque = sprite.pixels.chunks(4).filter(|p| p[3] > 16).count();
-            assert!(opaque > 500, "{variant:?} {pose:?}: {opaque} opaque pixels");
-            // The floor: the fighter's lowest pixels sit near the bottom of the cell.
-            let lowest = sprite
-                .pixels
-                .chunks(CELL_WIDTH * 4)
-                .enumerate()
-                .filter(|(_, row)| row.chunks(4).any(|p| p[3] > 16))
-                .map(|(index, _)| index)
-                .max();
-            assert!(
-                lowest.unwrap_or(0) >= CELL_HEIGHT - 8,
-                "{variant:?} {pose:?}: seated at row {lowest:?}"
-            );
+            for facing in [Facing::Right, Facing::Left] {
+                let sprite = srr::front::skin::sprite(variant, pose, facing);
+                assert_eq!(sprite.width, CELL_WIDTH);
+                assert_eq!(sprite.height, CELL_HEIGHT);
+                assert_eq!(sprite.pixels.len(), CELL_WIDTH * CELL_HEIGHT * 4);
+                // The cell holds the girl: opaque pixels exist, the background is knocked out.
+                let opaque = sprite.pixels.chunks(4).filter(|p| p[3] > 16).count();
+                assert!(
+                    opaque > 500,
+                    "{variant:?} {pose:?} {facing:?}: {opaque} opaque pixels"
+                );
+                // The floor: the fighter's lowest pixels sit near the bottom of the cell.
+                let lowest = sprite
+                    .pixels
+                    .chunks(CELL_WIDTH * 4)
+                    .enumerate()
+                    .filter(|(_, row)| row.chunks(4).any(|p| p[3] > 16))
+                    .map(|(index, _)| index)
+                    .max();
+                assert!(
+                    lowest.unwrap_or(0) >= CELL_HEIGHT - 8,
+                    "{variant:?} {pose:?} {facing:?}: seated at row {lowest:?}"
+                );
+            }
+            // The left-facing cell is the right-facing one mirrored, precomputed at load:
+            // same silhouette, columns reversed, no engine flips at runtime.
+            let right = srr::front::skin::sprite(variant, pose, Facing::Right);
+            let left = srr::front::skin::sprite(variant, pose, Facing::Left);
+            for row in 0..CELL_HEIGHT {
+                for column in 0..CELL_WIDTH {
+                    let r = (row * CELL_WIDTH + column) * 4;
+                    let l = (row * CELL_WIDTH + (CELL_WIDTH - 1 - column)) * 4;
+                    assert_eq!(
+                        &right.pixels[r..r + 4],
+                        &left.pixels[l..l + 4],
+                        "{variant:?} {pose:?}: mirrored at row {row} column {column}"
+                    );
+                }
+            }
         }
     }
 }
@@ -421,10 +569,14 @@ fn the_sheets_slice_by_name_for_the_engines() {
             Some(*name),
             "the sheet is the variant's own"
         );
-        let sprite = srr::front::skin::sprite_by_name(name, Pose::Stand);
+        let sprite =
+            srr::front::skin::sprite_by_name(name, Pose::Stand, srr::front::skin::Facing::Right);
         assert!(sprite.is_some(), "{name} decodes");
     }
-    assert!(srr::front::skin::sprite_by_name("ace", Pose::Stand).is_none());
+    assert!(
+        srr::front::skin::sprite_by_name("ace", Pose::Stand, srr::front::skin::Facing::Right)
+            .is_none()
+    );
 }
 
 #[test]
@@ -454,7 +606,7 @@ fn the_png_decode_rejects_what_the_pipeline_never_writes() {
     chunk_into(&mut interlaced, b"IDAT", &zlib(&stored(&[0; 16])));
     chunk_into(&mut interlaced, b"IEND", &[]);
     assert_eq!(srr::front::skin::png_rgba(&interlaced), None);
-    // A sheet of the wrong size: the engine only slices the 3x3 grid it was built
+    // A sheet of the wrong size: the engine only slices the 5x4 grid it was built
     // for (a valid PNG decode, rejected by the sheet contract).
     let scanlines = vec![0u8; 8 * (1 + 8 * 4)];
     let small = hand_png(0, zlib(&stored(&scanlines)), 8, 8);
@@ -463,16 +615,16 @@ fn the_png_decode_rejects_what_the_pipeline_never_writes() {
     // The IDAT that never arrives (truncated after IHDR).
     let mut truncated = b"\x89PNG\r\n\x1a\n".to_vec();
     let mut ihdr = Vec::new();
-    ihdr.extend_from_slice(&360u32.to_be_bytes());
-    ihdr.extend_from_slice(&480u32.to_be_bytes());
+    ihdr.extend_from_slice(&600u32.to_be_bytes());
+    ihdr.extend_from_slice(&800u32.to_be_bytes());
     ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
     chunk_into(&mut truncated, b"IHDR", &ihdr);
     assert_eq!(srr::front::skin::png_rgba(&truncated), None);
     // An unknown scanline filter.
-    let bad_filter = hand_png(5, zlib(&stored(&[5; 13])), 360, 480);
+    let bad_filter = hand_png(5, zlib(&stored(&[5; 13])), 600, 800);
     assert_eq!(srr::front::skin::png_rgba(&bad_filter), None);
     // A truncated scanline: the zlib stream ends mid-image.
-    let short_line = hand_png(0, zlib(&stored(&[0; 40])), 360, 480);
+    let short_line = hand_png(0, zlib(&stored(&[0; 40])), 600, 800);
     assert_eq!(srr::front::skin::png_rgba(&short_line), None);
 }
 
@@ -509,6 +661,44 @@ fn the_png_decode_undoes_every_scanline_filter() {
         let pixels = srr::front::skin::png_rgba(&png).expect("the filter decodes");
         assert_eq!(pixels.as_slice(), raw.as_slice(), "filter {filter}");
     }
+    // Two scanlines, so the second line has a real one above it: every branch of the
+    // Paeth predictor (left, above, corner) is taken with `above != 0`.
+    let top = [
+        200u8, 10, 30, 255, 40, 50, 60, 255, 90, 80, 70, 255, 7, 200, 9, 255,
+    ];
+    let bottom = [
+        10u8, 200, 30, 255, 1, 2, 200, 255, 200, 100, 50, 255, 7, 8, 9, 200,
+    ];
+    let bpp = 4;
+    let filter_line = |raw: &[u8; 16], above: &[u8; 16]| -> Vec<u8> {
+        raw.iter()
+            .enumerate()
+            .map(|(i, &byte)| {
+                let left = if i >= bpp { i32::from(raw[i - bpp]) } else { 0 };
+                let up = i32::from(above[i]);
+                let corner = if i >= bpp {
+                    i32::from(above[i - bpp])
+                } else {
+                    0
+                };
+                let predictor = paeth(left, up, corner);
+                byte.wrapping_sub(predictor as u8)
+            })
+            .collect()
+    };
+    let filtered_bottom = filter_line(&bottom, &top);
+    let mut lines = vec![0u8];
+    lines.extend_from_slice(&top);
+    lines.push(4);
+    lines.extend_from_slice(&filtered_bottom);
+    let png = hand_png(4, zlib(&stored(&lines)), 4, 2);
+    let pixels = srr::front::skin::png_rgba(&png).expect("the paeth line decodes");
+    let expected = [&top[..], &bottom[..]].concat();
+    assert_eq!(
+        pixels.as_slice(),
+        expected.as_slice(),
+        "filter 4 with a line above"
+    );
 }
 
 /// The Paeth predictor, as the encoder (and RFC 2083) compute it.
@@ -589,7 +779,7 @@ fn the_ten_girls_each_wear_their_named_hair() {
     ];
     for (variant, expected) in cases {
         for pose in Pose::ALL {
-            let sprite = sprite(variant, pose);
+            let sprite = sprite(variant, pose, srr::front::skin::Facing::Right);
             // The hair: anywhere in the cell (the knocked-out pose lies down, so her
             // head is not at the top).
             let mut best = 0usize;
@@ -729,23 +919,60 @@ fn every_state_of_a_manga_fighter_poses_its_sheet() {
     assert_eq!(pose(&game), Pose::Jump);
     game.hold(&[Key::W], 12);
     game.idle(20);
-    // The strikes: the punch and the kick cells, sampled through the attack's phases
-    // (the pose engine reads the Active phase; the startup and recovery stand).
-    game.hold(&[Key::H], 1);
-    let mut seen_punch = false;
-    for _ in 0..12 {
-        game.hold(&[], 1);
-        seen_punch |= pose(&game) == Pose::Punch;
+    // The strikes: every limb at every strength takes its own cell, sampled through the
+    // attack's phases (every phase poses the strike, so the pose shows from the wind-up).
+    let strikes = [
+        (Key::B, Pose::PunchLow),
+        (Key::H, Pose::PunchMid),
+        (Key::J, Pose::PunchHigh),
+        (Key::G, Pose::KickLow),
+        (Key::Y, Pose::KickMid),
+        (Key::U, Pose::KickHigh),
+    ];
+    for (key, cell) in strikes {
+        game.idle(40);
+        game.hold(&[key], 1);
+        let mut seen = false;
+        for _ in 0..12 {
+            game.hold(&[], 1);
+            seen |= pose(&game) == cell;
+        }
+        assert!(seen, "{key:?} takes the {cell:?} cell");
     }
-    assert!(seen_punch, "a punch takes the punch cell");
     game.idle(40);
-    game.hold(&[Key::Y], 1);
-    let mut seen_kick = false;
+    // Blocking: stepping back with the guard up.
+    game.hold(&[Key::A], 1);
+    assert_eq!(pose(&game), Pose::Block);
+    game.idle(10);
+    // The grab attempt.
+    game.hold(&[Key::Space], 1);
+    let mut seen_grab = false;
     for _ in 0..12 {
         game.hold(&[], 1);
-        seen_kick |= pose(&game) == Pose::Kick;
+        seen_grab |= pose(&game) == Pose::Grab;
     }
-    assert!(seen_kick, "a kick takes the kick cell");
+    assert!(seen_grab, "a grab takes the grab cell");
+    game.idle(40);
+    // The special move.
+    game.hold(&[Key::F], 1);
+    let mut seen_special = false;
+    for _ in 0..16 {
+        game.hold(&[], 1);
+        seen_special |= pose(&game) == Pose::Special;
+    }
+    assert!(seen_special, "the special takes the special cell");
+    game.idle(60);
+    // The aerial kick: a kick pressed in the air.
+    game.hold(&[Key::W, Key::D], 1);
+    game.idle(6);
+    game.hold(&[Key::Y], 1);
+    let mut seen_jump_kick = false;
+    for _ in 0..8 {
+        game.hold(&[], 1);
+        seen_jump_kick |= pose(&game) == Pose::JumpKick;
+    }
+    assert!(seen_jump_kick, "an aerial kick takes the jump-kick cell");
+    game.idle(60);
     // The dummy walks into the strikes until it goes down: its pose takes the hit
     // cell while it is stunned, and the KO cell once it is out (the pose is read
     // every tick: the stun is short and the KO follows the last hit).
@@ -1365,4 +1592,201 @@ fn the_manga_pose_engine_poses_every_state_the_rules_can_hold() {
     }
     assert!(seen_armbar, "the throw locks its armbar");
     assert_eq!(Technique::Throw.finish(), GrapplePosition::Armbar);
+}
+
+#[test]
+fn a_practice_fight_keeps_the_skin_the_player_chose() {
+    use srr::front::controls::Practice;
+    use srr::front::{Game, Headless};
+    use srr::net::{Client, PlayerSet, ServerMessage};
+
+    let mut client = Client::online(MatchConfig::default(), 0);
+    client.handle(ServerMessage::Welcome {
+        player: PlayerId(0),
+    });
+    client.handle(ServerMessage::Lobby {
+        seated: PlayerSet::first(1),
+        ready: PlayerSet::EMPTY,
+    });
+    client.handle(ServerMessage::Styles {
+        allowed: srr::game::StyleSet::all(),
+    });
+    let mut game = Headless::new(Game::new(client));
+    game.skip_intro();
+    let skin = Skin::of_player(Style::Manga, PlayerId(0));
+    game.game_mut().set_skin(skin);
+    game.game_mut().client_mut().handle(ServerMessage::SkinOf {
+        player: PlayerId(0),
+        skin,
+    });
+    assert_eq!(game.game().skin(), skin, "the room confirmed it");
+    game.game_mut().set_practice(Practice::Off.next());
+    assert!(game.game().is_practising_online());
+    assert_eq!(
+        game.game().active_client().my_skin(),
+        skin,
+        "the practice fight wears the same skin, not the chalk"
+    );
+}
+
+#[test]
+fn the_pose_engine_maps_every_state_of_the_rules_to_a_cell() {
+    use srr::front::skin::{Pose, pose_of};
+    use srr::game::{
+        Attack, AttackPhase, FighterState, GrapplePosition, GrappleRole, Limb, Strength, Technique,
+    };
+
+    // strike(): every limb at every strength has its own cell.
+    assert_eq!(Pose::strike(Limb::Punch, Strength::Low), Pose::PunchLow);
+    assert_eq!(Pose::strike(Limb::Punch, Strength::Medium), Pose::PunchMid);
+    assert_eq!(Pose::strike(Limb::Punch, Strength::High), Pose::PunchHigh);
+    assert_eq!(Pose::strike(Limb::Kick, Strength::Low), Pose::KickLow);
+    assert_eq!(Pose::strike(Limb::Kick, Strength::Medium), Pose::KickMid);
+    assert_eq!(Pose::strike(Limb::Kick, Strength::High), Pose::KickHigh);
+
+    let pose = |m: &srr::game::Match, id: u8, ticks: u32| {
+        pose_of(m.fighter(PlayerId(id)).expect("the fighter"), ticks)
+    };
+
+    // The six strikes on the floor, each through its phases (the pose shows from the
+    // wind-up), read straight off the rules engine. The button is held, so the strike
+    // starts on the first step and runs its whole timeline.
+    for attack in Attack::ALL {
+        let mut m = common::close_duel(common::cfg());
+        for ticks in 0..10 {
+            m.step(&common::only(0, common::press(attack)));
+            assert_eq!(
+                pose(&m, 0, ticks),
+                Pose::strike(attack.limb, attack.strength),
+                "{attack:?} poses its cell in every phase"
+            );
+        }
+    }
+    // A whiffed strike far out of reach: the same cells.
+    let mut m = common::duel_at(common::cfg(), 200, 1000);
+    for ticks in 0..10 {
+        m.step(&common::only(
+            0,
+            common::press(Attack::punch(Strength::Medium)),
+        ));
+        assert_eq!(pose(&m, 0, ticks), Pose::PunchMid);
+    }
+    // A kick pressed in the air: the jump-kick cell through the flight. The jump is
+    // pressed first, the kick on the next step (a fresh press, the way the keyboard
+    // delivers it).
+    let mut m = common::duel_at(common::cfg(), 100, 1100);
+    m.step(&common::only(0, common::press_jump()));
+    m.step(&common::only(
+        0,
+        common::press(Attack::kick(Strength::High)),
+    ));
+    for ticks in 0..6 {
+        assert_eq!(pose(&m, 0, ticks), Pose::JumpKick, "the aerial kick");
+        m.step(&common::no_inputs());
+    }
+    // Free flight: the jump cell.
+    let mut m = common::close_duel(common::cfg());
+    m.step(&common::only(0, common::press_jump()));
+    assert_eq!(pose(&m, 0, 0), Pose::Jump);
+    // Crouching and blocking.
+    let mut m = common::close_duel(common::cfg());
+    m.step(&common::only(0, common::press_down()));
+    assert_eq!(pose(&m, 0, 0), Pose::Crouch);
+    m.step(&common::no_inputs());
+    m.step(&common::only(0, common::press_left()));
+    assert_eq!(pose(&m, 0, 0), Pose::Block);
+    // The grab attempt, whiffed and connected: the grab cell in every phase.
+    for (x0, x1) in [(200, 1000), (580, 620)] {
+        let mut m = common::duel_at(common::cfg(), x0, x1);
+        for ticks in 0..10 {
+            m.step(&common::only(0, common::press_grab()));
+            assert_eq!(pose(&m, 0, ticks), Pose::Grab, "the grab attempt");
+        }
+    }
+    // The techniques: the sweep and the throw cells while winding up, then the grapple
+    // positions — the clinch reads as the grab, the projections as their technique,
+    // the top of a ground hold crouches over its prey, the bottom lies flat.
+    for (buttons, cell, top, bottom) in [
+        (
+            common::press(Attack::punch(Strength::Medium)).with(Attack::kick(Strength::High)),
+            Pose::Sweep,
+            Pose::Crouch,
+            Pose::Ko,
+        ),
+        (
+            common::press(Attack::kick(Strength::Medium)).with(Attack::kick(Strength::High)),
+            Pose::Throw,
+            Pose::Crouch,
+            Pose::Ko,
+        ),
+    ] {
+        let mut m = common::duel_at(common::cfg(), 560, 600);
+        m.step(&common::only(0, buttons));
+        let mut seen_cell = pose(&m, 0, 0) == cell;
+        for ticks in 1..12 {
+            m.step(&common::no_inputs());
+            seen_cell |= pose(&m, 0, ticks) == cell;
+        }
+        assert!(seen_cell, "the technique poses its cell while it winds up");
+        let mut seen = [false; 2];
+        for ticks in 0..60 {
+            m.step(&common::no_inputs());
+            let top_pose = pose(&m, 0, ticks);
+            let bottom_pose = pose(&m, 1, ticks);
+            if matches!(
+                m.fighter(PlayerId(0)).unwrap().state(),
+                FighterState::Grappling(_, GrapplePosition::Clinch)
+            ) {
+                assert_eq!(top_pose, Pose::Grab, "the clinch reads as the grab");
+            }
+            seen[0] |= top_pose == top;
+            seen[1] |= bottom_pose == bottom;
+        }
+        assert!(seen[0] && seen[1], "the held fighters pose: {seen:?}");
+    }
+    // Every grapple position of the grab's ladder, both roles.
+    let mut m = common::duel_at(common::cfg(), 580, 620);
+    m.step(&common::only(0, common::press_grab()));
+    for _ in 0..10 {
+        m.step(&common::no_inputs());
+    }
+    let expected = [
+        (Pose::Grab, Pose::Grab),
+        (Pose::Crouch, Pose::Ko),
+        (Pose::Crouch, Pose::Ko),
+    ];
+    for (index, (top, bottom)) in expected.iter().enumerate() {
+        assert!(
+            matches!(
+                m.fighter(PlayerId(0)).unwrap().state(),
+                FighterState::Grappling(GrappleRole::Top, p)
+                    if p.index() == index
+            ),
+            "the ladder is at rung {index}"
+        );
+        assert_eq!(pose(&m, 0, 0), *top);
+        assert_eq!(pose(&m, 1, 0), *bottom);
+        for _ in 0..4 {
+            m.step(&common::no_inputs());
+        }
+        m.step(&common::only(0, common::press_grab()));
+        for _ in 0..6 {
+            m.step(&common::no_inputs());
+        }
+    }
+    // The special move of the default character, in every phase.
+    let mut m = common::close_duel(common::cfg());
+    let special = srr::game::Input {
+        special: true,
+        ..srr::game::Input::NONE
+    };
+    for ticks in 0..30 {
+        m.step(&common::only(0, special));
+        let state = m.fighter(PlayerId(0)).unwrap().state();
+        if matches!(state, FighterState::Special(_)) {
+            assert_eq!(pose(&m, 0, ticks), Pose::Special);
+        }
+    }
+    let _ = AttackPhase::Startup;
+    let _ = Technique::ALL;
 }

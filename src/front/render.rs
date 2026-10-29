@@ -244,10 +244,11 @@ fn paint_rects(frame: &Frame, mapping: Mapping, width: usize, height: usize) -> 
 }
 
 /// Paints `image` (the sprite named by it) onto `target`: its feet on its `(x, y)`, its
-/// `height` target pixels tall, mirrored when it faces left. Nearest-neighbour sampling
-/// with the sprite's own alpha, over the rectangles.
+/// `height` target pixels tall. Nearest-neighbour sampling with the sprite's own alpha,
+/// over the rectangles.
 fn paint_image(target: &mut Pixmap, mapping: Mapping, image: &crate::front::scene::Image) {
-    let Some(sprite) = crate::front::skin::sprite_by_name(image.name, image.pose) else {
+    let Some(sprite) = crate::front::skin::sprite_by_name(image.name, image.pose, image.facing)
+    else {
         return;
     };
     // The sprite's box on the target: `height` target pixels tall, its own aspect ratio.
@@ -273,13 +274,9 @@ fn paint_image(target: &mut Pixmap, mapping: Mapping, image: &crate::front::scen
             if tx < 0.0 || tx >= target.width as f32 {
                 continue;
             }
-            // The source column, mirrored when facing left.
-            let sx = ((column as f32 / target_w) * sprite.width as f32) as usize;
-            let sx = if image.facing_right {
-                sx.min(sprite.width - 1)
-            } else {
-                sprite.width - 1 - sx.min(sprite.width - 1)
-            };
+            // The source column (the cell already holds the right facing).
+            let sx =
+                (((column as f32 / target_w) * sprite.width as f32) as usize).min(sprite.width - 1);
             let i = (sy * sprite.width + sx) * 4;
             let alpha = f32::from(sprite.pixels[i + 3]) / 255.0;
             if alpha <= 0.0 {

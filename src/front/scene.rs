@@ -165,8 +165,9 @@ pub struct Image {
     /// The height to draw it at, in virtual pixels (the width follows the sprite's own
     /// aspect ratio).
     pub height: f32,
-    /// `false` mirrors it (facing left).
-    pub facing_right: bool,
+    /// Which way it faces: the half of the sheet its cell comes from (both are pre-mirrored
+    /// into the decoded cells, so nothing is flipped at draw time).
+    pub facing: crate::front::skin::Facing,
 }
 
 /// Everything to draw for one frame.
@@ -204,8 +205,8 @@ impl Frame {
         });
     }
 
-    /// Adds a sprite: its feet on `(x, y)`, `height` tall, in `pose`, mirrored when not
-    /// `facing_right`. The sprite must be registered (see [`Image::name`]).
+    /// Adds a sprite: its feet on `(x, y)`, `height` tall, in `pose`, facing `facing`. The
+    /// sprite must be registered (see [`Image::name`]).
     pub fn image(
         &mut self,
         name: &'static str,
@@ -213,7 +214,7 @@ impl Frame {
         x: f32,
         y: f32,
         height: f32,
-        facing_right: bool,
+        facing: crate::front::skin::Facing,
     ) {
         self.images.push(Image {
             name,
@@ -221,7 +222,7 @@ impl Frame {
             x,
             y,
             height,
-            facing_right,
+            facing,
         });
     }
 

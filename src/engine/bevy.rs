@@ -124,12 +124,13 @@ struct Pools {
     labels: Vec<Entity>,
 }
 
-/// The sprite textures created so far, by name and pose.
+/// The sprite textures created so far, by name, pose and facing.
 #[derive(Resource, Default)]
 struct Textures(
     Vec<(
         &'static str,
         crate::front::skin::Pose,
+        crate::front::skin::Facing,
         Handle<bevy::image::Image>,
     )>,
 );
@@ -403,11 +404,12 @@ fn draw(
             &mut textures,
             image.name,
             image.pose,
+            image.facing,
         ) else {
             continue;
         };
         let height = image.height * viewport.scale;
-        let (ratio, _) = sprite_aspect(image.name, image.pose);
+        let (ratio, _) = sprite_aspect(image.name, image.pose, image.facing);
         let custom_size = Some(Vec2::new(height * ratio, height));
         let position = world(&viewport, size, image.x, image.y).extend(depth(index, false) + 250.0);
         match pools.images.get(index).copied() {
@@ -419,7 +421,6 @@ fn draw(
                 sprite.image = handle.clone();
                 sprite.custom_size = custom_size;
                 sprite.anchor = Anchor::BottomCenter;
-                sprite.flip_x = !image.facing_right;
                 if transform.translation != position {
                     transform.translation = position;
                 }
@@ -432,7 +433,6 @@ fn draw(
                             image: handle,
                             custom_size,
                             anchor: Anchor::BottomCenter,
-                            flip_x: !image.facing_right,
                             ..default()
                         },
                         Transform::from_translation(position),
@@ -818,19 +818,24 @@ impl Server {
     }
 }
 
-/// The sprite texture of `name` in `pose`, created once (the bytes are embedded, so the
-/// texture is built directly, no asset IO).
+/// The sprite texture of `name` in `pose`, facing `facing`, created once (the bytes are
+/// embedded, so the texture is built directly, no asset IO).
 fn texture_of(
     commands: &mut Commands,
     images: &mut bevy::asset::Assets<bevy::image::Image>,
     textures: &mut Textures,
     name: &str,
     pose: crate::front::skin::Pose,
+    facing: crate::front::skin::Facing,
 ) -> Option<Handle<bevy::image::Image>> {
-    if let Some((_, _, handle)) = textures.0.iter().find(|(n, p, _)| *n == name && *p == pose) {
+    if let Some((_, _, _, handle)) = textures
+        .0
+        .iter()
+        .find(|(n, p, f, _)| *n == name && *p == pose && *f == facing)
+    {
         return Some(handle.clone());
     }
-    let sprite = crate::front::skin::sprite_by_name(name, pose)?;
+    let sprite = crate::front::skin::sprite_by_name(name, pose, facing)?;
     let pixels = sprite.pixels.to_vec();
     let image = bevy::image::Image::new(
         Extent3d {
@@ -848,14 +853,19 @@ fn texture_of(
         .iter()
         .copied()
         .find(|n| *n == name)?;
-    textures.0.push((static_name, pose, handle.clone()));
+    textures.0.push((static_name, pose, facing, handle.clone()));
     let _ = commands;
     Some(handle)
 }
 
-/// The aspect ratio (width per unit of height) of the sprite `name` in `pose`.
-fn sprite_aspect(name: &str, pose: crate::front::skin::Pose) -> (f32, f32) {
-    match crate::front::skin::sprite_by_name(name, pose) {
+/// The aspect ratio (width per unit of height) of the sprite `name` in `pose`, facing
+/// `facing`.
+fn sprite_aspect(
+    name: &str,
+    pose: crate::front::skin::Pose,
+    facing: crate::front::skin::Facing,
+) -> (f32, f32) {
+    match crate::front::skin::sprite_by_name(name, pose, facing) {
         Some(sprite) => (sprite.width as f32 / sprite.height.max(1) as f32, 1.0),
         None => (1.0, 1.0),
     }

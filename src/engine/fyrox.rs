@@ -558,32 +558,37 @@ fn update_rect(ui: &UserInterface, slot: &mut Slot<Border, RectLook>, look: Rect
 }
 
 /// `image` in window pixels: its feet on its `(x, y)`, `height` tall at the viewport's
-/// scale, mirrored when it faces left. The texture is created once per name.
+/// scale. The texture is created once per name, pose and facing (the left-facing cells are
+/// pre-mirrored in the decoded sheet, so nothing is flipped here).
 fn image_look(
     image: &crate::front::scene::Image,
     scale: f32,
-    textures: &mut Vec<(&'static str, crate::front::skin::Pose, TextureResource)>,
+    textures: &mut Vec<(
+        &'static str,
+        crate::front::skin::Pose,
+        crate::front::skin::Facing,
+        TextureResource,
+    )>,
 ) -> Option<ImageLook> {
-    let sprite = crate::front::skin::sprite_by_name(image.name, image.pose)?;
+    let sprite = crate::front::skin::sprite_by_name(image.name, image.pose, image.facing)?;
     let texture = match textures
         .iter()
-        .find(|(n, p, _)| *n == image.name && *p == image.pose)
+        .find(|(n, p, f, _)| *n == image.name && *p == image.pose && *f == image.facing)
     {
-        Some((_, _, texture)) => texture.clone(),
+        Some((_, _, _, texture)) => texture.clone(),
         None => {
             let texture = sprite_texture(&sprite)?;
-            textures.push((sprite_name(image.name)?, image.pose, texture.clone()));
+            textures.push((
+                sprite_name(image.name)?,
+                image.pose,
+                image.facing,
+                texture.clone(),
+            ));
             texture
         }
     };
     let height = image.height * scale;
     let width = height * sprite.width as f32 / sprite.height.max(1) as f32;
-    // Facing left: mirror the texture's own bytes (the widget's flip is vertical only).
-    let texture = if image.facing_right {
-        texture
-    } else {
-        mirrored_texture(&sprite)?
-    };
     // The feet at the bottom-centre of the box.
     let left = image.x * scale - width / 2.0;
     let top = image.y * scale - height;
@@ -592,27 +597,6 @@ fn image_look(
         size: Vector2::new(width, height),
         texture,
     })
-}
-
-/// The sprite's texture with its columns reversed: the same fighter facing left.
-fn mirrored_texture(sprite: &crate::front::skin::Sprite) -> Option<TextureResource> {
-    let mut bytes = Vec::with_capacity(sprite.pixels.len());
-    for row in 0..sprite.height {
-        for column in (0..sprite.width).rev() {
-            let i = (row * sprite.width + column) * 4;
-            bytes.extend_from_slice(&sprite.pixels[i..i + 4]);
-        }
-    }
-    TextureResource::from_bytes(
-        fyrox::core::uuid::Uuid::new_v4(),
-        TextureKind::Rectangle {
-            width: sprite.width as u32,
-            height: sprite.height as u32,
-        },
-        TexturePixelKind::RGBA8,
-        bytes,
-        ResourceKind::Embedded,
-    )
 }
 
 /// The static name of the sprite `name` (a `&'static str` for the cache).
