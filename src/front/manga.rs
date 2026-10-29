@@ -1,35 +1,30 @@
-//! The manga engine: **a rendering of its own**, sharing nothing with the stick figures —
-//! not their skeleton, not their proportions, not their drawing. The game's logic is
+//! The manga pose engine: the joint skeleton behind the manga fighters, sharing nothing
+//! with the stick figures — not their skeleton, not their proportions. The game's logic is
 //! unchanged (the same [`Fighter`] states, the same rules); this module reads the state and
-//! poses **its own** manga skeleton: a big head (a third of the sprite), a small body,
-//! thin limbs, cel-shaded surfaces (a base tone, one hard shadow band, one highlight) with
-//! clean 1-pixel ink outlines, huge glossy eyes, and per-variant signature looks (twintails,
-//! a braid, a flowing mane; crop tops and flaring skirts with thigh-high stockings for the
-//! women, jackets for the men) — the look of a manga-themed brawler, drawn sprite by sprite.
+//! poses **its own** manga skeleton: a big head (a third of the sprite), a small body, thin
+//! limbs — the proportions of the KonoSuba school of bright, big-eyed girls, in the broad
+//! tradition of sprite brawlers like Phantom Breaker: Battle Grounds (nothing is copied
+//! from either: every face, haircut and outfit is the game's own).
+//!
+//! The 2D fight view does not draw this skeleton: a manga fighter is its sprite sheet (see
+//! [`skin`](super::skin)) — one PNG per character, every movement in a fixed grid. This
+//! module is what the rest of the game reads: the 3D view (`Tab`) builds its cel-shaded
+//! volumes from the same pose ([`volumes`]), and the name tags float over the head
+//! ([`top`], [`is_lying`]).
 //!
 //! The stick figures ([`stick`]) stay the game's debug view of the joints, untouched: a
-//! chalk fighter is drawn by [`Figure::draw`], a manga fighter by [`draw`] here, and never
-//! the twain. The 3D view builds its own volumes from the same pose ([`parts`]).
-//!
-//! Everything works inside the pen the frame gives ([`stroke`] and [`ring`], only
-//! axis-aligned rectangles), so every engine and the headless tests draw it unchanged.
-//!
-//! No character copies anyone's protected likeness: every face, haircut and outfit is the
-//! game's own; only the broad manga rendering techniques are borrowed.
+//! chalk fighter is drawn by [`Figure::draw`], a manga fighter by its sheet, and never the
+//! twain.
 
-use super::arena::{feet, player_color, scale, strength_color};
-use super::scene::{Frame, Rgba};
-use super::skin::{HairShape, Palette, disc, quad};
-use super::stick::{self, Point, ring, stroke};
+use super::arena::{feet, scale};
+use super::scene::Rgba;
+use super::skin::Palette;
+use super::stick::{self, Point};
 use crate::game::{
     Attack, AttackPhase, Fighter, FighterState, GrapplePosition, GrappleRole, Limb, MatchConfig,
     SpecialData, Strength, Technique,
 };
 
-/// The clean outline ink of the manga sprites: near-black, thin.
-const INK: Rgba = Rgba::hex(0x100c14);
-/// The outline thickness.
-const OUTLINE: f32 = 1.3;
 /// How tall a standing sprite is, in virtual pixels — bigger than the stick figures, so
 /// the faces read.
 const SPRITE: f32 = 168.0;
@@ -121,8 +116,6 @@ pub fn pose(fighter: &Fighter, config: &MatchConfig, fight_ticks: u32) -> Pose {
     } else {
         2.0
     };
-    let lit = (fight_ticks / 6).is_multiple_of(2);
-    let _ = lit;
 
     let skeleton = match (fighter.state(), fighter.attack()) {
         (FighterState::Walking, _) => {
@@ -169,7 +162,7 @@ pub fn pose(fighter: &Fighter, config: &MatchConfig, fight_ticks: u32) -> Pose {
         },
         (FighterState::Knockout, _) => lying(),
         (FighterState::Attacking(phase), Some(attack)) if fighter.is_airborne() => {
-            flying(attack, phase, reach(config.attack(attack).range))
+            flying(phase, reach(config.attack(attack).range))
         }
         (FighterState::Attacking(phase), Some(attack)) => {
             strike(attack, phase, reach(config.attack(attack).range))
@@ -291,7 +284,7 @@ fn strike(attack: Attack, phase: AttackPhase, reach: f32) -> Skeleton {
 }
 
 /// A flying kick: the front leg shooting out and down.
-fn flying(attack: Attack, phase: AttackPhase, reach: f32) -> Skeleton {
+fn flying(phase: AttackPhase, reach: f32) -> Skeleton {
     let foot = match phase {
         AttackPhase::Startup => p(24.0, 56.0),
         AttackPhase::Active => p(reach, 34.0),
@@ -304,7 +297,6 @@ fn flying(attack: Attack, phase: AttackPhase, reach: f32) -> Skeleton {
         feet: [foot, p(-18.0, 52.0)],
         ..Skeleton::DEFAULT
     }
-    .with_attack_color(strength_color(attack.strength))
 }
 
 /// The special move: the same shapes as the game's logic dictates.
@@ -477,613 +469,8 @@ fn grapple(role: GrappleRole, position: GrapplePosition, distance: f32) -> Skele
     }
 }
 
-impl Skeleton {
-    /// The colour the striking limbs of a special move wear (unused placeholder kept for
-    /// symmetry with the game's ink colours).
-    fn with_attack_color(self, _color: Rgba) -> Skeleton {
-        self
-    }
-}
-
-// -----------------------------------------------------------------------------------------
-// The sprite
-// -----------------------------------------------------------------------------------------
-
-/// Draws `fighter` as its manga sprite: its own pose, its own renderer. The chalk stick
-/// figures are never drawn under it — this shares nothing with them.
-pub fn draw(
-    frame: &mut Frame,
-    fighter: &Fighter,
-    config: &MatchConfig,
-    fight_ticks: u32,
-    palette: &Palette,
-) {
-    let pose = pose(fighter, config, fight_ticks);
-    let look = &palette.look;
-    let facing = pose.facing;
-    let accent = player_color(fighter.player());
-
-    // The cel surface of a limb: two segments, each a cel with its outline; a fist or a
-    // shoe at the end.
-    let limb = |frame: &mut Frame, from: Point, limb: LimbPose, arm: bool, front: bool| {
-        let shade = if front { 1.0 } else { 0.85 };
-        let w = if arm { look.arm } else { look.leg } * 2.0;
-        let (upper, upper_shadow, lower, lower_shadow) = if arm {
-            if look.feminine {
-                (
-                    palette.skin,
-                    palette.skin_shadow,
-                    palette.skin,
-                    palette.skin_shadow,
-                )
-            } else {
-                (
-                    palette.outfit,
-                    palette.outfit_shadow,
-                    palette.outfit,
-                    palette.outfit_shadow,
-                )
-            }
-        } else {
-            (
-                palette.trim,
-                palette.trim.scaled(0.62),
-                palette.trim,
-                palette.trim.scaled(0.62),
-            )
-        };
-        cel(
-            frame,
-            from,
-            limb.joint,
-            w,
-            w * 0.92,
-            upper.scaled(shade),
-            upper_shadow.scaled(shade),
-        );
-        outline(frame, from, limb.joint, w);
-        cel(
-            frame,
-            limb.joint,
-            limb.end,
-            w * 0.92,
-            w * 0.82,
-            lower.scaled(shade),
-            lower_shadow.scaled(shade),
-        );
-        outline(frame, limb.joint, limb.end, w * 0.92);
-        if arm {
-            // The fist: a glove disc with its outline.
-            disc(frame, limb.end, w * 0.6, palette.skin.scaled(shade));
-            ring(frame, limb.end, w * 0.6, OUTLINE, INK);
-        } else {
-            // The shoe: a flat disc ahead of the ankle with a sole.
-            let toe = p(limb.end.x + facing * w * 0.5, limb.end.y + w * 0.06);
-            disc(frame, toe, w * 0.58, palette.trim.scaled(shade));
-            ring(frame, toe, w * 0.58, OUTLINE, INK);
-            stroke(
-                frame,
-                p(limb.end.x - facing * w * 0.2, limb.end.y + w * 0.4),
-                p(toe.x + facing * w * 0.3, toe.y + w * 0.4),
-                1.6,
-                INK,
-            );
-        }
-    };
-
-    // The painter's order: back limbs, the torso, the front leg, the head, the front arm.
-    limb(frame, pose.hip, pose.legs[1], false, false);
-    limb(frame, pose.neck, pose.arms[1], true, false);
-
-    // The torso: the look's silhouette — an hourglass dress for the women, a jacket for
-    // the men.
-    let neck = pose.neck;
-    let hip = pose.hip;
-    let up = p(hip.x - neck.x, hip.y - neck.y);
-    let length = up.x.hypot(up.y).max(f32::EPSILON);
-    let across = p(-up.y / length, up.x / length);
-    let at = |along: f32, side: f32| {
-        p(
-            neck.x + up.x * along + across.x * side,
-            neck.y + up.y * along + across.y * side,
-        )
-    };
-    if look.feminine {
-        // The crop top.
-        cel(
-            frame,
-            neck,
-            at(0.42, 0.0),
-            look.shoulders * 1.7,
-            look.shoulders * 1.5,
-            palette.trim,
-            palette.trim.scaled(0.62),
-        );
-        outline(frame, neck, at(0.42, 0.0), look.shoulders * 1.45);
-        // The bare midriff.
-        cel(
-            frame,
-            at(0.42, 0.0),
-            at(0.74, 0.0),
-            look.waist * 1.3,
-            look.waist,
-            palette.skin,
-            palette.skin_shadow,
-        );
-        outline(frame, at(0.42, 0.0), at(0.74, 0.0), look.waist * 1.3);
-        // The skirt: two flaring quads, then the shadow side.
-        for side in [1.0, -1.0] {
-            quad(
-                frame,
-                at(0.74, side * look.waist),
-                at(0.74, side * look.hips * 1.7),
-                at(1.12, side * look.hips * 1.45),
-                at(1.12, side * look.hips * 0.3),
-                if side > 0.0 {
-                    palette.outfit
-                } else {
-                    palette.outfit_shadow
-                },
-            );
-        }
-        stroke(
-            frame,
-            at(0.74, look.waist),
-            at(1.12, look.hips * 1.2),
-            OUTLINE,
-            INK,
-        );
-        stroke(
-            frame,
-            at(0.74, -look.waist),
-            at(1.12, -look.hips * 1.2),
-            OUTLINE,
-            INK,
-        );
-        // The belt.
-        stroke(
-            frame,
-            at(0.74, -look.waist),
-            at(0.74, look.waist),
-            2.4,
-            palette.trim,
-        );
-    } else {
-        // The jacket.
-        cel(
-            frame,
-            neck,
-            at(0.55, 0.0),
-            look.shoulders * 1.9,
-            look.waist * 1.6,
-            palette.outfit,
-            palette.outfit_shadow,
-        );
-        outline(frame, neck, at(0.55, 0.0), look.shoulders * 1.7);
-        cel(
-            frame,
-            at(0.55, 0.0),
-            hip,
-            look.waist * 1.6,
-            look.hips * 1.5,
-            palette.outfit.scaled(0.88),
-            palette.outfit_shadow.scaled(0.88),
-        );
-        outline(frame, at(0.55, 0.0), hip, look.hips * 1.5);
-        // The collar.
-        stroke(
-            frame,
-            neck,
-            at(0.12, look.shoulders * 0.7),
-            2.6,
-            palette.trim,
-        );
-        stroke(
-            frame,
-            neck,
-            at(0.12, -look.shoulders * 0.7),
-            2.6,
-            palette.trim,
-        );
-    }
-
-    limb(frame, pose.hip, pose.legs[0], false, true);
-    limb(frame, pose.neck, pose.arms[0], true, true);
-
-    // The head, big and manga, drawn last: the sprite's focus, its hair flowing over the
-    // shoulders and the raised fists.
-    head(frame, &pose, palette, accent);
-
-    // The state marks: the stars of a stun, the cross of a knockout, around the head.
-    marks(frame, fighter, &pose);
-}
-
-/// A cel surface from `a` to `b`: the base fill, one hard shadow band on the dark side, one
-/// highlight on the lit side.
-fn cel(frame: &mut Frame, a: Point, b: Point, wa: f32, wb: f32, color: Rgba, shadow: Rgba) {
-    let span = p(b.x - a.x, b.y - a.y);
-    let length = span.x.hypot(span.y).max(f32::EPSILON);
-    let across = p(-span.y / length, span.x / length);
-    // The base fill.
-    for i in 0..8 {
-        let t = i as f32 / 8.0;
-        let w = (wa + (wb - wa) * t) / 2.0;
-        let q = p(a.x + span.x * t, a.y + span.y * t);
-        stroke(
-            frame,
-            p(q.x + across.x * w, q.y + across.y * w),
-            p(q.x - across.x * w, q.y - across.y * w),
-            2.6,
-            color,
-        );
-    }
-    // The hard shadow: the third of the width on the dark side (away from up-left).
-    let dark = if across.x + across.y > 0.0 { -1.0 } else { 1.0 };
-    for i in 0..8 {
-        let t = i as f32 / 8.0;
-        let w = (wa + (wb - wa) * t) / 2.0;
-        let q = p(a.x + span.x * t, a.y + span.y * t);
-        let edge = p(q.x + across.x * w * dark, q.y + across.y * w * dark);
-        let inner = p(
-            q.x + across.x * w * dark / 3.0,
-            q.y + across.y * w * dark / 3.0,
-        );
-        stroke(frame, edge, inner, 2.6, shadow);
-    }
-    // The highlight on the lit side.
-    let lit = -dark;
-    stroke(
-        frame,
-        p(
-            a.x + across.x * wa * 0.3 * lit,
-            a.y + across.y * wa * 0.3 * lit,
-        ),
-        p(
-            b.x + across.x * wb * 0.3 * lit,
-            b.y + across.y * wb * 0.3 * lit,
-        ),
-        1.8,
-        color.mix(Rgba::hex(0xffffff), 0.25),
-    );
-}
-
-/// The 1-pixel outlines of a limb segment, both sides.
-fn outline(frame: &mut Frame, a: Point, b: Point, w: f32) {
-    let span = p(b.x - a.x, b.y - a.y);
-    let length = span.x.hypot(span.y).max(f32::EPSILON);
-    let across = p(-span.y / length, span.x / length);
-    for side in [1.0, -1.0] {
-        stroke(
-            frame,
-            p(
-                a.x + across.x * w * side / 2.0,
-                a.y + across.y * w * side / 2.0,
-            ),
-            p(
-                b.x + across.x * w * side / 2.0,
-                b.y + across.y * w * side / 2.0,
-            ),
-            OUTLINE,
-            INK,
-        );
-    }
-}
-
-/// The manga head: a round face, a huge glossy eye, a small mouth, a blush, the variant's
-/// hair silhouette — and the player's accent in the hair ribbon.
-fn head(frame: &mut Frame, pose: &Pose, palette: &Palette, accent: Rgba) {
-    let head = pose.head;
-    let facing = pose.facing;
-    let r = HEAD;
-    let at = |along: f32, ahead: f32| p(head.x + facing * ahead, head.y - along);
-    // The face: a round skull and a small chin, with the cel shadow on the lower part.
-    disc(frame, head, r, palette.skin);
-    disc(frame, at(-r * 0.5, r * 0.05), r * 0.68, palette.skin);
-    disc(frame, at(-r * 0.8, facing * r * 0.1), r * 0.4, palette.skin);
-    disc(
-        frame,
-        at(-r * 0.45, -facing * r * 0.2),
-        r * 0.6,
-        palette.skin_shadow,
-    );
-    disc(
-        frame,
-        at(-r * 0.45, facing * r * 0.1),
-        r * 0.58,
-        palette.skin,
-    );
-    // The huge eye: half the head's height.
-    let eye = at(-r * 0.42, r * 0.2);
-    let eye_r = r * 0.44;
-    disc(frame, eye, eye_r, Rgba::hex(0xffffff));
-    disc(frame, eye, eye_r * 0.62, palette.eye);
-    // The dark band: the top of the iris only, inside it.
-    disc(
-        frame,
-        p(eye.x, eye.y - eye_r * 0.4),
-        eye_r * 0.4,
-        palette.eye.scaled(0.4),
-    );
-    disc(
-        frame,
-        p(eye.x + facing * eye_r * 0.08, eye.y + eye_r * 0.1),
-        eye_r * 0.3,
-        INK,
-    );
-    disc(
-        frame,
-        p(eye.x + facing * eye_r * 0.2, eye.y + eye_r * 0.45),
-        eye_r * 0.24,
-        Rgba::hex(0xffffff),
-    );
-    disc(
-        frame,
-        p(eye.x - facing * eye_r * 0.3, eye.y - eye_r * 0.3),
-        eye_r * 0.13,
-        Rgba::hex(0xffffff),
-    );
-    ring(frame, eye, eye_r, OUTLINE, INK);
-    stroke(
-        frame,
-        p(eye.x - facing * eye_r * 0.9, eye.y - eye_r * 0.85),
-        p(eye.x + facing * eye_r * 0.9, eye.y - eye_r * 0.95),
-        OUTLINE * 1.5,
-        INK,
-    );
-    // The brow.
-    stroke(
-        frame,
-        at(r * 0.35, r * 0.08),
-        at(r * 0.4, r * 0.6),
-        1.4,
-        palette.hair_shadow,
-    );
-    // The mouth.
-    stroke(
-        frame,
-        at(-r * 0.55, r * 0.3),
-        at(-r * 0.55, r * 0.55),
-        1.4,
-        Rgba::hex(0xc05a5a),
-    );
-    // The blush.
-    disc(
-        frame,
-        at(-r * 0.25, r * 0.02),
-        r * 0.14,
-        Rgba {
-            r: 1.0,
-            g: 0.5,
-            b: 0.5,
-            a: 0.45,
-        },
-    );
-    // The clean outline of the face.
-    ring(frame, head, r, OUTLINE, INK);
-    // The hair.
-    hair(frame, head, facing, palette, accent);
-}
-
-/// The hair silhouette of the variant, with its shine band and the player's ribbon.
-fn hair(frame: &mut Frame, head: Point, facing: f32, palette: &Palette, accent: Rgba) {
-    let r = HEAD;
-    let at = |along: f32, ahead: f32| p(head.x + facing * ahead, head.y - along);
-    let hair = palette.hair;
-    let dark = palette.hair_shadow;
-    let shine = hair.mix(Rgba::hex(0xffffff), 0.35);
-    let look = &palette.look;
-    // The cap: one bold mass sitting on the top of the skull, leaving the face clear.
-    disc(frame, at(r * 0.72, -facing * r * 0.15), r * 0.68, hair);
-    // The fringe: three sharp clumps over the forehead, tips stopping above the eyes.
-    for (y0, x0, y1, x1, w) in [
-        (r * 0.95, r * 0.45, r * 0.55, r * 1.0, r * 0.32),
-        (r * 0.9, r * 0.0, r * 0.45, r * 1.05, r * 0.28),
-        (r * 0.85, -r * 0.45, r * 0.4, r * 0.9, r * 0.24),
-    ] {
-        leaf(frame, at(y0, x0), at(y1, x1), w, w * 0.5, hair);
-    }
-    // The shadow under the fringe.
-    stroke(
-        frame,
-        at(r * 0.3, r * 0.55),
-        at(r * 0.25, r * 0.95),
-        r * 0.16,
-        dark,
-    );
-    // The shine band across the crown.
-    stroke(
-        frame,
-        at(r * 0.85, -r * 0.3),
-        at(r * 0.9, r * 0.35),
-        r * 0.18,
-        shine,
-    );
-    // The silhouette per variant.
-    match look.hair_shape {
-        HairShape::Twintails => {
-            for side in [1.0, -1.0] {
-                let anchor = at(r * 0.4, side * r * 0.9);
-                leaf(
-                    frame,
-                    anchor,
-                    p(anchor.x - facing * r * 0.4, anchor.y - r * 1.1),
-                    r * 0.55,
-                    r * 0.3,
-                    hair,
-                );
-                leaf(
-                    frame,
-                    anchor,
-                    p(anchor.x - facing * r * 1.2, anchor.y + r * 2.2),
-                    r * 0.6,
-                    r * 0.35,
-                    hair,
-                );
-                // The ribbons, in the player's colour.
-                disc(frame, anchor, r * 0.16, accent);
-            }
-            disc(frame, at(r * 0.1, -facing * r * 0.8), r * 0.6, dark);
-        }
-        HairShape::Braid => {
-            let mut q = at(r * 0.3, -facing * r * 0.9);
-            for i in 0..4 {
-                let next = p(q.x - facing * r * 0.25, q.y + r * 0.6);
-                leaf(
-                    frame,
-                    q,
-                    next,
-                    r * 0.3 - i as f32 * 0.04,
-                    r * 0.26,
-                    if i % 2 == 0 { hair } else { dark },
-                );
-                q = next;
-            }
-            disc(frame, at(r * 0.3, -facing * r * 0.9), r * 0.18, accent);
-        }
-        HairShape::Mane => {
-            let back = at(r * 0.2, -facing * r * 0.85);
-            leaf(
-                frame,
-                back,
-                p(back.x - facing * r * 0.5, back.y + r * look.hair_length),
-                r * 0.6,
-                r * 0.3,
-                hair,
-            );
-            leaf(
-                frame,
-                at(-r * 0.1, -facing * r * 0.7),
-                p(
-                    back.x - facing * r * 0.9,
-                    back.y + r * look.hair_length * 0.8,
-                ),
-                r * 0.45,
-                r * 0.22,
-                dark,
-            );
-        }
-        HairShape::Spikes => {
-            for ahead in [r * 0.5, 0.0, -r * 0.5] {
-                stroke(
-                    frame,
-                    at(r * 0.8, ahead),
-                    at(r * 1.7, ahead * 1.3),
-                    r * 0.3,
-                    hair,
-                );
-            }
-        }
-        HairShape::Bald => {
-            stroke(
-                frame,
-                at(r * 0.9, -r * 0.25),
-                at(r * 0.95, r * 0.25),
-                r * 0.14,
-                palette.skin.mix(Rgba::hex(0xffffff), 0.3),
-            );
-        }
-        HairShape::Mohawk => {
-            for ahead in [-r * 0.3, 0.0, r * 0.3] {
-                let base = at(r * 0.9, ahead);
-                leaf(
-                    frame,
-                    base,
-                    p(base.x, base.y - r * 0.9),
-                    r * 0.22,
-                    r * 0.12,
-                    hair,
-                );
-            }
-        }
-    }
-    if matches!(
-        look.hair_shape,
-        HairShape::Twintails | HairShape::Braid | HairShape::Mane
-    ) {
-        for ahead in [-r * 0.4, 0.0, r * 0.4] {
-            stroke(
-                frame,
-                at(r * 0.85, ahead),
-                at(r * 1.3, ahead * 1.3),
-                r * 0.26,
-                hair,
-            );
-        }
-    }
-}
-
-/// A filled leaf (the hair clumps): two arcs meeting at the tip.
-fn leaf(frame: &mut Frame, a: Point, b: Point, wa: f32, wb: f32, color: Rgba) {
-    let span = p(b.x - a.x, b.y - a.y);
-    let length = span.x.hypot(span.y).max(f32::EPSILON);
-    let across = p(-span.y / length, span.x / length);
-    for side in [1.0, -1.0] {
-        for i in 0..8 {
-            let t0 = i as f32 / 8.0;
-            let t1 = (i + 1) as f32 / 8.0;
-            let bulge = |t: f32| {
-                let w = (wa + (wb - wa) * t) / 2.0;
-                let curve = (1.0 - (2.0 * t - 1.0).powi(2)).sqrt();
-                w * (1.0 + side * curve * 0.6)
-            };
-            let p0 = p(
-                a.x + span.x * t0 + across.x * bulge(t0),
-                a.y + span.y * t0 + across.y * bulge(t0),
-            );
-            let p1 = p(
-                a.x + span.x * t1 + across.x * bulge(t1),
-                a.y + span.y * t1 + across.y * bulge(t1),
-            );
-            stroke(frame, p0, p1, 2.4, color);
-        }
-    }
-    for i in 0..6 {
-        let t = i as f32 / 6.0;
-        let w = (wa + (wb - wa) * t) / 2.0;
-        disc(frame, p(a.x + span.x * t, a.y + span.y * t), w * 0.9, color);
-    }
-}
-
-/// The state marks around the head: the stars of a stun, the crosses of a knockout.
-fn marks(frame: &mut Frame, fighter: &Fighter, pose: &Pose) {
-    let head = pose.head;
-    match fighter.state() {
-        FighterState::HitStun => {
-            for (along, ahead) in [(0.9_f32, 0.45_f32), (0.6, 0.8), (0.15, 1.0)] {
-                let length = along.hypot(ahead);
-                let (along, ahead) = (along / length, ahead / length);
-                let inner = p(
-                    head.x + along * (HEAD + 8.0),
-                    head.y + ahead * (HEAD + 8.0) * pose.facing,
-                );
-                let outer = p(inner.x + along * 12.0, inner.y + ahead * 12.0 * pose.facing);
-                stroke(frame, inner, outer, 2.6, stick::SPARK);
-            }
-        }
-        FighterState::Knockout => {
-            for ahead in [-1.0, 8.0] {
-                let eye = p(head.x + ahead * pose.facing, head.y + 3.0);
-                stroke(
-                    frame,
-                    p(eye.x - 3.0, eye.y - 3.0),
-                    p(eye.x + 3.0, eye.y + 3.0),
-                    2.0,
-                    INK,
-                );
-                stroke(
-                    frame,
-                    p(eye.x - 3.0, eye.y + 3.0),
-                    p(eye.x + 3.0, eye.y - 3.0),
-                    2.0,
-                    INK,
-                );
-            }
-        }
-        _ => {}
-    }
-}
-
-/// One volume of the 3D manga figure, for the third-person view.
+/// One 3D volume of the manga figure: a tube (or a ball when `b` is `None`).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Volume {
     /// The world `x` and screen `y` of the volume's ends, with the radius of each.
     pub a: (Point, i32),
@@ -1144,15 +531,7 @@ pub fn volumes(
     for (from, limbs, arm) in [(pose.neck, &pose.arms, true), (pose.hip, &pose.legs, false)] {
         for (index, limb) in limbs.iter().enumerate() {
             let w = if arm { look.arm } else { look.leg } * 1.2;
-            let color = if arm {
-                if look.feminine {
-                    palette.skin
-                } else {
-                    palette.outfit
-                }
-            } else {
-                palette.trim
-            };
+            let color = if arm { palette.skin } else { palette.trim };
             let shade = if index == 0 { 1.0 } else { 0.85 };
             volumes.push(Volume {
                 a: (from, w as i32),

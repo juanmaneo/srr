@@ -626,10 +626,12 @@ struct Captures(Vec<Pixels>);
 pub fn boot_app(shell: Shell) -> Boot {
     let mut app = build_app(shell, Headless::Server);
     app.add_plugins(InputPlugin)
-        // The one render resource `draw` touches: the colour the window would be cleared
-        // with. There is no renderer here (the drawing stops at the pools), but the system
-        // still reads it, so it must exist exactly like it does in the browser's app.
+        // The render resources `draw` touches: the colour the window would be cleared
+        // with, and the asset store the sprite textures are created in. There is no
+        // renderer here (the drawing stops at the pools), but the systems still read
+        // them, so they must exist exactly like they do in the browser's app.
         .init_resource::<ClearColor>()
+        .init_resource::<bevy::asset::Assets<bevy::image::Image>>()
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
     // The `Window` entity `WindowPlugin` would have spawned: `draw` sizes the letterboxed
     // viewport from it (`windows.get_single()`), so the headless boot must give it one or

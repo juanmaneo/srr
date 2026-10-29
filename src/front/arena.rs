@@ -305,7 +305,7 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
             let pose = super::skin::pose_of(fighter, fight_ticks);
             frame.image(name, pose, x, y - risen, 150.0, fighter.facing().sign() > 0);
         } else {
-            super::skin::draw_inked(frame, &figure(fighter), &skin);
+            figure(fighter).draw(frame);
         }
     }
     for shot in current.projectiles() {

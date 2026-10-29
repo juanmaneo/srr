@@ -223,16 +223,15 @@ the keyboard; the PS button belongs to the console / the browser / the OS.
 ### Skins (the styles and the variants)
 
 Every fighter can wear a **skin**: how it is drawn, nothing to do with the rules. The styles
-are three, and a match can mix them freely — a chalk stick figure against a full-colour
+are two, and a match can mix them freely — a chalk stick figure against a full-colour
 heroine, or a brawl of ten fighters all dressed differently:
 
 * **Stick (chalk)**, the default: the game's own ink on the alley wall.
-* **Realistic**: full-colour fighters with faces, hair and physiques, the look of a modern
-  fighting game. Ten variants: three women (a graceful brunette, a striking blonde, a fierce
-  red-haired one), an athletic man, a stocky brawler, a wiry youth, an elder, a soldier, a
-  punk and a masked mystic.
-* **Manga**: the same ten variants in the bright cel-shaded look of an anime: flat colours,
-  thick ink, big eyes.
+* **Manga**: the ten fighters as girls of the KonoSuba school — bright cel shading, big
+  glossy eyes, bold ink outlines, twintails, braids and manes, fighting dresses and
+  thigh-high stockings (in the broad tradition of sprite brawlers like Phantom Breaker:
+  Battle Grounds; nothing copied from either: every face, haircut and outfit is the
+  game's own).
 
 Each player wears their **own** variant (the ten players of a brawl each look different, like
 the accessories of the chalk ink), picked on the **Skin** row of the controls page / pause
@@ -241,13 +240,20 @@ tells every browser in the same round, so the whole room sees the change togethe
 fighter keeps the game's poses, marks and effects whatever it wears — a skin is a layer over
 the ink, never a replacement.
 
-**The styles on offer are decided by the server hosting the game** (`--styles stick,realistic,manga`
+**The styles on offer are decided by the server hosting the game** (`--styles stick,manga`
 on the command line of `srr-server`, all of them by default; the chalk is always allowed). A
 style the server does not allow never reaches the menus.
 
-The skins are drawn by the game itself (`src/front/skin.rs`), only rectangles like every other
-screen, so both engines and the headless tests draw them unchanged. The 3D view (`Tab`) reads
-the same palettes for its mannequins.
+Each manga fighter is **one PNG sprite sheet** in `assets/skins/manga/`: every movement of
+the character — the guard, the two walk frames, the punch, the kick, the crouch, the jump,
+the hit recoil, the knockout — in one 3 x 3 grid in a fixed order, the same cell layout for
+all ten. The game decodes the PNG itself (a small DEFLATE decoder, no dependency) and slices
+the grid deterministically (`src/front/skin.rs`), so both engines and the headless tests draw
+the same art; every cell is normalised to the same box with the fighter seated on the same
+floor, the reason a manga girl and a chalk stick can trade blows at the same on-screen size.
+One image per character is the point: a model asked for one pose at a time drifts (hair
+colour, hem length, broken legs), one sheet keeps the fighter identical across its
+movements. The 3D view (`Tab`) reads the same palettes for its cel-shaded mannequins.
 
 ### Characters
 

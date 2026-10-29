@@ -10,10 +10,10 @@
 //! * [`Style::Manga`]: its own rendering engine, not a dressing of the stick — bright
 //!   cel-shaded sprites with big eyes, bold ink outlines and manga proportions.
 //!
-//! A skin is one of the ten [`Variant`]s of a style: three women (brunette, blonde,
-//! red-haired), an athletic man, a stocky brawler, a wiry youth, an elder, a soldier, a
-//! punk, a masked mystic — every style draws its own take of each of them, so player 1 and
-//! player 7 can both wear the "brunette" skin and still look nothing alike.
+//! A skin is one of the ten [`Variant`]s of a style: ten girls of the KonoSuba school —
+//! the brunette, the blonde, the redhead, the pink, the white, the black, the green, the
+//! violet, the cyan and the raven — every style draws its own take of each of them, so
+//! player 1 and player 7 can both wear the "brunette" skin and still look nothing alike.
 //!
 //! [`Style`] and [`Variant`] are both one byte on the wire (their index), like
 //! [`Character`](super::Character); [`StyleSet`] is the bitmask of the styles a server allows
@@ -151,25 +151,25 @@ impl fmt::Display for Style {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Variant {
-    /// The brunette: the base woman, brown twintails and a red fighting dress.
+    /// The brunette: brown twintails and a red fighting dress.
     Brunette,
-    /// The blonde: golden hair, a blue fighting dress.
+    /// The blonde: golden hair in a long braid, a blue fighting dress.
     Blonde,
-    /// The redhead: fierce red hair, a gold-trimmed outfit.
+    /// The redhead: a fierce scarlet mane, a gold-trimmed fighting dress.
     Redhead,
-    /// The pink: pastel pink hair, a violet dress.
+    /// The pink: pastel pink drill curls and a violet fighting dress.
     Pink,
-    /// The white: silver hair, a green dress.
+    /// The white: a silver bob, a green fighting dress.
     White,
-    /// The black: navy-black hair, a cream dress.
+    /// The black: a navy-black mane, a cream fighting dress.
     Black,
-    /// The green: green hair, the red trims stay.
+    /// The green: green twintails, a red fighting dress.
     Green,
-    /// The violet: violet hair, a gold dress.
+    /// The violet: a violet wavy mane, a gold fighting dress.
     Violet,
-    /// The cyan: cyan hair, a magenta dress.
+    /// The cyan: a cyan bob, a magenta fighting dress.
     Cyan,
-    /// The raven: dark blue hair, a teal dress.
+    /// The raven: a midnight-blue mane, a teal fighting dress.
     Raven,
 }
 
