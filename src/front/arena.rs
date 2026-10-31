@@ -302,7 +302,11 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
         if let Some(name) = super::skin::sprite_name_of(&skin) {
             let (x, y) = feet(fighter, config);
             let risen = rise(fighter, config);
-            let pose = super::skin::pose_of(fighter, fight_ticks);
+            let pose = super::skin::pose_of(
+                fighter,
+                current.config().character(fighter.player()),
+                fight_ticks,
+            );
             let facing = match fighter.facing() {
                 crate::game::Facing::Right => super::skin::Facing::Right,
                 crate::game::Facing::Left => super::skin::Facing::Left,

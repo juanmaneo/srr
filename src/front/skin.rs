@@ -1,12 +1,12 @@
 //! The manga skin: **one sprite sheet per character**, sliced deterministically. Each of
 //! the ten [`Variant`]s is a single PNG in `assets/skins/manga/` holding every movement of
-//! the fighter facing right in a fixed 5 x 4 grid, in the fixed order of [`Pose::ALL`] —
+//! the fighter facing right in a fixed 5 x 5 grid, in the fixed order of [`Pose::ALL`] —
 //! the same sheet
 //! layout for every character, so the ten girls can fight side by side with the 2D chalk
 //! sticks at the same on-screen size (the arena draws every fighter 150 virtual pixels
-//! tall, whatever it wears). Both facings are served from one sheet: the PNG holds the
-//! right-facing poses, and the left-facing cells are mirrored from them once at load
-//! ([`Facing::Left`]), so no engine flips a texture at runtime.
+//! tall, whatever it wears). Both facings live in the one PNG: the top rows are the
+//! right-facing poses, the bottom rows their mirrored copy (see [`Facing::Left`]), so the
+//! engines slice a cell and never flip anything, at load or at runtime.
 //!
 //! The sheets are generated art (an open-weight image model paints each girl in the
 //! KonoSuba school of bright cel shading, big glossy eyes and bold ink outlines; the move
@@ -29,7 +29,8 @@ use std::sync::OnceLock;
 
 use super::scene::Rgba;
 use crate::game::{
-    Fighter, FighterState, GrapplePosition, GrappleRole, Limb, Skin, Strength, Technique, Variant,
+    Character, Fighter, FighterState, GrapplePosition, GrappleRole, Limb, Skin, Strength,
+    Technique, Variant,
 };
 
 // -----------------------------------------------------------------------------------------
@@ -285,6 +286,7 @@ pub fn palette_of(skin: &Skin) -> Palette {
 /// Every action the sprite sheet holds, in the fixed order of the grid: row-major, five
 /// cells a row. A fighter without its own pose falls back to standing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum Pose {
     /// Standing in guard (the top-left cell).
     Stand,
@@ -319,15 +321,22 @@ pub enum Pose {
     Throw,
     /// The flying scissor sweep.
     Sweep,
-    /// The character's special move.
-    Special,
+    /// The four characters' special moves (F): the shoulder rush, the fireball, the
+    /// armored palm, the slide tackle.
+    SpecialRush,
+    /// The fireball throw.
+    SpecialFireball,
+    /// The armored palm strike.
+    SpecialPalm,
+    /// The low slide tackle.
+    SpecialSlide,
     /// Lying knocked out.
     Ko,
 }
 
 impl Pose {
     /// Every pose, in the fixed order of the sheet's cells (row-major).
-    pub const ALL: [Pose; 19] = [
+    pub const ALL: [Pose; 22] = [
         Pose::Stand,
         Pose::WalkA,
         Pose::WalkB,
@@ -345,16 +354,18 @@ impl Pose {
         Pose::Grab,
         Pose::Throw,
         Pose::Sweep,
-        Pose::Special,
+        Pose::SpecialRush,
+        Pose::SpecialFireball,
+        Pose::SpecialPalm,
+        Pose::SpecialSlide,
         Pose::Ko,
     ];
 
-    /// The index of the pose's cell in reading order.
-    pub fn index(self) -> usize {
-        Self::ALL
-            .iter()
-            .position(|pose| *pose == self)
-            .expect("a pose")
+    /// The index of the pose's cell in reading order: `self as usize`, since `ALL` is
+    /// the declaration order — `const`, and the compile-time checks below prove every
+    /// pose is distinct and fills the grid.
+    pub const fn index(self) -> usize {
+        self as usize
     }
 
     /// The pose of a strike: the limb decides the family, the strength the height.
@@ -381,15 +392,76 @@ impl Pose {
 
 /// The columns of the grid: five cells a row.
 const GRID: usize = 5;
-/// The rows of the pose grid: four rows of five (the top half of the sheet, facing right).
-const ROWS: usize = 4;
+/// The rows of one facing's grid: five rows of five (the top half of the sheet faces
+/// right, the bottom half is its mirror, facing left).
+const ROWS: usize = 5;
 /// The width of the whole sheet, in pixels: the pose grid's five columns.
 const SHEET_WIDTH: usize = GRID * CELL_WIDTH;
+/// The height of the whole sheet, in pixels: the right-facing grid (the top `ROWS` rows)
+/// stacked over its mirrored copy (the bottom `ROWS` rows, facing left).
+const SHEET_HEIGHT: usize = ROWS * CELL_HEIGHT * 2;
 /// The width of one cell of the grid, in sheet pixels: every character, every pose, the
 /// same box — the reason a manga girl can fight a chalk stick.
 pub const CELL_WIDTH: usize = 120;
 /// The height of one cell: as tall as a fighter is on screen (the arena draws 150).
 pub const CELL_HEIGHT: usize = 160;
+
+/// Compile-time contract of the sheet grid: the poses fill one facing's grid exactly,
+/// leaving the last cell empty, and every pose is distinct.
+const _: () = {
+    assert!(Pose::ALL.len() <= GRID * ROWS, "the poses fit the 5x5 grid");
+    let mut i = 0;
+    while i < Pose::ALL.len() {
+        let mut j = i + 1;
+        while j < Pose::ALL.len() {
+            assert!(
+                Pose::ALL[i] as u8 != Pose::ALL[j] as u8,
+                "every pose is distinct"
+            );
+            j += 1;
+        }
+        i += 1;
+    }
+    assert!(SHEET_WIDTH * SHEET_HEIGHT * 4 > 0);
+};
+
+/// The byte offset of the cell `pose` facing `facing` within one decoded sheet: the same
+/// arithmetic [`cell`] slices with, factored out as `const fn` so a caller in a `const`
+/// context gets the compiler's bounds checking for free.
+const fn cell_offset(index: usize, facing: Facing) -> usize {
+    let column = index % GRID;
+    let half = match facing {
+        Facing::Right => 0,
+        Facing::Left => 1,
+    };
+    let row = index / GRID % ROWS + half * ROWS;
+    (row * CELL_HEIGHT * SHEET_WIDTH + column * CELL_WIDTH) * 4
+}
+
+/// Compile-time proof the offset math lands inside the sheet for every cell, both
+/// facings; also exercised at runtime by the sheet-slicing test.
+const _: () = {
+    let mut pose = 0;
+    while pose < Pose::ALL.len() {
+        assert!(
+            cell_offset(pose, Facing::Right) + CELL_WIDTH * CELL_HEIGHT * 4
+                <= SHEET_WIDTH * SHEET_HEIGHT * 4
+        );
+        assert!(
+            cell_offset(pose, Facing::Left) + CELL_WIDTH * CELL_HEIGHT * 4
+                <= SHEET_WIDTH * SHEET_HEIGHT * 4
+        );
+        pose += 1;
+    }
+};
+
+/// The offset of the cell `pose` facing `facing`, checked against the sheet size: what
+/// [`cell`] slices with, runtime-checked for the test suite.
+fn checked_cell_offset(index: usize, facing: Facing, sheet_bytes: usize) -> usize {
+    let offset = cell_offset(index, facing);
+    assert!(offset + CELL_WIDTH * CELL_HEIGHT * 4 <= sheet_bytes);
+    offset
+}
 /// The sheet PNGs, one per character, in [`Variant::ALL`] order: the file is the fighter.
 const SHEETS: [&[u8]; 10] = [
     include_bytes!("../../assets/skins/manga/brunette.png"),
@@ -414,41 +486,35 @@ struct Cells {
 /// one decode across every engine's texture cache).
 static CELLS: OnceLock<Cells> = OnceLock::new();
 
-/// The decoded cells, built once.
+/// The decoded cells, built once: the sheet's own top half is the right-facing grid, its
+/// bottom half the left-facing one (the mirrored copy is baked into the PNG, so slicing
+/// alone serves both facings).
 fn cells() -> &'static Cells {
     CELLS.get_or_init(|| {
         let mut bytes = Vec::with_capacity(SHEETS.len() * Pose::ALL.len() * 2);
         for sheet in SHEETS {
             let pixels = sheet_rgba(sheet).expect("the sheet decodes");
             for pose in Pose::ALL {
-                let right = cell(&pixels, SHEET_WIDTH, pose.index());
-                let left = mirror(&right);
-                bytes.push(right);
-                bytes.push(left);
+                for facing in [Facing::Right, Facing::Left] {
+                    bytes.push(cell(&pixels, SHEET_WIDTH, pose.index(), facing));
+                }
             }
         }
         Cells { bytes }
     })
 }
 
-/// One cell's pixels mirrored horizontally: the same pose facing the other way, computed
-/// once at load so no engine flips at runtime.
-fn mirror(cell: &[u8]) -> Vec<u8> {
-    let mut out = vec![0u8; cell.len()];
-    for row in 0..CELL_HEIGHT {
-        for column in 0..CELL_WIDTH {
-            let from = (row * CELL_WIDTH + column) * 4;
-            let to = (row * CELL_WIDTH + (CELL_WIDTH - 1 - column)) * 4;
-            out[to..to + 4].copy_from_slice(&cell[from..from + 4]);
-        }
-    }
-    out
-}
-
-/// The cell of `pose` out of a decoded sheet: its rows, joined into one RGBA run.
-fn cell(pixels: &[u8], sheet_width: usize, index: usize) -> Vec<u8> {
+/// The cell of `pose` facing `facing` out of a decoded sheet: its rows, joined into one
+/// RGBA run. The right-facing cells are the sheet's top `ROWS` rows, the left-facing ones
+/// the bottom `ROWS` (their pre-mirrored copy).
+fn cell(pixels: &[u8], sheet_width: usize, index: usize, facing: Facing) -> Vec<u8> {
     let column = index % GRID;
-    let row = index / GRID % ROWS;
+    let half = match facing {
+        Facing::Right => 0,
+        Facing::Left => 1,
+    };
+    let row = index / GRID % ROWS + half * ROWS;
+    let _ = checked_cell_offset(index, facing, pixels.len());
     let stride = sheet_width * 4;
     let mut out = Vec::with_capacity(CELL_WIDTH * CELL_HEIGHT * 4);
     for y in 0..CELL_HEIGHT {
@@ -457,6 +523,33 @@ fn cell(pixels: &[u8], sheet_width: usize, index: usize) -> Vec<u8> {
     }
     out
 }
+
+/// The index of the cell `variant`/`pose`/`facing` in [`cells`]: `const fn` so the whole
+/// addressing is checked by the compiler wherever it is used in a `const` context.
+const fn cell_index(variant: u8, pose: Pose, facing: Facing) -> usize {
+    variant as usize * Pose::ALL.len() * 2
+        + pose.index() * 2
+        + match facing {
+            Facing::Right => 0,
+            Facing::Left => 1,
+        }
+}
+
+/// Compile-time proof every cell index lands inside the decoded table.
+const _: () = {
+    let mut variant = 0;
+    while variant < SHEETS.len() as u8 {
+        let mut pose = 0;
+        while pose < Pose::ALL.len() {
+            let index = cell_index(variant, Pose::ALL[pose], Facing::Right);
+            assert!(index < SHEETS.len() * Pose::ALL.len() * 2);
+            let index = cell_index(variant, Pose::ALL[pose], Facing::Left);
+            assert!(index < SHEETS.len() * Pose::ALL.len() * 2);
+            pose += 1;
+        }
+        variant += 1;
+    }
+};
 
 /// A decoded sprite: the RGBA bytes of one cell, row by row, and its size.
 ///
@@ -497,12 +590,7 @@ pub struct Sprite<'a> {
 /// }
 /// ```
 pub fn sprite(variant: Variant, pose: Pose, facing: Facing) -> Sprite<'static> {
-    let index = variant.index() as usize * Pose::ALL.len() * 2
-        + pose.index() * 2
-        + match facing {
-            Facing::Right => 0,
-            Facing::Left => 1,
-        };
+    let index = cell_index(variant.index(), pose, facing);
     Sprite {
         pixels: &cells().bytes[index],
         width: CELL_WIDTH,
@@ -514,10 +602,8 @@ pub fn sprite(variant: Variant, pose: Pose, facing: Facing) -> Sprite<'static> {
 // The PNG decode (no dependency: the sheets are 8-bit RGBA, one IDAT, zlib)
 // -----------------------------------------------------------------------------------------
 
-/// Decodes a sheet PNG: [`png_rgba`] with the 5 x 4 grid contract enforced — the cells
+/// Decodes a sheet PNG: [`png_rgba`] with the 5 x 8 grid contract enforced — the cells
 /// are sliced by arithmetic, so the sheet must be exactly the size the game was built for.
-/// The sheet holds the right-facing poses; the left-facing cells are mirrored from them
-/// once at load (see [`cells`]).
 ///
 /// ```
 /// # use srr::front::skin::sheet_rgba;
@@ -526,9 +612,9 @@ pub fn sprite(variant: Variant, pose: Pose, facing: Facing) -> Sprite<'static> {
 /// ```
 pub fn sheet_rgba(bytes: &[u8]) -> Option<Vec<u8>> {
     let pixels = png_rgba(bytes)?;
-    // The 5 x 4 contract, by size alone: the cells are sliced by arithmetic,
+    // The 5 x 8 contract, by size alone: the cells are sliced by arithmetic,
     // so the sheet must be exactly the box the game was built for.
-    if pixels.len() != SHEET_WIDTH * ROWS * CELL_HEIGHT * 4 {
+    if pixels.len() != SHEET_WIDTH * SHEET_HEIGHT * 4 {
         return None;
     }
     Some(pixels)
@@ -960,17 +1046,16 @@ pub fn sprite_name_of(skin: &Skin) -> Option<&'static str> {
 /// Which way the fighter faces: the half of the sheet its sprite comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Facing {
-    /// The sheet's right-facing half (the top rows).
+    /// The sheet's top half: the right-facing grid.
     Right,
-    /// The sheet's left-facing half (the bottom rows): the right-facing pose, pre-mirrored
-    /// into the art, so no engine flips anything at runtime.
+    /// The sheet's bottom half: the left-facing grid, mirrored into the PNG itself.
     Left,
 }
 
 /// The pose `fighter` is in: the cell of the sheet the sprite engine draws for its state.
 /// A fighter without its own pose stands in guard — the art carries the movement, the
 /// game's logic the rules.
-pub fn pose_of(fighter: &Fighter, fight_ticks: u32) -> Pose {
+pub fn pose_of(fighter: &Fighter, character: Character, fight_ticks: u32) -> Pose {
     match fighter.state() {
         FighterState::Walking => {
             // The two walk frames alternate with the screen's stride.
@@ -1000,12 +1085,23 @@ pub fn pose_of(fighter: &Fighter, fight_ticks: u32) -> Pose {
         FighterState::Grabbing(_) => Pose::Grab,
         FighterState::Technique(Technique::Throw, _) => Pose::Throw,
         FighterState::Technique(Technique::Sweep, _) => Pose::Sweep,
-        FighterState::Special(_) => Pose::Special,
+        FighterState::Special(_) => match character {
+            Character::Chalk => Pose::SpecialRush,
+            Character::Torch => Pose::SpecialFireball,
+            Character::Brick => Pose::SpecialPalm,
+            Character::Zip => Pose::SpecialSlide,
+        },
+        // The grab's ladder (clinch, mount, submission) and the two techniques'
+        // projections (sweep, throw) and finishes (scarf hold, armbar), on both sides.
+        // A counter (a reversal) just swaps the roles, so it lands in the same cells.
         FighterState::Grappling(role, position) => match (role, position) {
             (_, GrapplePosition::Clinch) => Pose::Grab,
             (GrappleRole::Top, GrapplePosition::Throw) => Pose::Throw,
             (GrappleRole::Top, GrapplePosition::Sweep) => Pose::Sweep,
-            (GrappleRole::Top, _) => Pose::Crouch,
+            (GrappleRole::Top, GrapplePosition::Mount) => Pose::Crouch,
+            (GrappleRole::Top, GrapplePosition::Submission) => Pose::Crouch,
+            (GrappleRole::Top, GrapplePosition::ScarfHold) => Pose::Crouch,
+            (GrappleRole::Top, GrapplePosition::Armbar) => Pose::Crouch,
             (GrappleRole::Bottom, _) => Pose::Ko,
         },
         FighterState::Idle => Pose::Stand,

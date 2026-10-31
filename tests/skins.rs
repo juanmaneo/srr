@@ -400,7 +400,7 @@ fn a_manga_fighter_poses_with_its_state() {
     use srr::front::skin::Pose;
     use srr::game::Key;
 
-    // Every pose of every fighter decodes: all ten women, all nineteen poses.
+    // Every pose of every fighter decodes: all ten women, all twenty-two poses.
     for variant in Variant::ALL {
         for pose in Pose::ALL {
             let sprite = srr::front::skin::sprite(variant, pose, srr::front::skin::Facing::Right);
@@ -423,7 +423,11 @@ fn a_manga_fighter_poses_with_its_state() {
     game.hold(&[Key::D], 1);
     let current = game.game().shown_match().expect("the fight");
     let fighter = &current.fighters()[0];
-    let pose = srr::front::skin::pose_of(fighter, game.ticks() as u32);
+    let pose = srr::front::skin::pose_of(
+        fighter,
+        current.config().character(fighter.player()),
+        game.ticks() as u32,
+    );
     assert!(
         pose == Pose::WalkA || pose == Pose::WalkB || pose == Pose::Stand,
         "walking poses the fighter: {pose:?}"
@@ -509,7 +513,7 @@ fn the_sheet_grid_slices_every_pose_of_every_character() {
 
     // The grid: every cell the same box, the poses in the fixed order, every character
     // the same sheet layout — a manga girl fights a chalk stick at the same size.
-    assert_eq!(Pose::ALL.len(), 19);
+    assert_eq!(Pose::ALL.len(), 22);
     for (index, pose) in Pose::ALL.iter().enumerate() {
         assert_eq!(pose.index(), index);
     }
@@ -539,8 +543,9 @@ fn the_sheet_grid_slices_every_pose_of_every_character() {
                     "{variant:?} {pose:?} {facing:?}: seated at row {lowest:?}"
                 );
             }
-            // The left-facing cell is the right-facing one mirrored, precomputed at load:
-            // same silhouette, columns reversed, no engine flips at runtime.
+            // The sheet's bottom half is the top half mirrored into the PNG itself:
+            // the left-facing cell is the right-facing one with its columns reversed,
+            // baked in the file, so no engine flips anything, at load or at runtime.
             let right = srr::front::skin::sprite(variant, pose, Facing::Right);
             let left = srr::front::skin::sprite(variant, pose, Facing::Left);
             for row in 0..CELL_HEIGHT {
@@ -606,7 +611,7 @@ fn the_png_decode_rejects_what_the_pipeline_never_writes() {
     chunk_into(&mut interlaced, b"IDAT", &zlib(&stored(&[0; 16])));
     chunk_into(&mut interlaced, b"IEND", &[]);
     assert_eq!(srr::front::skin::png_rgba(&interlaced), None);
-    // A sheet of the wrong size: the engine only slices the 5x4 grid it was built
+    // A sheet of the wrong size: the engine only slices the 5x5 grid it was built
     // for (a valid PNG decode, rejected by the sheet contract).
     let scanlines = vec![0u8; 8 * (1 + 8 * 4)];
     let small = hand_png(0, zlib(&stored(&scanlines)), 8, 8);
@@ -892,7 +897,11 @@ fn every_state_of_a_manga_fighter_poses_its_sheet() {
     game.idle(countdown);
     let pose = |game: &Headless| {
         let current = game.game().shown_match().expect("the fight");
-        pose_of(&current.fighters()[0], game.ticks() as u32)
+        pose_of(
+            &current.fighters()[0],
+            current.config().character(current.fighters()[0].player()),
+            game.ticks() as u32,
+        )
     };
     // Standing in guard.
     game.idle(10);
@@ -958,7 +967,7 @@ fn every_state_of_a_manga_fighter_poses_its_sheet() {
     let mut seen_special = false;
     for _ in 0..16 {
         game.hold(&[], 1);
-        seen_special |= pose(&game) == Pose::Special;
+        seen_special |= pose(&game) == Pose::SpecialRush;
     }
     assert!(seen_special, "the special takes the special cell");
     game.idle(60);
@@ -984,7 +993,11 @@ fn every_state_of_a_manga_fighter_poses_its_sheet() {
             game.hold(&[], 1);
             let hurt = {
                 let current = game.game().shown_match().expect("the fight");
-                pose_of(&current.fighters()[1], game.ticks() as u32)
+                pose_of(
+                    &current.fighters()[1],
+                    current.config().character(current.fighters()[1].player()),
+                    game.ticks() as u32,
+                )
             };
             seen_hit |= hurt == Pose::Hit;
         }
@@ -1017,7 +1030,10 @@ fn a_knocked_out_manga_fighter_takes_the_ko_cell() {
     ]));
     let down = m.fighter(PlayerId(1)).expect("the dummy");
     assert_eq!(down.state(), srr::game::FighterState::Knockout);
-    assert_eq!(pose_of(down, 0), Pose::Ko);
+    assert_eq!(
+        pose_of(down, m.config().character(PlayerId(1)), 0),
+        Pose::Ko
+    );
 }
 
 #[test]
@@ -1645,7 +1661,11 @@ fn the_pose_engine_maps_every_state_of_the_rules_to_a_cell() {
     assert_eq!(Pose::strike(Limb::Kick, Strength::High), Pose::KickHigh);
 
     let pose = |m: &srr::game::Match, id: u8, ticks: u32| {
-        pose_of(m.fighter(PlayerId(id)).expect("the fighter"), ticks)
+        pose_of(
+            m.fighter(PlayerId(id)).expect("the fighter"),
+            m.config().character(PlayerId(id)),
+            ticks,
+        )
     };
 
     // The six strikes on the floor, each through its phases (the pose shows from the
@@ -1774,18 +1794,32 @@ fn the_pose_engine_maps_every_state_of_the_rules_to_a_cell() {
             m.step(&common::no_inputs());
         }
     }
-    // The special move of the default character, in every phase.
-    let mut m = common::close_duel(common::cfg());
-    let special = srr::game::Input {
-        special: true,
-        ..srr::game::Input::NONE
-    };
-    for ticks in 0..30 {
-        m.step(&common::only(0, special));
-        let state = m.fighter(PlayerId(0)).unwrap().state();
-        if matches!(state, FighterState::Special(_)) {
-            assert_eq!(pose(&m, 0, ticks), Pose::Special);
+    // Every character's special move poses its own cell, in every phase.
+    for (character, cell) in [
+        (srr::game::Character::Chalk, Pose::SpecialRush),
+        (srr::game::Character::Torch, Pose::SpecialFireball),
+        (srr::game::Character::Brick, Pose::SpecialPalm),
+        (srr::game::Character::Zip, Pose::SpecialSlide),
+    ] {
+        let mut config = common::cfg();
+        config.special = character.rules(&common::cfg()).special;
+        config.characters[0] = character;
+        config.characters[1] = character;
+        let mut m = common::close_duel(config);
+        let special = srr::game::Input {
+            special: true,
+            ..srr::game::Input::NONE
+        };
+        let mut seen = false;
+        for ticks in 0..30 {
+            m.step(&common::only(0, special));
+            let state = m.fighter(PlayerId(0)).unwrap().state();
+            if matches!(state, FighterState::Special(_)) {
+                assert_eq!(pose(&m, 0, ticks), cell, "{character:?}");
+                seen = true;
+            }
         }
+        assert!(seen, "{character:?} performed its special");
     }
     let _ = AttackPhase::Startup;
     let _ = Technique::ALL;
