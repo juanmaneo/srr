@@ -32,7 +32,7 @@ pub const ARENA_PIXELS: f32 = 1100.0;
 pub const LYING_TAG_Y: f32 = FLOOR_Y + 12.0;
 /// How far above the top of a standing figure its name tag floats: clear of the local
 /// player's marker.
-pub const TAG_ABOVE: f32 = 36.0;
+pub const TAG_ABOVE: f32 = 64.0;
 /// Screen pixels above the floor a fireball flies at: chest height, where it leaves the hands.
 pub const FIREBALL_HEIGHT: f32 = 72.0;
 /// Radius of a fireball on screen.
@@ -311,7 +311,7 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
                 crate::game::Facing::Right => super::skin::Facing::Right,
                 crate::game::Facing::Left => super::skin::Facing::Left,
             };
-            frame.image(name, pose, x, y - risen, 150.0, facing);
+            frame.image(name, pose, x, y - risen, 195.0, facing);
         } else {
             figure(fighter).draw(frame);
         }

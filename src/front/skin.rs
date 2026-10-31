@@ -402,9 +402,9 @@ const SHEET_WIDTH: usize = GRID * CELL_WIDTH;
 const SHEET_HEIGHT: usize = ROWS * CELL_HEIGHT * 2;
 /// The width of one cell of the grid, in sheet pixels: every character, every pose, the
 /// same box — the reason a manga girl can fight a chalk stick.
-pub const CELL_WIDTH: usize = 120;
-/// The height of one cell: as tall as a fighter is on screen (the arena draws 150).
-pub const CELL_HEIGHT: usize = 160;
+pub const CELL_WIDTH: usize = 240;
+/// The height of one cell: as tall as a fighter is on screen (the arena draws 195).
+pub const CELL_HEIGHT: usize = 320;
 
 /// Compile-time contract of the sheet grid: the poses fill one facing's grid exactly,
 /// leaving the last cell empty, and every pose is distinct.
