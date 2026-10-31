@@ -735,10 +735,7 @@ pub fn server_app(shell: Shell, capture: Capture) -> Result<Server, ServerError>
             TextPlugin,
             // No pointer in a headless render: the picking backend (and the events it
             // reads) is for mouse/touch interaction only.
-            SpritePlugin {
-                add_picking: false,
-                ..default()
-            },
+            SpritePlugin { add_picking: false },
         ))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
         .init_resource::<Captures>()
