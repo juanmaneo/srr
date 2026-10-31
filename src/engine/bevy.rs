@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bevy::MinimalPlugins;
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{AssetPlugin, RenderAssetUsages};
 use bevy::core_pipeline::CorePipelinePlugin;
 use bevy::input::InputPlugin;
 use bevy::prelude::*;
@@ -711,27 +711,42 @@ pub fn server_app(shell: Shell, capture: Capture) -> Result<Server, ServerError>
     ))
     .map_err(|error| ServerError::NoDevice(error.to_string()))?;
 
-    app.add_plugins(RenderPlugin {
-        render_creation: RenderCreation::Manual(
-            RenderDevice::from(device),
-            RenderQueue(Arc::new(WgpuWrapper::new(queue))),
-            RenderAdapterInfo(WgpuWrapper::new(adapter.get_info())),
-            RenderAdapter(Arc::new(WgpuWrapper::new(adapter))),
-            RenderInstance(Arc::new(WgpuWrapper::new(instance))),
-        ),
-        // The tests wait on pipelines: nothing compiles in the background to race against.
-        synchronous_pipeline_compilation: true,
-    })
-    .add_plugins((
-        ImagePlugin::default_linear(),
-        CorePipelinePlugin,
-        TransformPlugin,
-        InputPlugin,
-        TextPlugin,
-        SpritePlugin::default(),
-    ))
-    .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
-    .init_resource::<Captures>();
+    // The asset server the render plugins register their assets in (`ImagePlugin` calls
+    // `init_asset::<Image>()`, which reads the `AssetServer` resource): `DefaultPlugins`
+    // adds `AssetPlugin` before them in the windowed app, the hand-rolled list below must
+    // too. The sprites are embedded (no IO), so the default source is never read.
+    app.add_plugins(AssetPlugin::default())
+        .add_plugins(RenderPlugin {
+            render_creation: RenderCreation::Manual(
+                RenderDevice::from(device),
+                RenderQueue(Arc::new(WgpuWrapper::new(queue))),
+                RenderAdapterInfo(WgpuWrapper::new(adapter.get_info())),
+                RenderAdapter(Arc::new(WgpuWrapper::new(adapter))),
+                RenderInstance(Arc::new(WgpuWrapper::new(instance))),
+            ),
+            // The tests wait on pipelines: nothing compiles in the background to race against.
+            synchronous_pipeline_compilation: true,
+        })
+        .add_plugins((
+            ImagePlugin::default_linear(),
+            CorePipelinePlugin,
+            TransformPlugin,
+            InputPlugin,
+            TextPlugin,
+            // No pointer in a headless render: the picking backend (and the events it
+            // reads) is for mouse/touch interaction only.
+            SpritePlugin {
+                add_picking: false,
+                ..default()
+            },
+        ))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
+        .init_resource::<Captures>()
+        // The window events the camera system reads (`WindowPlugin` would have registered
+        // them; there is no window plugin here, only a bare `Window` entity).
+        .add_event::<bevy::window::WindowResized>()
+        .add_event::<bevy::window::WindowCreated>()
+        .add_event::<bevy::window::WindowScaleFactorChanged>();
 
     // The capture image: an asset (the asset store exists — `ImagePlugin` just built it) the
     // headless camera targets instead of a window.
