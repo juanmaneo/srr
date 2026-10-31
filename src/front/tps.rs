@@ -123,6 +123,8 @@ const HEAD: i32 = 12;
 const LIMB_Z: i32 = 5;
 /// Parts thinner than this on screen are drawn without their outline (it would be all ink).
 const INKED_RADIUS: i32 = 4;
+/// How far past its volumes a manga fighter's bold contour reaches, in screen pixels.
+pub const CONTOUR: i32 = 2 * GRAIN;
 
 /// Cosines of the twelve directions of a disc, in twelfths of a turn, as [`Fx`] values.
 const COS: [i32; 12] = [
@@ -415,23 +417,6 @@ pub fn ball_shape(frame: &mut Frame, centre: Px, radius: i32, color: Rgba) {
     ball_shape_styled(frame, centre, radius, color, Shading::Retro);
 }
 
-#[allow(dead_code)]
-fn ball_shape_entry(frame: &mut Frame, centre: Px, radius: i32, color: Rgba) {
-    let r = radius as i64;
-    let outline = disc(centre, r);
-    fill_polygon(frame, &outline, color.scaled(SHADE));
-    let lit = (
-        centre.0 + div_round(LIGHT.0 * r, 20) as i32,
-        centre.1 + div_round(LIGHT.1 * r, 20) as i32,
-    );
-    fill_polygon(frame, &disc(lit, r * 7 / 10), color);
-    if radius >= INKED_RADIUS {
-        for (i, &p) in outline.iter().enumerate() {
-            ink_line(frame, p, outline[(i + 1) % outline.len()], INK);
-        }
-    }
-}
-
 /// A tube on screen, from `a` (radius `ra`) to `b` (radius `rb`): a capsule, lit, with a shade
 /// band along its dark side, and the outline.
 /// [`tube_shape`], shaded the style's way: the manga's cel draws a second, bolder outline.
@@ -460,20 +445,9 @@ pub fn tube_shape(frame: &mut Frame, a: Px, ra: i32, b: Px, rb: i32, color: Rgba
         return;
     }
     let one = Fx::ONE.0 as i64;
-    // The axis and its normal, unit vectors in fixed point.
     let (ux, uy) = (dx * one / length, dy * one / length);
     let (nx, ny) = (-uy, ux);
-    let around = |p: Px, r: i32, k: usize| -> Px {
-        let (c, s) = (cos(k), sin(k));
-        (
-            p.0 + div_round((ux * c + nx * s) * r as i64, one * one) as i32,
-            p.1 + div_round((uy * c + ny * s) * r as i64, one * one) as i32,
-        )
-    };
-    // The cap around `a` bulges away from `b` (a quarter turn to three quarters), then the
-    // cap around `b`.
-    let mut capsule: Vec<Px> = (0..=6).map(|k| around(a, ra, 3 + k)).collect();
-    capsule.extend((0..=6).map(|k| around(b, rb, 9 + k)));
+    let capsule = capsule(a, ra, b, rb, (ux, uy));
     fill_polygon(frame, &capsule, color);
 
     // The shade: the capsule past a line parallel to the axis, on the side away from the light.
@@ -506,6 +480,48 @@ pub fn tube_shape(frame: &mut Frame, a: Px, ra: i32, b: Px, rb: i32, color: Rgba
             ink_line(frame, p, capsule[(i + 1) % capsule.len()], INK);
         }
     }
+}
+
+/// The outline of the capsule from `a` (radius `ra`) to `b` (radius `rb`), `unit` being the
+/// axis from `a` to `b` as a unit vector in fixed point: the cap around `a` bulges away from
+/// `b` (a quarter turn to three quarters), then the cap around `b`.
+fn capsule(a: Px, ra: i32, b: Px, rb: i32, unit: (i64, i64)) -> Vec<Px> {
+    let one = Fx::ONE.0 as i64;
+    let (ux, uy) = unit;
+    let (nx, ny) = (-uy, ux);
+    let around = |p: Px, r: i32, k: usize| -> Px {
+        let (c, s) = (cos(k), sin(k));
+        (
+            p.0 + div_round((ux * c + nx * s) * r as i64, one * one) as i32,
+            p.1 + div_round((uy * c + ny * s) * r as i64, one * one) as i32,
+        )
+    };
+    let mut outline: Vec<Px> = (0..=6).map(|k| around(a, ra, 3 + k)).collect();
+    outline.extend((0..=6).map(|k| around(b, rb, 9 + k)));
+    outline
+}
+
+/// The bold ink contour behind a manga volume on screen: the tube from `a` (radius `ra`) to
+/// `b` (radius `rb`), or the ball when they meet, grown by [`CONTOUR`] pixels and filled
+/// flat with [`INK`]. Drawn behind every volume of a fighter, the contours merge into one
+/// thick line around the whole silhouette, while the volumes keep their thin inner lines:
+/// the comic book look of XIII.
+pub fn contour_shape(frame: &mut Frame, a: Px, ra: i32, b: Px, rb: i32) {
+    let (dx, dy) = ((b.0 - a.0) as i64, (b.1 - a.1) as i64);
+    let length = (dx * dx + dy * dy).isqrt();
+    let outline = if length == 0 {
+        disc(a, (ra.max(rb) + CONTOUR) as i64)
+    } else {
+        let one = Fx::ONE.0 as i64;
+        capsule(
+            a,
+            ra + CONTOUR,
+            b,
+            rb + CONTOUR,
+            (dx * one / length, dy * one / length),
+        )
+    };
+    fill_polygon(frame, &outline, INK);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -608,30 +624,6 @@ pub fn draw_tube_styled(
     );
 }
 
-#[allow(dead_code)]
-fn draw_tube_unused(
-    frame: &mut Frame,
-    camera: &Camera,
-    a: Vec3,
-    b: Vec3,
-    radius: i32,
-    color: Rgba,
-) {
-    let (ca, cb) = (camera.to_camera(a), camera.to_camera(b));
-    if ca.z < NEAR || cb.z < NEAR {
-        return;
-    }
-    let r = Fx::int(radius);
-    tube_shape(
-        frame,
-        screen_point(ca),
-        perspective(r, ca.z).max(1),
-        screen_point(cb),
-        perspective(r, cb.z).max(1),
-        color,
-    );
-}
-
 /// Draws a ball of the world, skipped when too close to the eye.
 pub fn draw_ball(frame: &mut Frame, camera: &Camera, centre: Vec3, radius: i32, color: Rgba) {
     draw_ball_styled(frame, camera, centre, radius, color, Shading::Retro);
@@ -656,20 +648,6 @@ pub fn draw_ball_styled(
         perspective(Fx::int(radius), c.z).max(1),
         color,
         shading,
-    );
-}
-
-#[allow(dead_code)]
-fn draw_ball_unused(frame: &mut Frame, camera: &Camera, centre: Vec3, radius: i32, color: Rgba) {
-    let c = camera.to_camera(centre);
-    if c.z < NEAR {
-        return;
-    }
-    ball_shape(
-        frame,
-        screen_point(c),
-        perspective(Fx::int(radius), c.z).max(1),
-        color,
     );
 }
 
@@ -738,7 +716,7 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
                 )
             } else {
                 let figure = Figure::of(fighter, rules_of(current, fighter), fight_ticks);
-                mannequin(&figure, &skin, depth(fighter, config), camera)
+                mannequin(&figure, depth(fighter, config), camera)
             }
         })
         .chain(
@@ -786,6 +764,7 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
                     Shading::Cel,
                 ),
             },
+            Shape::Contour { a, b, radius } => draw_contour(frame, camera, a, b, radius),
         }
     }
 
@@ -1009,6 +988,8 @@ enum Shape {
         radius: i32,
         color: Rgba,
     },
+    /// The bold ink behind a cel part (see [`contour_shape`]).
+    Contour { a: Vec3, b: Vec3, radius: i32 },
 }
 
 struct Sculpt<'a> {
@@ -1058,6 +1039,23 @@ impl Sculpt<'_> {
     }
 }
 
+/// Draws the bold contour of a manga volume of the world (see [`contour_shape`]), skipped
+/// when an end is too close to the eye.
+pub fn draw_contour(frame: &mut Frame, camera: &Camera, a: Vec3, b: Vec3, radius: i32) {
+    let (ca, cb) = (camera.to_camera(a), camera.to_camera(b));
+    if ca.z < NEAR || cb.z < NEAR {
+        return;
+    }
+    let r = Fx::int(radius);
+    contour_shape(
+        frame,
+        screen_point(ca),
+        perspective(r, ca.z).max(1),
+        screen_point(cb),
+        perspective(r, cb.z).max(1),
+    );
+}
+
 /// A fireball in the 3D view: a ball of fire at chest height on its line, and a smaller,
 /// paler one trailing behind it.
 fn fireball(shot: &Projectile, config: &MatchConfig, camera: &Camera) -> Vec<Part> {
@@ -1100,39 +1098,19 @@ fn head_axes(figure: &Figure) -> (Point, Point) {
 
 /// The wooden mannequin of `figure`: a tube per bone, a ball per joint, the head a sphere, the
 /// accessory and the marks in relief, standing on the line `depth`.
-fn mannequin(figure: &Figure, skin: &crate::game::Skin, depth: i32, camera: &Camera) -> Vec<Part> {
+fn mannequin(figure: &Figure, depth: i32, camera: &Camera) -> Vec<Part> {
     let lift = |point: Point, z: i32| self::lift(point, depth + z);
     let mut s = Sculpt {
         camera,
         parts: Vec::new(),
     };
-    // A skinned fighter wears its palette in 3D too: the outfit for the volumes, the hair
-    // for the head, the skin for the hands and the feet.
-    let palette = super::skin::palette_of(skin);
-    let base = if skin.style.is_skinned() {
-        palette.outfit
-    } else if figure.ink == stick::INK {
+    let base = if figure.ink == stick::INK {
         WOOD
     } else {
         figure.ink
     };
     s.tube(lift(figure.neck, 0), lift(figure.hip, 0), TORSO, base);
-    // The head wears the palette's skin, with its hair as a second ball on top.
-    let skinned = skin.style.is_skinned();
-    s.ball(
-        lift(figure.head, 0),
-        HEAD,
-        if skinned { palette.skin } else { base },
-    );
-    if skinned {
-        let (up, _) = head_axes(figure);
-        let along = HEAD as f32 / 3.0;
-        let hair = Point {
-            x: figure.head.x + up.x * along,
-            y: figure.head.y + up.y * along,
-        };
-        s.ball(lift(hair, 0), HEAD * 3 / 4, palette.hair);
-    }
+    s.ball(lift(figure.head, 0), HEAD, base);
     s.ball(lift(figure.shoulder, 0), SHOULDER, base);
     s.ball(lift(figure.hip, 0), SHOULDER, base);
     let limbs = [
@@ -1147,9 +1125,7 @@ fn mannequin(figure: &Figure, skin: &crate::game::Skin, depth: i32, camera: &Cam
             s.tube(lift(from, z), lift(bone.joint, z), radius, color);
             s.ball(lift(bone.joint, z), JOINT, color);
             s.tube(lift(bone.joint, z), lift(bone.end, z), radius, color);
-            // The hands and the feet of a skinned fighter are bare skin.
-            let end_color = if skinned { palette.skin } else { color };
-            s.ball(lift(bone.end, z), end, end_color);
+            s.ball(lift(bone.end, z), end, color);
         }
     }
 
@@ -1256,8 +1232,8 @@ fn mannequin(figure: &Figure, skin: &crate::game::Skin, depth: i32, camera: &Cam
 }
 
 /// The manga fighter in 3D: the manga engine's own volumes, built into parts at the
-/// fighter's depth. Cel-shaded tubes and balls with bold outlines — its own look, not the
-/// stick mannequin's.
+/// fighter's depth. Cel-shaded tubes and balls inside one bold ink contour (see
+/// [`contour_shape`]) — its own look, not the stick mannequin's.
 fn manga_volumes(
     fighter: &Fighter,
     config: &MatchConfig,
@@ -1272,12 +1248,25 @@ fn manga_volumes(
         camera,
         parts: Vec::new(),
     };
-    for volume in volumes {
+    for volume in &volumes {
         let (a, ra) = volume.a;
         match volume.b {
             Some((b, rb)) => s.cel(lift(a), Some(lift(b)), ra.max(rb), volume.color),
             None => s.cel(lift(a), None, ra, volume.color),
         }
+    }
+    let behind = Fx(s.parts.iter().map(|part| part.depth.0).max().unwrap_or(0) + 1);
+    for volume in &volumes {
+        let (a, ra) = volume.a;
+        let (b, rb) = volume.b.unwrap_or(volume.a);
+        s.parts.push(Part {
+            depth: behind,
+            shape: Shape::Contour {
+                a: lift(a),
+                b: lift(b),
+                radius: ra.max(rb),
+            },
+        });
     }
     s.parts
 }

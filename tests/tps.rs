@@ -7,9 +7,10 @@ use srr::front::arena::{self, ARENA_LEFT, FLOOR_Y, feet};
 use srr::front::space::{Camera, Fx, NEAR, Vec3};
 use srr::front::stick::Point;
 use srr::front::tps::{
-    self, AHEAD, BACK, BACKGROUND, CAMERA_LAG, GRAIN, HEIGHT, INK, SIDE, TARGET_HEIGHT, ball_shape,
-    clip_half_plane, clip_near, clip_segment, draw_ball, draw_line, draw_polygon, draw_tube,
-    fill_polygon, fog, ink_line, lift, overview, tone, tube_shape,
+    self, AHEAD, BACK, BACKGROUND, CAMERA_LAG, CONTOUR, GRAIN, HEIGHT, INK, SIDE, TARGET_HEIGHT,
+    ball_shape, clip_half_plane, clip_near, clip_segment, contour_shape, draw_ball, draw_contour,
+    draw_line, draw_polygon, draw_tube, fill_polygon, fog, ink_line, lift, overview, tone,
+    tube_shape,
 };
 use srr::front::{
     Frame, Game, Headless, PAUSE_KEY, Rect, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH, Screen, VIEW_KEY,
@@ -478,6 +479,82 @@ fn world_tubes_and_balls_shrink_with_the_distance_and_vanish_near_the_eye() {
         WHITE,
     );
     assert!(f.rects.is_empty(), "one end too close");
+}
+
+/// The smallest box holding every rectangle of `frame`: left, top, right, bottom.
+fn extent(frame: &Frame) -> (f32, f32, f32, f32) {
+    frame.rects.iter().fold(
+        (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+        |(l, t, r, b), rect| {
+            (
+                l.min(rect.x),
+                t.min(rect.y),
+                r.max(rect.x + rect.width),
+                b.max(rect.y + rect.height),
+            )
+        },
+    )
+}
+
+#[test]
+fn a_contour_is_the_volume_grown_and_filled_with_ink() {
+    // A ball's contour: a disc of ink, CONTOUR pixels wider all around than the ball.
+    let mut ball = frame();
+    ball_shape(&mut ball, (100, 100), 20, WHITE);
+    let mut ink = frame();
+    contour_shape(&mut ink, (100, 100), 20, (100, 100), 20);
+    assert!(!ink.rects.is_empty());
+    assert!(ink.rects.iter().all(|r| r.color == INK), "nothing but ink");
+    let (bl, bt, br, bb) = extent(&ball);
+    let (il, it, ir, ib) = extent(&ink);
+    let grown = CONTOUR as f32;
+    assert!(il <= bl - grown + 1.0 && ir >= br + grown - 1.0, "wider");
+    assert!(it <= bt - grown + 1.0 && ib >= bb + grown - 1.0, "taller");
+    check_rects(&ink.rects);
+
+    // A tube's: the capsule, grown the same way past both ends and both sides.
+    let mut tube = frame();
+    tube_shape(&mut tube, (50, 100), 10, (200, 100), 6, WHITE);
+    let mut ink = frame();
+    contour_shape(&mut ink, (50, 100), 10, (200, 100), 6);
+    assert!(ink.rects.iter().all(|r| r.color == INK));
+    let (tl, tt, tr, tb) = extent(&tube);
+    let (il, it, ir, ib) = extent(&ink);
+    assert!(il < tl && ir > tr && it < tt && ib > tb, "all around");
+    check_rects(&ink.rects);
+}
+
+#[test]
+fn a_world_contour_shrinks_with_the_distance_and_vanishes_near_the_eye() {
+    let camera = straight();
+    let mut near = frame();
+    draw_contour(
+        &mut near,
+        &camera,
+        Vec3::int(0, 0, 100),
+        Vec3::int(0, 40, 100),
+        10,
+    );
+    let mut far = frame();
+    draw_contour(
+        &mut far,
+        &camera,
+        Vec3::int(0, 0, 400),
+        Vec3::int(0, 40, 400),
+        10,
+    );
+    assert!(count(&near, INK) > count(&far, INK));
+    assert!(count(&far, INK) > 0);
+    check_rects(&near.rects);
+
+    for (a, b) in [
+        (Vec3::int(0, 0, 10), Vec3::int(0, 0, 100)),
+        (Vec3::int(0, 0, 100), Vec3::int(0, 0, 10)),
+    ] {
+        let mut f = frame();
+        draw_contour(&mut f, &camera, a, b, 10);
+        assert!(f.rects.is_empty(), "one end too close");
+    }
 }
 
 #[test]
