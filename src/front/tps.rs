@@ -26,6 +26,7 @@ use super::arena::{
     scale,
 };
 use super::ascii::{block_pixels, hash};
+use super::model::Models;
 use super::scene::{Align, Frame, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH};
 use super::space::{Camera, Fx, NEAR, Vec3, div_round, perspective, screen_point};
 use super::stick::{self, Accessory, Figure, HEAD_RADIUS, Mark, Point};
@@ -681,12 +682,27 @@ pub fn fog(color: Rgba, depth: Fx) -> Rgba {
 /// Draws the alley and, when a match runs, its fighters as mannequins, with their shadows and
 /// name tags (the local fighter's marked with a triangle).
 pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u32) {
+    draw_models(frame, client, camera, fight_ticks, Models::NONE);
+}
+
+/// [`draw`], with the fighters whose character is in `models` left out: the engine draws
+/// them as 3D models over this frame ([`model::stage`](super::model::stage)). Their shadow and
+/// their name tag are still drawn here, so the picture stays whole whichever fighters have a
+/// model.
+pub fn draw_models(
+    frame: &mut Frame,
+    client: &Client,
+    camera: &Camera,
+    fight_ticks: u32,
+    models: Models,
+) {
     draw_alley(frame, camera, fight_ticks);
     let Some(session) = client.session() else {
         return;
     };
     let current = session.current();
     let config = current.config();
+    let modelled = |fighter: &Fighter| models.contains(config.character(fighter.player()));
 
     for fighter in current.fighters() {
         let (x, _) = feet(fighter, config);
@@ -703,6 +719,7 @@ pub fn draw(frame: &mut Frame, client: &Client, camera: &Camera, fight_ticks: u3
     let mut parts: Vec<Part> = current
         .fighters()
         .iter()
+        .filter(|fighter| !modelled(fighter))
         .flat_map(|fighter| {
             let skin = client.skin(fighter.player());
             if skin.style.is_skinned() {

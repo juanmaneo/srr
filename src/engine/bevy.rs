@@ -9,6 +9,8 @@
 //!   pixels rather than through the camera so that text is rasterised sharp at any size.
 //! * Entities are pooled: the pools grow to the largest frame seen, unused entities are hidden,
 //!   and components are only written when they change (text layout is the expensive part).
+//! * With the `mode3d` feature, the third-person view's fighters are glTF models rendered by
+//!   a 3D camera into an image shown as one more sprite ([`stage`]).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -22,7 +24,7 @@ use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::RenderPlugin;
 use bevy::render::camera::{ClearColor, RenderTarget};
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy::render::renderer::{
     RenderAdapter, RenderAdapterInfo, RenderDevice, RenderInstance, RenderQueue, WgpuWrapper,
 };
@@ -37,9 +39,15 @@ use bevy::window::PrimaryWindow;
 
 use super::{Engine, WEB_CANVAS, WINDOW_TITLE};
 use crate::front::gamepad::PadButton;
+use crate::front::model::Stage;
 use crate::front::{Align, Frame, GamepadState, Rgba, Viewport};
 use crate::game::{Key, TICKS_PER_SECOND};
 use crate::platform::Shell;
+
+#[cfg(feature = "mode3d")]
+mod stage;
+#[cfg(feature = "mode3d")]
+pub use stage::{ActorReport, OutlineMaterial, StageReport, ToonMaterial};
 
 /// The Bevy engine.
 #[derive(Debug, Clone, Copy, Default)]
@@ -108,13 +116,26 @@ fn build_app(shell: Shell, headless: Headless) -> App {
         .init_resource::<Taps>()
         .init_resource::<TouchTaps>()
         .init_resource::<PadTaps>()
+        .init_resource::<Scripted>()
+        .init_resource::<CurrentStage>()
         .add_systems(Startup, spawn_camera)
         .add_systems(FixedUpdate, tick)
         .add_systems(Update, (latch_taps, latch_pad_taps, draw));
+    // The 3D stage needs the render plugins in place (`DefaultPlugins` here; `server_app`
+    // adds its own, then the stage); the GPU-less boot has no renderer at all.
+    #[cfg(feature = "mode3d")]
+    if matches!(headless, Headless::Windowed) {
+        stage::plugin(&mut app);
+    }
     app
 }
 
 struct ShellResource(Shell);
+
+/// The 3D stage of the frame drawn last ([`Frame::stage`]): what the models of the
+/// third-person view render ([`stage`]), `None` on every other screen.
+#[derive(Resource, Default)]
+struct CurrentStage(Option<Stage>);
 
 /// Every sprite and text entity ever needed, reused frame after frame in order.
 #[derive(Resource, Default)]
@@ -150,6 +171,10 @@ struct TouchTaps(Vec<Vec2>);
 /// Pad buttons pressed since the last tick: a tap shorter than a tick still reaches the game.
 #[derive(Resource, Default)]
 struct PadTaps(HashSet<PadButton>);
+
+/// Keys held by a script instead of a keyboard ([`Server::hold`]): empty in the browser.
+#[derive(Resource, Default)]
+struct Scripted(HashSet<Key>);
 
 #[derive(Component)]
 struct RectNode;
@@ -273,10 +298,12 @@ fn tick(
     mut taps: ResMut<Taps>,
     mut touch_taps: ResMut<TouchTaps>,
     mut pad_taps: ResMut<PadTaps>,
+    scripted: Res<Scripted>,
     mut shell: NonSendMut<ShellResource>,
 ) {
     let mut pressed: HashSet<Key> = keyboard.get_pressed().copied().filter_map(key).collect();
     pressed.extend(taps.0.drain());
+    pressed.extend(scripted.0.iter().copied());
     let mut gamepads = GamepadState::new();
     let taps = pad_taps.0.drain();
     for pad in &pads {
@@ -324,6 +351,7 @@ fn draw(
     shell: NonSend<ShellResource>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut clear: ResMut<ClearColor>,
+    mut stage: ResMut<CurrentStage>,
     mut pools: ResMut<Pools>,
     mut textures: ResMut<Textures>,
     mut images: ResMut<bevy::asset::Assets<bevy::image::Image>>,
@@ -349,11 +377,12 @@ fn draw(
     };
     let size = Vec2::new(window.width(), window.height());
     let viewport = Viewport::fit(size.x, size.y);
-    let frame: Frame = shell.0.frame();
+    let mut frame: Frame = shell.0.frame();
     let background = color(frame.background);
     if clear.0 != background {
         clear.0 = background;
     }
+    stage.0 = frame.stage.take();
 
     for (index, rect) in frame.rects.iter().enumerate() {
         let position = world(&viewport, size, rect.x, rect.y).extend(depth(index, false));
@@ -591,10 +620,11 @@ impl std::fmt::Display for ServerError {
 
 impl std::error::Error for ServerError {}
 
-/// The empty RGBA image the renderer fills in. It stays on the CPU side (`MAIN_WORLD`):
+/// The empty RGBA image the renderer fills in: a GPU texture (`RENDER_WORLD`, or no camera
+/// could target it) the camera renders into and the screenshot copies from (`COPY_SRC`);
 /// the screenshot is what brings the rendered bytes back.
 fn capture_image(capture: Capture) -> Image {
-    Image::new(
+    let mut image = Image::new(
         Extent3d {
             width: capture.width,
             height: capture.height,
@@ -603,8 +633,13 @@ fn capture_image(capture: Capture) -> Image {
         TextureDimension::D2,
         vec![0; capture.width as usize * capture.height as usize * 4],
         TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::MAIN_WORLD,
-    )
+        RenderAssetUsages::default(),
+    );
+    image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING
+        | TextureUsages::COPY_DST
+        | TextureUsages::COPY_SRC
+        | TextureUsages::RENDER_ATTACHMENT;
+    image
 }
 
 /// The screenshot images that have come back, newest last: the observer of
@@ -715,6 +750,7 @@ pub fn server_app(shell: Shell, capture: Capture) -> Result<Server, ServerError>
     // `init_asset::<Image>()`, which reads the `AssetServer` resource): `DefaultPlugins`
     // adds `AssetPlugin` before them in the windowed app, the hand-rolled list below must
     // too. The sprites are embedded (no IO), so the default source is never read.
+
     app.add_plugins(AssetPlugin::default())
         .add_plugins(RenderPlugin {
             render_creation: RenderCreation::Manual(
@@ -743,7 +779,31 @@ pub fn server_app(shell: Shell, capture: Capture) -> Result<Server, ServerError>
         // them; there is no window plugin here, only a bare `Window` entity).
         .add_event::<bevy::window::WindowResized>()
         .add_event::<bevy::window::WindowCreated>()
-        .add_event::<bevy::window::WindowScaleFactorChanged>();
+        .add_event::<bevy::window::WindowScaleFactorChanged>()
+        .add_event::<bevy::window::WindowClosing>();
+
+    // The 3D stage: the plugins `DefaultPlugins` would add for the glTF models (scenes,
+    // animation, the PBR pipeline the glTF loader targets), then the stage itself.
+    #[cfg(feature = "mode3d")]
+    {
+        app.add_plugins((
+            bevy::hierarchy::HierarchyPlugin,
+            bevy::pbr::PbrPlugin::default(),
+            bevy::scene::ScenePlugin,
+            bevy::animation::AnimationPlugin,
+            bevy::gltf::GltfPlugin::default(),
+        ));
+        stage::plugin(&mut app);
+    }
+
+    // What `App::run`'s runners do before the first frame and `App::update` does not: let
+    // the plugins settle, then `finish` them (the screenshot channel, the glTF loader, the
+    // render pipelines are only set up there) and `cleanup`.
+    while app.plugins_state() == bevy::app::PluginsState::Adding {
+        bevy::tasks::tick_global_task_pools_on_main_thread();
+    }
+    app.finish();
+    app.cleanup();
 
     // The capture image: an asset (the asset store exists — `ImagePlugin` just built it) the
     // headless camera targets instead of a window.
@@ -785,15 +845,19 @@ impl Server {
     /// Panics if the screenshot never completes within `budget` updates: the renderer would
     /// be broken, not slow (the capture is tiny).
     pub fn capture(&mut self, updates: u32, seconds: f64, budget: u32) -> Pixels {
-        for _ in 0..updates {
-            self.advance(seconds);
-        }
+        self.run(updates, seconds);
+        let image = self.capture.clone();
+        self.screenshot(image, seconds, budget)
+    }
+
+    /// Takes a [`Screenshot`] of `image` and waits for its pixels (see [`Server::capture`]).
+    fn screenshot(&mut self, image: Handle<Image>, seconds: f64, budget: u32) -> Pixels {
         // A fresh screenshot entity per capture: the plugin despawns it once the image has
         // come back (see `Captured`), and the observer of the event stashes it.
         let entity = self
             .app
             .world_mut()
-            .spawn(Screenshot::image(self.capture.clone()))
+            .spawn(Screenshot::image(image))
             .observe(
                 |trigger: Trigger<ScreenshotCaptured>, mut captures: ResMut<Captures>| {
                     captures.0.push(Pixels {
@@ -812,6 +876,49 @@ impl Server {
             }
         }
         panic!("the screenshot of the capture image never came back (entity {entity:?})");
+    }
+
+    /// Runs `updates` frames of `seconds` each, like [`Server::capture`] without the
+    /// screenshot: for the asset loading and the scene spawning to go through.
+    pub fn run(&mut self, updates: u32, seconds: f64) {
+        for _ in 0..updates {
+            self.advance(seconds);
+        }
+    }
+
+    /// Holds `keys` from the next fixed tick on, until the next call: the keyboard of a
+    /// scripted test (the keys of the real keyboard add to them).
+    pub fn hold(&mut self, keys: &[Key]) {
+        self.app.world_mut().resource_mut::<Scripted>().0 = keys.iter().copied().collect();
+    }
+
+    /// The game behind the shell, to look at: the screen it shows, the models it was told
+    /// about.
+    pub fn game(&self) -> &crate::front::Game {
+        self.app
+            .world()
+            .non_send_resource::<ShellResource>()
+            .0
+            .game()
+    }
+
+    /// What the 3D stage has: which models loaded, what every actor got (see
+    /// [`StageReport`]).
+    #[cfg(feature = "mode3d")]
+    pub fn stage(&mut self) -> StageReport {
+        stage::report(self.app.world_mut())
+    }
+
+    /// Reads back the image the 3D stage renders into (the virtual screen, transparent where
+    /// no model is drawn), like [`Server::capture`] reads the frame.
+    ///
+    /// # Panics
+    ///
+    /// Like [`Server::capture`] when the readback never completes within `budget` updates.
+    #[cfg(feature = "mode3d")]
+    pub fn capture_stage(&mut self, seconds: f64, budget: u32) -> Pixels {
+        let image = stage::image(self.app.world()).expect("the stage image is spawned at startup");
+        self.screenshot(image, seconds, budget)
     }
 
     /// One frame at `seconds` of virtual time: exactly what a browser frame does at that

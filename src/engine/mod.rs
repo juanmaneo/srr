@@ -16,6 +16,10 @@
 //! [`Headless`](crate::front::Headless) ticks the same game with scripted keys and draws its
 //! frames with the software renderer of [`crate::front::render`]. The tests use it.
 //!
+//! With `mode3d` (Bevy only), the third-person view's fighters are the glTF models of
+//! `assets/models/` (see `docs/3d-asset-pipeline.md`), cel-shaded; without it, or without a
+//! model, they are the software mannequins of [`crate::front::tps`].
+//!
 //! When both features are enabled (e.g. `--all-features`), Bevy wins.
 //!
 //! [Bevy]: https://bevyengine.org
@@ -25,6 +29,8 @@ use crate::platform::Shell;
 
 #[cfg(feature = "bevy")]
 mod bevy;
+#[cfg(feature = "mode3d")]
+pub use bevy::{ActorReport, OutlineMaterial, StageReport, ToonMaterial};
 #[cfg(feature = "bevy")]
 pub use bevy::{Capture, Headless, Pixels, Server, ServerError, boot_app, server_app};
 #[cfg(feature = "fyrox")]

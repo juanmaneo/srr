@@ -84,20 +84,37 @@ impl Shell {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            use crate::front::SoundState;
-
-            let mut game = Game::new(Client::practice(MatchConfig::default()));
-            let sound = sound::Sound::start(game.music().clone());
-            game.set_sound(if sound.is_some() {
-                SoundState::Playing
-            } else {
-                SoundState::Unavailable
-            });
-            Shell {
-                game,
-                _sound: sound,
-            }
+            Shell::with_game(Game::new(Client::practice(MatchConfig::default())))
         }
+    }
+
+    /// A shell around `game` as it is, with the sound card (natively): the headless tests
+    /// boot the engine on a game already on the screen they look at.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_game(mut game: Game) -> Self {
+        use crate::front::SoundState;
+
+        let sound = sound::Sound::start(game.music().clone());
+        game.set_sound(if sound.is_some() {
+            SoundState::Playing
+        } else {
+            SoundState::Unavailable
+        });
+        Shell {
+            game,
+            _sound: sound,
+        }
+    }
+
+    /// The game, for what the engine tells it (which 3D models it has, see
+    /// [`Game::set_models`]) and for the tests to look at.
+    pub fn game(&self) -> &Game {
+        &self.game
+    }
+
+    /// The game, mutably: see [`Shell::game`].
+    pub fn game_mut(&mut self) -> &mut Game {
+        &mut self.game
     }
 
     /// One fixed tick: reads the network, advances the game with the keys held, the fingers

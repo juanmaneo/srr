@@ -181,6 +181,11 @@ pub struct Frame {
     pub labels: Vec<Label>,
     /// Sprites, drawn between the rectangles and the labels: the manga fighters.
     pub images: Vec<Image>,
+    /// The 3D stage of the third-person view, for an engine that renders models
+    /// ([`Stage`](crate::front::model::Stage)): drawn over the first
+    /// [`layer`](crate::front::model::Stage::layer) rectangles and under the rest. `None` on
+    /// every other screen; an engine without models ignores it.
+    pub stage: Option<crate::front::model::Stage>,
 }
 
 impl Frame {
@@ -191,6 +196,7 @@ impl Frame {
             rects: Vec::new(),
             labels: Vec::new(),
             images: Vec::new(),
+            stage: None,
         }
     }
 

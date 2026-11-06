@@ -61,11 +61,13 @@ use space::Camera;
 pub mod arena;
 pub mod ascii;
 pub mod controls;
+pub mod cubeman;
 pub mod gamepad;
 pub mod headless;
 pub mod hud;
 pub mod intro;
 pub mod manga;
+pub mod model;
 pub mod render;
 mod scene;
 pub mod select;
@@ -263,6 +265,12 @@ pub struct Game {
     tapped_character: Option<Character>,
     /// The buttons held on the gamepads, and where their left sticks lean (merged).
     gamepads: gamepad::GamepadState,
+    /// The characters the engine draws as 3D models in the third-person view
+    /// ([`Game::set_models`]): their fighters are left out of the software mannequins.
+    models: model::Models,
+    /// The `x` of every fighter before the last tick: tells a walk from a stance against the
+    /// bound ([`model::clip_of`]).
+    previous_x: Vec<(PlayerId, i32)>,
 }
 
 impl Game {
@@ -296,6 +304,8 @@ impl Game {
             touch_controls: true,
             tapped_character: None,
             gamepads: gamepad::GamepadState::new(),
+            models: model::Models::NONE,
+            previous_x: Vec::new(),
             client,
         };
         game.music.set_mood(Mood::Intro);
@@ -507,6 +517,19 @@ impl Game {
         &self.camera
     }
 
+    /// The characters drawn as 3D models in the third-person view.
+    pub fn models(&self) -> model::Models {
+        self.models
+    }
+
+    /// Tells which characters the engine draws as 3D models ([`model::Stage`]): their fighters
+    /// are left out of the software mannequins of the third-person view from the next frame
+    /// on. Only the drawing changes: the rules, the replays and the online session never see
+    /// it.
+    pub fn set_models(&mut self, models: model::Models) {
+        self.models = models;
+    }
+
     /// One fixed tick with the keys held now. Returns the frames to send to the server, in
     /// order.
     ///
@@ -536,6 +559,13 @@ impl Game {
         let mut fresh: Vec<Key> = pressed.difference(&self.held).copied().collect();
         fresh.sort_unstable();
         let mut outgoing = Vec::new();
+        self.previous_x = self.shown_match().map_or_else(Vec::new, |current| {
+            current
+                .fighters()
+                .iter()
+                .map(|fighter| (fighter.player(), fighter.x()))
+                .collect()
+        });
         // A finger on the toggle button, or a press of its key, flips the touch controls.
         if self.touch_mode
             && (self.touch_pad().toggled(&self.touches) || pressed.contains(&TOGGLE_KEY))
@@ -870,7 +900,22 @@ impl Game {
                     }
                     View::ThirdPerson => {
                         let mut frame = Frame::new(tps::BACKGROUND);
-                        tps::draw(&mut frame, client, &self.camera, self.fight_ticks);
+                        tps::draw_models(
+                            &mut frame,
+                            client,
+                            &self.camera,
+                            self.fight_ticks,
+                            self.models,
+                        );
+                        // The engine draws the models over the alley and the mannequins,
+                        // under the HUD drawn next.
+                        frame.stage = Some(model::stage(
+                            client,
+                            &self.camera,
+                            self.models,
+                            &self.previous_x,
+                            frame.rects.len(),
+                        ));
                         frame
                     }
                 };

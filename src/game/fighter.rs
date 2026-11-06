@@ -396,6 +396,25 @@ impl Fighter {
         }
     }
 
+    /// The step of the strike, the special move, the grab or the technique in progress that
+    /// was just completed (1-based: `1` on the tick that started it), `None` when the fighter
+    /// is in none. Read-only: the 3D view scrubs its animation clips with it, so a swing and
+    /// its contact follow the frame data to the tick.
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert_eq!(m.fighter(PlayerId(0)).unwrap().move_frame(), None);
+    /// ```
+    pub fn move_frame(&self) -> Option<u32> {
+        match self.action {
+            Action::Attacking(strike) => Some(strike.frame),
+            Action::Grabbing { frame } | Action::Technique { frame, .. } => Some(frame),
+            _ => None,
+        }
+    }
+
     /// Whether the fighter is in the middle of its special move.
     ///
     /// ```
