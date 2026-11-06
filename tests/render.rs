@@ -255,6 +255,116 @@ mod mode3d {
         // The dummy stood in guard throughout.
         assert_eq!(clip_of(&mut server, 1), Some(Clip::Idle));
     }
+
+    /// Dumps PNGs of the 3D view to `target/screenshots3d/`, to eyeball the models (the cube
+    /// man now, a Meshy model later): guard, walk, punch and kick of P1 against the dummy,
+    /// plus the raw stage layer. Not run by CI (it needs a rasterizer and writes files):
+    ///
+    /// ```sh
+    /// cargo test -p srr --features mode3d --test render -- --ignored --nocapture dump_3d_screenshots
+    /// ```
+    #[test]
+    #[ignore]
+    fn dump_3d_screenshots() {
+        use srr::front::render::{adler32, crc32};
+
+        fn png(px: &Pixels) -> Vec<u8> {
+            let (w, h) = (px.size().0 as usize, px.size().1 as usize);
+            let mut raw = Vec::with_capacity(h * (1 + 3 * w));
+            for row in px.rgba().chunks(w * 4) {
+                raw.push(0);
+                for p in row.chunks(4) {
+                    raw.extend_from_slice(&p[..3]);
+                }
+            }
+            let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+            let chunk = |out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]| {
+                out.extend((data.len() as u32).to_be_bytes());
+                let start = out.len();
+                out.extend(kind);
+                out.extend(data);
+                out.extend(crc32(&out[start..]).to_be_bytes());
+            };
+            let mut ihdr = Vec::new();
+            ihdr.extend((w as u32).to_be_bytes());
+            ihdr.extend((h as u32).to_be_bytes());
+            ihdr.extend([8, 2, 0, 0, 0]);
+            let mut z = vec![0x78, 0x01];
+            let blocks: Vec<&[u8]> = raw.chunks(0xffff).collect();
+            let last = blocks.len() - 1;
+            for (i, block) in blocks.iter().enumerate() {
+                z.push(u8::from(i == last));
+                let len = block.len() as u16;
+                z.extend(len.to_le_bytes());
+                z.extend((!len).to_le_bytes());
+                z.extend(*block);
+            }
+            z.extend(adler32(&raw).to_be_bytes());
+            chunk(&mut out, b"IHDR", &ihdr);
+            chunk(&mut out, b"IDAT", &z);
+            chunk(&mut out, b"IEND", &[]);
+            out
+        }
+
+        let Some(mut server) = server("dump_3d_screenshots") else {
+            return;
+        };
+        settle(&mut server);
+        let dir = std::path::Path::new("target/screenshots3d");
+        std::fs::create_dir_all(dir).unwrap();
+        let shot = |server: &mut Server, name: &str, updates: u32| {
+            let px = server.capture(updates, FRAME_SECONDS, READBACK_BUDGET);
+            let path = dir.join(format!("{name}.png"));
+            std::fs::write(&path, png(&px)).unwrap();
+            eprintln!("wrote {}", path.display());
+        };
+        let clip_of = |server: &mut Server, player: u8| {
+            server
+                .stage()
+                .actors
+                .iter()
+                .find(|actor| actor.player == PlayerId(player))
+                .and_then(|actor| actor.clip)
+        };
+
+        shot(&mut server, "1_idle", 2);
+        server.hold(&[Key::D]);
+        for _ in 0..LOAD_BUDGET {
+            server.run(1, FRAME_SECONDS);
+            if clip_of(&mut server, 0) == Some(Clip::WalkF) {
+                break;
+            }
+        }
+        shot(&mut server, "2_walk", 3);
+        server.hold(&[Key::B]);
+        for _ in 0..30 {
+            server.run(1, FRAME_SECONDS);
+            if clip_of(&mut server, 0) == Some(Clip::Punch) {
+                break;
+            }
+        }
+        // A few frames into the strike: the scrub is in its active window, not the wind-up.
+        shot(&mut server, "3_punch", 6);
+        server.hold(&[]);
+        for _ in 0..120 {
+            server.run(1, FRAME_SECONDS);
+            if clip_of(&mut server, 0) == Some(Clip::Idle) {
+                break;
+            }
+        }
+        server.hold(&[Key::G]);
+        for _ in 0..30 {
+            server.run(1, FRAME_SECONDS);
+            if clip_of(&mut server, 0) == Some(Clip::Kick) {
+                break;
+            }
+        }
+        shot(&mut server, "4_kick", 8);
+        server.hold(&[]);
+        let stage = server.capture_stage(FRAME_SECONDS, READBACK_BUDGET);
+        std::fs::write(dir.join("5_stage_only.png"), png(&stage)).unwrap();
+        eprintln!("wrote stage_only");
+    }
 }
 
 /// Asserts the capture is not one flat colour, with that colour listed when it is (a dead
