@@ -38,11 +38,20 @@ jobs:
       - name: The engine feature builds without the default one
         run: cargo test -p srr --no-default-features
 
+      - name: The 3D fighters (mode3d) render headlessly with the cube-man fixture
+        run: cargo test -p srr --features mode3d --test render --test models
+
+      - name: The committed 3D models pass their audit
+        run: cargo xtask models
+
       - name: Formatting
         run: cargo fmt --check
 
       - name: Lints
         run: cargo clippy -p srr --all-targets -- -D warnings
+
+      - name: Lints (mode3d)
+        run: cargo clippy -p srr --all-targets --features mode3d -- -D warnings
 
   coverage:
     runs-on: ubuntu-latest

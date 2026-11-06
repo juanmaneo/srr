@@ -410,6 +410,22 @@ fn screenshots_run_the_headless_example_without_any_engine() {
 }
 
 #[test]
+fn models_audit_the_assets_with_the_engine_free_example() {
+    let all = steps(Task::Models);
+    assert_eq!(all.len(), 1);
+    let Step::Run(command) = &all[0] else {
+        panic!("expected a command, got {all:?}");
+    };
+    assert_eq!(command.program, "cargo");
+    assert_eq!(command.args[0], "run");
+    assert!(has_pair(&command.args, "--example", "models"));
+    assert!(has_pair(&command.args, "--package", "srr"));
+    // The audit reads the GLB bytes itself: no Bevy needed to check the assets.
+    assert!(command.args.contains(&"--no-default-features".to_string()));
+    assert!(!command.args.iter().any(|arg| arg == "--features"));
+}
+
+#[test]
 fn dev_check_runs_the_whole_gate_fastest_failure_first() {
     let all = commands(Task::DevCheck);
     assert_eq!(all.len(), 4, "{:?}", all);
@@ -460,6 +476,7 @@ fn planning_is_deterministic() {
         Task::Dist,
         Task::Serve,
         Task::Screenshots,
+        Task::Models,
         Task::DevCheck,
         Task::DockerImage,
         Task::Help,

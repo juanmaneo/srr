@@ -353,6 +353,19 @@ the result is only rectangles and labels, so both engines draw it unchanged. The
 the same in both views; this is where sidesteps read best: the mannequins stand on the line
 they stepped to, and the camera follows yours.
 
+**Cel-shaded 3D fighters (`--features mode3d`, Bevy only).** With the `mode3d` feature, a
+character that has a rigged glTF model in `assets/models/<name>/<name>.glb` is drawn as that
+model instead of its mannequin. The model uses a toon material (three flat bands of light,
+no gloss) and an inverted-hull ink outline, and wears the texture of the fighter's manga
+variant (`skins/<variant>.png`). Its animation follows the fighter's state: named clips
+(`idle`, `walk_f`, `punch`, `ko`...) blend into each other over 0.1 s, and the attack clips
+are scrubbed by the move's frame data, so the contact pose lands on the active frames. The
+models are drawing only. The rules, the hitboxes, the replays and online play are
+unchanged, and a missing or broken model only brings that character's mannequin back. The
+models come from an AI image-to-3D pipeline fed with the manga skins
+([docs/3d-asset-pipeline.md](docs/3d-asset-pipeline.md)). Until then, Chalk is a procedurally
+generated cube man (`src/front/cubeman.rs`), which is also the CI fixture.
+
 ### HUD
 
 Like in every versus game: in a 1v1, player 1's health bar on the left, player 2's on the
@@ -692,7 +705,9 @@ and the process exits 0.
 * `src/front/` – the screens as a pure state machine (`Game`): the graffiti ASCII intro, the
   character select screen (`select.rs`), the controls page (`controls.rs`), the on-screen
   touch controls for phones (`touch.rs`), the arena with the XKCD stick figures (`stick.rs`), the
-  third-person 3D view (`tps.rs`, on the fixed-point 3D maths of `space.rs`), the
+  third-person 3D view (`tps.rs`, on the fixed-point 3D maths of `space.rs`), the stage of
+  its glTF fighters (`model.rs`: clips, frame-data scrubbing, toon bands, the model audit)
+  and the cube-man placeholder (`cubeman.rs`), the
   versus HUD and the music cues. Every frame is described as plain rectangles and
   monospace labels on a 1280×720 virtual screen (`Frame`), so it is fully unit-tested.
   `front/render.rs` is a software renderer for those frames (pixels, PNG, text) and
@@ -701,7 +716,11 @@ and the process exits 0.
 * `src/platform/` – engine-independent client glue: the browser WebSocket and the sound card
   output (`cpal`).
 * `src/engine/` – the engine backends (`bevy.rs`, `fyrox.rs`): open the window, map the
-  keyboard, tick the game 60 times per second and draw its frames.
+  keyboard, tick the game 60 times per second and draw its frames. `bevy/stage.rs` (with
+  `toon.wgsl` and `outline.wgsl`) renders the glTF fighters of the `mode3d` feature.
+* `assets/models/` – the 3D fighters: one rigged `.glb` per character plus its skin textures
+  (see [docs/3d-asset-pipeline.md](docs/3d-asset-pipeline.md)); `chalk/` holds the generated
+  cube man.
 * `assets/fonts/` – Fira Mono (SIL OFL), the monospace font of the Fyrox backend (Bevy embeds
   the same font).
 * `server/` – `srr-server`: static files + the WebSocket room (`room.rs`, pure: seats,
@@ -711,7 +730,8 @@ and the process exits 0.
 * `benches/` – the `criterion` benchmarks: the simulation (`Match::step` at 2, 5 and 10
   players), the music renderer and the protocol round-trip (`cargo bench`).
 * `docs/` – the [tuning guide](docs/tuning-guide.md): the frame data of the whole game
-  (attacks, grappling, techniques) and the bot tunings, explained for balance work.
+  (attacks, grappling, techniques), the bot tunings and the 3D view's knobs, explained for
+  balance work; the [3D asset pipeline](docs/3d-asset-pipeline.md).
 * `web/index.html` – the page that loads the WASM build.
 
 ### Native (development)
@@ -719,6 +739,7 @@ and the process exits 0.
 ```sh
 cargo run                                   # alone: the training dummy, or the bot (T)
 cargo run --features bevy/dynamic_linking   # faster incremental builds (native only)
+cargo run --features mode3d                 # the glTF cel-shaded fighters in the 3D view (Tab)
 ```
 
 On Linux the native build needs the ALSA headers for the music (`libasound2-dev` and
@@ -750,6 +771,7 @@ single crate per `links = "alsa"`).
 | `cargo xtask dist`             | build and assemble the playable web build in `dist/`           |
 | `cargo xtask serve`            | `dist`, then run `srr-server` on port 8080 for LAN matches     |
 | `cargo xtask screenshots`      | play a scripted game headlessly, save PNGs in `target/screenshots` |
+| `cargo xtask models`           | audit `assets/models/`: every GLB, its named clips and its skins |
 | `cargo xtask docker-image`     | build the Docker image with the whole toolchain                |
 | `cargo xtask docker <task>`    | run `build`, `test`, `coverage`, `dev-check`, `dist` or `serve` in that image |
 

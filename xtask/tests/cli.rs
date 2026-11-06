@@ -29,6 +29,7 @@ fn the_plain_tasks_are_recognised() {
     assert_eq!(parse_args(&["dist"]), Ok(Task::Dist));
     assert_eq!(parse_args(&["serve"]), Ok(Task::Serve));
     assert_eq!(parse_args(&["screenshots"]), Ok(Task::Screenshots));
+    assert_eq!(parse_args(&["models"]), Ok(Task::Models));
     assert_eq!(parse_args(&["dev-check"]), Ok(Task::DevCheck));
     assert_eq!(parse_args(&["docker-image"]), Ok(Task::DockerImage));
 }
@@ -101,7 +102,14 @@ fn docker_needs_a_task() {
 
 #[test]
 fn docker_only_wraps_the_five_main_tasks() {
-    for name in ["docker", "docker-image", "screenshots", "help", "nope"] {
+    for name in [
+        "docker",
+        "docker-image",
+        "screenshots",
+        "models",
+        "help",
+        "nope",
+    ] {
         assert_eq!(
             parse_args(&["docker", name]),
             Err(CliError::InvalidDockerTask(name.to_string())),
@@ -119,6 +127,7 @@ fn task_names_round_trip_through_the_parser() {
         Task::Dist,
         Task::Serve,
         Task::Screenshots,
+        Task::Models,
         Task::DevCheck,
         Task::DockerImage,
         Task::Help,
@@ -135,6 +144,7 @@ fn tasks_have_stable_names() {
     assert_eq!(Task::Dist.name(), "dist");
     assert_eq!(Task::Serve.name(), "serve");
     assert_eq!(Task::Screenshots.name(), "screenshots");
+    assert_eq!(Task::Models.name(), "models");
     assert_eq!(Task::DevCheck.name(), "dev-check");
     assert_eq!(Task::DockerImage.name(), "docker-image");
     assert_eq!(Task::Docker(Box::new(Task::Test)).name(), "docker");
@@ -158,6 +168,7 @@ fn usage_lists_every_task() {
         "dist",
         "serve",
         "screenshots",
+        "models",
         "docker",
         "docker-image",
         "help",

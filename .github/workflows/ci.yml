@@ -38,3 +38,15 @@ jobs:
 
       - name: The engine feature builds without the default one
         run: cargo test -p srr --no-default-features
+
+      # WHY: the cel-shaded 3D fighters live behind the `mode3d` feature so the 2D build stays
+      # the default. The render tests then boot the 3D view with the committed cube-man
+      # fixture (assets/models/chalk) and assert the toon material and the AnimationPlayer —
+      # no Meshy download, no GPU beyond mesa.
+      - name: The 3D fighters (mode3d) lint and render headlessly
+        run: |
+          cargo clippy -p srr --all-targets --features mode3d -- -D warnings
+          cargo test -p srr --features mode3d --test render --test models
+
+      - name: The committed 3D models pass their audit
+        run: cargo xtask models

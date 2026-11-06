@@ -62,6 +62,9 @@ pub enum Task {
     Serve,
     /// Play a scripted game headlessly and save PNG screenshots in `target/screenshots`.
     Screenshots,
+    /// Audit the 3D models in `assets/models`: every character's GLB, its named clips and its
+    /// skin textures. Exits non-zero on a broken file or a missing clip.
+    Models,
     /// Everything a push must pass: formatting, lints, tests, then the coverage ratchet.
     DevCheck,
     /// Build the Docker image holding the toolchain.
@@ -89,6 +92,7 @@ impl Task {
             Task::Dist => "dist",
             Task::Serve => "serve",
             Task::Screenshots => "screenshots",
+            Task::Models => "models",
             Task::DevCheck => "dev-check",
             Task::DockerImage => "docker-image",
             Task::Docker(_) => "docker",
@@ -105,6 +109,7 @@ impl Task {
             "dist" => Some(Task::Dist),
             "serve" => Some(Task::Serve),
             "screenshots" => Some(Task::Screenshots),
+            "models" => Some(Task::Models),
             "dev-check" => Some(Task::DevCheck),
             "docker-image" => Some(Task::DockerImage),
             "help" => Some(Task::Help),
@@ -219,6 +224,7 @@ Tasks:
   dist             build and assemble the playable web build in dist/
   serve            dist, then serve it on the local network (port 8080) for online play
   screenshots      play a scripted game headlessly (no window) and save PNGs in target/screenshots
+  models           audit the 3D fighters in assets/models (GLB, named clips, skin textures)
   docker-image     build the Docker image holding the toolchain
   docker <task>    run build, test, coverage, dev-check, dist or serve inside the Docker image
   help             show this message
@@ -344,6 +350,17 @@ pub fn plan(task: &Task, root: &Path) -> Vec<Step> {
                 "--no-default-features",
                 "--example",
                 "screenshots",
+            ],
+        ))],
+        Task::Models => vec![Step::Run(CommandSpec::new(
+            "cargo",
+            &[
+                "run",
+                "--package",
+                "srr",
+                "--no-default-features",
+                "--example",
+                "models",
             ],
         ))],
         Task::DevCheck => dev_check_steps(),

@@ -157,6 +157,40 @@ whose roll falls in 60–69 picks it if it reaches (the lunge counts), and a fir
 thrower walking in throws one on 4 % of the ticks while on the enemy's line. In practice
 the rival plays the next character every round (Chalk, Torch, Brick, Zip...).
 
+## The 3D view: cel shading and animation (`mode3d`)
+
+These knobs only change how the glTF fighters of a `--features mode3d` build look in the
+third-person view. They are constants at the top of `src/front/model.rs`. None of them
+reaches the rules, so changing one never changes a hit, a replay or an online match. The
+models themselves are described in `docs/3d-asset-pipeline.md`.
+
+| Knob | Default | What it does |
+|------|---------|--------------|
+| `CROSSFADE_SECONDS` | 0.1 | Blend time when a fighter changes clip. Longer is smoother but mushier; a strike's wind-up gets lost above ~0.15. |
+| `BAND_EDGES` | [0.2, 0.55] | The cosine between the normal and the light where the shading steps from shade to half-tone, then from half-tone to lit. Moving them apart widens the half-tone. |
+| `BAND_LEVELS` | [0.45, 0.78, 1.0] | The brightness of the three bands. Use two equal values for a two-tone look. |
+| `RIM` | (0.25, 0.0) | Rim light: under which cosine to the eye it shows, and how bright it is. `0.0` turns it off (the manga look); try `(0.25, 0.3)`. |
+| `OUTLINE_WIDTH` | 1.6 | Thickness of the inverted-hull ink line, in world units (about screen pixels at fighting distance). |
+| `OUTLINE_COLOR` | dark ink | The ink's colour, in linear RGB. |
+| `LIGHT` | [-2, 3, -1] | Where the light comes from: the same light as the mannequins and the alley. |
+| `MODEL_HEIGHT` | 168 | How tall a standing model is drawn, in world units (it matches the stick figures). |
+| `STRIKE_WINDUP` | 0.4 | The fraction of an attack clip played over its start-up frames. |
+| `STRIKE_CONTACT` | 0.6 | The end of the part played over the active frames. The recovery frames play the rest. |
+| `HOLD_POSE` | 0.5 | The pose held during a clinch: the middle of the contact window. |
+| `HEAVY_HIT_COMBO` | 2 | The combo hit from which hit stun plays `hit_heavy` instead of `hit_light` (any hit in the air plays it too). |
+
+Attack clips are scrubbed by the frame data, not played at their own speed. The
+frame-data numbers of this guide therefore also time the 3D strikes: a faster punch
+compresses its clip without any edit to the 3D knobs. If a model's contact pose lands early or
+late, move `STRIKE_WINDUP`/`STRIKE_CONTACT` (for every model), or retime the clip so its
+contact sits between 40 % and 60 % (for one model). Never touch the frame data to fix a
+pose.
+
+The band maths (`band`, `rim`) is plain Rust with unit tests. `toon.wgsl` steps the
+same way, and the engine passes the constants above in as uniforms, so editing the
+constant is all a change takes. `tests/models.rs` checks that the knobs stay ordered and
+in range.
+
 ## How to try a change
 
 1. Edit the numbers in `MatchConfig::default()` (or the `BrawlerConfig` presets, or a
