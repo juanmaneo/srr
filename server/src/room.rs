@@ -331,9 +331,10 @@ impl Room {
                     return Vec::new();
                 }
                 let player = player_at(index);
-                if let Some(seat) = self.seats[index].as_mut() {
-                    seat.skin = skin;
-                }
+                // `index_of` found the seat, so it is occupied.
+                self.seats[index]
+                    .iter_mut()
+                    .for_each(|seat| seat.skin = skin);
                 self.clients()
                     .map(|(_, other)| Action::Send(other, ServerMessage::SkinOf { player, skin }))
                     .chain(self.watchers.iter().map(|&watcher| {

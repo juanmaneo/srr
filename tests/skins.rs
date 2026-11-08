@@ -102,6 +102,71 @@ fn the_allowed_styles_of_a_server() {
     );
 }
 
+#[test]
+fn the_menus_also_cycle_backwards_and_name_everything() {
+    // Backwards through the allowed styles, like forwards.
+    let manga_only = StyleSet::none().with(Style::Manga);
+    assert_eq!(Style::Stick.previous_allowed(manga_only), Style::Manga);
+    assert_eq!(Style::Manga.previous_allowed(manga_only), Style::Stick);
+    // Nothing allowed but the chalk: the chalk stays, and no skin is offered.
+    assert_eq!(
+        Style::Stick.previous_allowed(StyleSet::none()),
+        Style::Stick
+    );
+    assert_eq!(Style::Stick.next_allowed(StyleSet::none()), Style::Stick);
+    assert_eq!(
+        Skin::STICK.previous_allowed(manga_only, PlayerId(2)),
+        Some(Skin::styled(Style::Manga, Variant::Redhead))
+    );
+    assert_eq!(
+        Skin::styled(Style::Manga, Variant::Redhead).previous_allowed(manga_only, PlayerId(2)),
+        Some(Skin::STICK)
+    );
+    assert_eq!(
+        Skin::STICK.previous_allowed(StyleSet::none(), PlayerId(0)),
+        None
+    );
+
+    // The skins one variant can wear: the chalk, then each skinned style's take of it.
+    assert_eq!(
+        Skin::choices(Variant::Cyan),
+        [Skin::STICK, Skin::styled(Style::Manga, Variant::Cyan)]
+    );
+
+    // The choice cycle backwards: through the ten variants, then the chalk, then the last.
+    let mut skin = Skin::styled(Style::Manga, Variant::Raven);
+    for variant in Variant::ALL.iter().rev().skip(1) {
+        skin = skin.previous_choice();
+        assert_eq!(skin, Skin::styled(Style::Manga, *variant));
+    }
+    assert_eq!(skin.previous_choice(), Skin::STICK);
+    assert_eq!(
+        Skin::STICK.previous_choice(),
+        Skin::styled(Style::Manga, Variant::Raven)
+    );
+
+    // Every name the menus write, through `Display` too.
+    let labels = [
+        "the brunette",
+        "the blonde",
+        "the redhead",
+        "the pink",
+        "the white",
+        "the black",
+        "the green",
+        "the violet",
+        "the cyan",
+        "the raven",
+    ];
+    for (variant, label) in Variant::ALL.into_iter().zip(labels) {
+        assert_eq!(variant.label(), label);
+        assert_eq!(variant.to_string(), label);
+    }
+    assert_eq!(Style::Manga.to_string(), "Manga");
+    assert_eq!(StyleSet::none().to_string(), "Stick (chalk)");
+    assert_eq!(StyleSet::all().to_string(), "Stick (chalk), Manga");
+}
+
 // ---------------------------------------------------------------------------------------------
 // The wire
 // ---------------------------------------------------------------------------------------------
@@ -133,6 +198,37 @@ fn the_skin_messages_encode_and_decode() {
         ServerMessage::decode(&[11, 0, 11]),
         Err(DecodeError::UnknownSkin(11))
     );
+}
+
+#[test]
+fn the_skin_messages_must_have_their_length_and_name_a_skin() {
+    let wrong = |tag, expected, actual| DecodeError::WrongLength {
+        tag,
+        expected,
+        actual,
+    };
+    assert_eq!(ClientMessage::decode(&[10]), Err(wrong(10, 2, 1)));
+    assert_eq!(ServerMessage::decode(&[11, 0]), Err(wrong(11, 3, 2)));
+    assert_eq!(ServerMessage::decode(&[12]), Err(wrong(12, 2, 1)));
+    assert_eq!(DecodeError::UnknownSkin(11).to_string(), "unknown skin 11");
+}
+
+#[test]
+fn a_client_ignores_skins_it_has_no_fighter_for() {
+    let manga = Skin::styled(Style::Manga, Variant::Blonde);
+    // Not seated yet: there is no fighter of the local player to dress.
+    let mut unseated = Client::online(MatchConfig::default(), 0);
+    assert_eq!(unseated.set_skin(manga), None);
+    // A player the match cannot hold: practice and online both leave the skins alone.
+    let nobody = PlayerId(200);
+    let mut practice = Client::practice(MatchConfig::default());
+    assert_eq!(practice.set_skin_of(nobody, manga), None);
+    let mut online = Client::online(MatchConfig::default(), 0);
+    online.handle(ServerMessage::SkinOf {
+        player: nobody,
+        skin: manga,
+    });
+    assert_eq!(online.skin(PlayerId(0)), Skin::STICK);
 }
 
 #[test]

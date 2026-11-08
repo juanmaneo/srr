@@ -80,27 +80,19 @@ impl Style {
     /// The first style of `allowed` from here on, wrapping around; [`Style::default`] when
     /// nothing is allowed (the menus then show no choice).
     pub fn next_allowed(self, allowed: StyleSet) -> Style {
-        let mut style = self;
-        for _ in 0..Style::ALL.len() {
-            style = style.next();
-            if allowed.contains(style) {
-                return style;
-            }
-        }
-        self
+        std::iter::successors(Some(self.next()), |style| Some(style.next()))
+            .take(Style::ALL.len())
+            .find(|style| allowed.contains(*style))
+            .unwrap_or(self)
     }
 
     /// The last style of `allowed` before this one, wrapping around; [`Style::default`] when
     /// nothing is allowed.
     pub fn previous_allowed(self, allowed: StyleSet) -> Style {
-        let mut style = self;
-        for _ in 0..Style::ALL.len() {
-            style = style.previous();
-            if allowed.contains(style) {
-                return style;
-            }
-        }
-        self
+        std::iter::successors(Some(self.previous()), |style| Some(style.previous()))
+            .take(Style::ALL.len())
+            .find(|style| allowed.contains(*style))
+            .unwrap_or(self)
     }
 
     /// The style as the menus write it.
@@ -318,7 +310,7 @@ impl Skin {
         if index == 0 {
             return Some(Skin::STICK);
         }
-        let variant = Variant::from_index((index - 1) % 10)?;
+        let variant = Variant::ALL[usize::from((index - 1) % 10)];
         let style = match (index - 1) / 10 {
             0 => Style::Manga,
             _ => return None,

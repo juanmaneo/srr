@@ -534,14 +534,12 @@ impl Key {
     /// assert_eq!(Key::at(Key::W.index()), Some(Key::W));
     /// ```
     pub const fn index(self) -> usize {
+        // Every key is in `ALL`, so the search stops at the last one without a check.
         let mut i = 0;
-        while i < Key::ALL.len() {
-            if Key::ALL[i] as u8 == self as u8 {
-                return i;
-            }
+        while i < Key::ALL.len() - 1 && Key::ALL[i] as u8 != self as u8 {
             i += 1;
         }
-        unreachable!()
+        i
     }
 
     /// The key number `index` stands for (see [`Key::index`]).

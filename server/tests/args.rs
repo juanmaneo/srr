@@ -52,6 +52,37 @@ fn port_and_dir() {
 }
 
 #[test]
+fn styles() {
+    use srr::game::{Style, StyleSet};
+    let manga_only = StyleSet::none().with(Style::Manga);
+    let chalk_only = StyleSet::none().with(Style::Stick);
+    assert_eq!(
+        parse(&["--styles", "all"]),
+        serve_with_styles(8080, "dist", StyleSet::all())
+    );
+    assert_eq!(
+        parse(&["--styles", " ALL "]),
+        serve_with_styles(8080, "dist", StyleSet::all())
+    );
+    assert_eq!(
+        parse(&["--styles", "manga"]),
+        serve_with_styles(8080, "dist", manga_only)
+    );
+    assert_eq!(
+        parse(&["--styles", "chalk"]),
+        serve_with_styles(8080, "dist", chalk_only)
+    );
+    assert_eq!(
+        parse(&["--styles", "Stick, manga", "--port", "1"]),
+        serve_with_styles(
+            1,
+            "dist",
+            StyleSet::none().with(Style::Stick).with(Style::Manga)
+        )
+    );
+}
+
+#[test]
 fn help() {
     assert_eq!(parse(&["-h"]), Ok(Command::Help));
     assert_eq!(parse(&["--help"]), Ok(Command::Help));

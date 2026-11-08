@@ -896,6 +896,8 @@ fn a_skin_is_broadcast_to_everybody_at_once() {
 fn a_room_allows_only_the_styles_it_was_given() {
     let manga_only = StyleSet::none().with(Style::Manga);
     let mut room = Room::with_styles(manga_only);
+    assert_eq!(room.styles(), manga_only);
+    assert_eq!(Room::new().styles(), StyleSet::all());
     room.join(1);
     // The newcomer is told what is allowed.
     assert!(

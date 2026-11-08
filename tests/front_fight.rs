@@ -1906,6 +1906,27 @@ fn a_stunned_figure_flashes_white_and_sees_stars() {
 }
 
 #[test]
+fn a_skin_draws_only_the_marks_of_the_figure_it_covers() {
+    let mut client = duel(cfg(), 0);
+    for tick in 0..3 {
+        play_as(&mut client, 0, if tick == 0 { punch() } else { idle() });
+    }
+    let hit = figure(&client, 1, 0);
+    let mut marks = Frame::new(arena::BACKGROUND);
+    hit.draw_marks_only(&mut marks);
+    assert!(!rects_of(&marks, SPARK).is_empty(), "the stars of the stun");
+    assert!(
+        rects_of(&marks, stick::INK).is_empty() && rects_of(&marks, STUNNED).is_empty(),
+        "not the figure itself"
+    );
+    // A figure without a mark draws nothing at all.
+    let idle_figure = figure(&client, 0, 0);
+    let mut nothing = Frame::new(arena::BACKGROUND);
+    idle_figure.draw_marks_only(&mut nothing);
+    assert!(nothing.rects.is_empty());
+}
+
+#[test]
 fn a_whiffed_grab_reaches_out_with_both_arms_then_recovers() {
     let mut client = duel(cfg(), 0);
     let mut seen = Vec::new();

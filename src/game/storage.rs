@@ -125,6 +125,18 @@ mod tests {
     }
 
     #[test]
+    fn every_length_of_tail_is_decoded() {
+        // 1, 2 and 3 bytes: a tail of 2, 3 or 4 characters (with its padding).
+        for bytes in [&[7_u8][..], &[7, 200], &[7, 200, 33], &[7, 200, 33, 1]] {
+            assert_eq!(decode(&encode(bytes)), bytes);
+        }
+        assert_eq!(decode("QQ=="), b"A");
+        assert_eq!(decode("QUI="), b"AB");
+        assert_eq!(decode("QUJD"), b"ABC");
+        assert_eq!(decode("QU!D"), Vec::<u8>::new(), "not base 64");
+    }
+
+    #[test]
     fn saves_carry_a_version() {
         let stored = store(&KeyBindings::WASD);
         assert!(stored.starts_with("srr1:"));
