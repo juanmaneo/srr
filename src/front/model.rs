@@ -43,46 +43,104 @@ pub const HOLD_POSE: f32 = (STRIKE_WINDUP + STRIKE_CONTACT) / 2.0;
 /// Hits of a combo from which a stunned fighter plays the heavy reaction instead of the light
 /// one (an airborne hit always plays it).
 pub const HEAVY_HIT_COMBO: u32 = 2;
-/// The cosine of the angle between the normal and the light at which the toon shading steps
-/// from the shade to the half-tone, and from the half-tone to the lit band.
-pub const BAND_EDGES: [f32; 2] = [0.2, 0.55];
-/// The brightness of the three bands: shade, half-tone, lit.
-pub const BAND_LEVELS: [f32; 3] = [0.45, 0.78, 1.0];
-/// The cosine of the angle between the normal and the eye under which the rim light shows,
-/// and how bright it is (`0.0` switches it off).
-pub const RIM: (f32, f32) = (0.25, 0.0);
-/// The thickness of the ink outline around a model, in world units (roughly screen pixels at
-/// the fighters' distance).
-pub const OUTLINE_WIDTH: f32 = 1.6;
-/// The colour of the ink outline.
-pub const OUTLINE_COLOR: [f32; 3] = [0.043, 0.031, 0.07];
+/// Where the cel shading steps, on the half-Lambert scale (the cosine between the normal and
+/// the light brought into `[0, 1]`, so the terminator sits at `0.5` like in the anime games):
+/// below the first edge the deep shadow, below the second the shadow, above it the light.
+pub const SHADOW_EDGES: [f32; 2] = [0.2, 0.5];
+/// What the albedo is multiplied by in the deep shadow and in the shadow, in linear RGB: cool
+/// and a touch purple, like the shadow ramps of the anime games, never a grey. The light keeps
+/// the texture exactly as painted.
+pub const SHADOW_TINTS: [[f32; 3]; 2] = [[0.33, 0.27, 0.46], [0.58, 0.50, 0.70]];
+/// The half-width over which every edge of the shading is feathered (half-Lambert units for
+/// the shadows, cosines for the rim and the highlight): crisp, not aliased. Must be above
+/// zero: the shader's `smoothstep` divides by it.
+pub const FEATHER: f32 = 0.02;
+/// The stepped highlight of the lit side: the Blinn-Phong exponent, the value of
+/// `n_dot_h ^ exponent` above which it shows, and its strength (`0.0` switches it off).
+pub const SPECULAR: (f32, f32, f32) = (32.0, 0.5, 0.35);
+/// The rim light of the lit side: the cosine between the normal and the eye under which it
+/// shows, and its strength (`0.0` switches it off).
+pub const RIM: (f32, f32) = (0.3, 0.4);
+/// The thickness of the ink outline around a model, in pixels of the virtual screen, whatever
+/// the distance to the camera.
+pub const OUTLINE_WIDTH: f32 = 1.8;
+/// What the albedo is multiplied by in the ink outline, in linear RGB: a dark, slightly
+/// purple version of the colour under it (brown-red on skin, deep blue on blue cloth), not
+/// a black line.
+pub const OUTLINE_SHADE: [f32; 3] = [0.15, 0.10, 0.16];
 /// The direction the light comes from, in world units: left, above, from the street (the
 /// light of the mannequins and the alley planes of [`tps`](super::tps)).
 pub const LIGHT: [f32; 3] = [-2.0, 3.0, -1.0];
-/// The brightness of the band `n_dot_l` (the cosine between the normal and the light) falls
-/// in: the stepped diffuse of the cel shading. The engine's shader steps exactly like this.
+
+/// `x` stepped at `edge`, feathered over [`FEATHER`] on each side: `0.0` below the feather,
+/// `1.0` above it, the smooth S of the shader's `smoothstep` in between.
 ///
 /// ```
-/// use srr::front::model::{BAND_LEVELS, band};
+/// use srr::front::model::step;
 ///
-/// assert_eq!(band(-1.0), BAND_LEVELS[0], "facing away: the shade");
-/// assert_eq!(band(0.4), BAND_LEVELS[1], "grazing: the half-tone");
-/// assert_eq!(band(1.0), BAND_LEVELS[2], "facing the light: lit");
+/// assert_eq!(step(0.5, 0.4), 0.0, "below the feather");
+/// assert!((step(0.5, 0.5) - 0.5).abs() < 1e-5, "on the edge: half way");
+/// assert_eq!(step(0.5, 0.6), 1.0, "above the feather");
 /// ```
-pub fn band(n_dot_l: f32) -> f32 {
-    if n_dot_l < BAND_EDGES[0] {
-        BAND_LEVELS[0]
-    } else if n_dot_l < BAND_EDGES[1] {
-        BAND_LEVELS[1]
-    } else {
-        BAND_LEVELS[2]
-    }
+pub fn step(edge: f32, x: f32) -> f32 {
+    let t = ((x - (edge - FEATHER)) / (2.0 * FEATHER)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
-/// The rim light added to a surface whose normal makes the cosine `n_dot_v` with the eye:
-/// [`RIM`]`.1` on the silhouette (under [`RIM`]`.0`), nothing elsewhere.
-pub fn rim(n_dot_v: f32) -> f32 {
-    if n_dot_v < RIM.0 { RIM.1 } else { 0.0 }
+/// How lit a surface whose normal makes the cosine `n_dot_l` with the light is: `0.0` in the
+/// shadow, `1.0` in the light, stepping at [`SHADOW_EDGES`]`[1]` of the half-Lambert.
+pub fn lit(n_dot_l: f32) -> f32 {
+    step(SHADOW_EDGES[1], n_dot_l * 0.5 + 0.5)
+}
+
+/// What the albedo is multiplied by at `n_dot_l`: the stepped diffuse of the cel shading,
+/// [`SHADOW_TINTS`]`[0]` facing away from the light, `[1]` in the shadow, white in the light.
+/// The engine's shader steps exactly like this.
+///
+/// ```
+/// use srr::front::model::{SHADOW_TINTS, shade};
+///
+/// assert_eq!(shade(-1.0), SHADOW_TINTS[0], "facing away: the deep shadow");
+/// assert_eq!(shade(-0.3), SHADOW_TINTS[1], "past the terminator: the shadow");
+/// assert_eq!(shade(1.0), [1.0, 1.0, 1.0], "facing the light: the texture as painted");
+/// ```
+pub fn shade(n_dot_l: f32) -> [f32; 3] {
+    let half = n_dot_l * 0.5 + 0.5;
+    let shadow = step(SHADOW_EDGES[0], half);
+    let lit = step(SHADOW_EDGES[1], half);
+    let mut tint = [0.0; 3];
+    for (channel, (deep, light)) in tint
+        .iter_mut()
+        .zip(SHADOW_TINTS[0].iter().zip(SHADOW_TINTS[1]))
+    {
+        let shaded = deep * (1.0 - shadow) + light * shadow;
+        *channel = shaded * (1.0 - lit) + lit;
+    }
+    tint
+}
+
+/// The stepped highlight on a surface whose normal makes the cosine `n_dot_h` with the half
+/// vector between the light and the eye, and `n_dot_l` with the light: [`SPECULAR`]`.2` where
+/// `n_dot_h ^ `[`SPECULAR`]`.0` passes [`SPECULAR`]`.1`, on the lit side only.
+pub fn specular(n_dot_h: f32, n_dot_l: f32) -> f32 {
+    let (exponent, edge, strength) = SPECULAR;
+    step(edge, n_dot_h.max(0.0).powf(exponent)) * lit(n_dot_l) * strength
+}
+
+/// The rim light on a surface whose normal makes the cosine `n_dot_v` with the eye and
+/// `n_dot_l` with the light: [`RIM`]`.1` on the silhouette (under [`RIM`]`.0`), on the lit side
+/// only, nothing elsewhere.
+pub fn rim(n_dot_v: f32, n_dot_l: f32) -> f32 {
+    (1.0 - step(RIM.0, n_dot_v)) * lit(n_dot_l) * RIM.1
+}
+
+/// How far the ink hull is pushed out along the normal, in world units, for a vertex at the
+/// clip-space depth `clip_w` seen through a projection scaling heights by `projection_scale`
+/// (`clip_from_view[1][1]`) onto a viewport `viewport_height` pixels tall: the world length
+/// that [`OUTLINE_WIDTH`] pixels cover at that depth, so the line stays as thick on screen
+/// near and far.
+pub fn outline_offset(clip_w: f32, projection_scale: f32, viewport_height: f32) -> f32 {
+    OUTLINE_WIDTH * 2.0 * clip_w / (projection_scale * viewport_height)
 }
 
 // ---------------------------------------------------------------------------------------------

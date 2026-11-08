@@ -50,8 +50,8 @@ use bevy::window::PrimaryWindow;
 
 use super::{CurrentStage, ShellResource, depth, world};
 use crate::front::model::{
-    BAND_EDGES, BAND_LEVELS, CROSSFADE_SECONDS, Clip, LIGHT, MODEL_HEIGHT, Models, OUTLINE_COLOR,
-    OUTLINE_WIDTH, Playback, RIM, model_path, skin_path,
+    CROSSFADE_SECONDS, Clip, FEATHER, LIGHT, MODEL_HEIGHT, Models, OUTLINE_SHADE, OUTLINE_WIDTH,
+    Playback, RIM, SHADOW_EDGES, SHADOW_TINTS, SPECULAR, model_path, skin_path,
 };
 use crate::front::space::{CENTER_Y, FOCAL};
 use crate::front::{SCREEN_HEIGHT, SCREEN_WIDTH, Viewport};
@@ -116,13 +116,19 @@ mod uniforms {
     pub struct ToonSettings {
         /// The material's colour, used when there is no texture.
         pub color: Vec4,
-        /// `xyz`: the direction towards the light (unit, world space).
+        /// `xyz`: the direction towards the light (unit, world space); `w`: 1 when the
+        /// texture is bound.
         pub light: Vec4,
-        /// `xy`: the band edges ([`BAND_EDGES`]); `z`, `w`: the rim threshold and strength
-        /// ([`RIM`]).
-        pub edges: Vec4,
-        /// `xyz`: the band levels ([`BAND_LEVELS`]); `w`: 1 when the texture is bound.
-        pub levels: Vec4,
+        /// `rgb`: the deep shadow's tint ([`SHADOW_TINTS`]`[0]`); `a`: its edge
+        /// ([`SHADOW_EDGES`]`[0]`).
+        pub deep: Vec4,
+        /// `rgb`: the shadow's tint ([`SHADOW_TINTS`]`[1]`); `a`: its edge
+        /// ([`SHADOW_EDGES`]`[1]`).
+        pub shadow: Vec4,
+        /// `xyz`: the highlight ([`SPECULAR`]); `w`: the feather of every edge ([`FEATHER`]).
+        pub specular: Vec4,
+        /// `xy`: the rim threshold and strength ([`RIM`]).
+        pub rim: Vec4,
         /// `rgb` mixed into the albedo by `a`: the flash of a stun.
         pub tint: Vec4,
     }
@@ -130,15 +136,19 @@ mod uniforms {
     /// The uniform of [`OutlineMaterial`] (see `outline.wgsl`).
     #[derive(ShaderType, Debug, Clone, Copy)]
     pub struct OutlineSettings {
-        /// The ink.
+        /// The material's colour, inked when there is no texture.
         pub color: Vec4,
-        /// `x`: the thickness of the hull, in world units.
+        /// `rgb`: what the colour under the line is multiplied by ([`OUTLINE_SHADE`]); `a`: 1
+        /// when the texture is bound.
+        pub shade: Vec4,
+        /// `x`: the thickness of the line, in pixels ([`OUTLINE_WIDTH`]).
         pub width: Vec4,
     }
 }
 
-/// The cel-shaded material of the fighters: stepped diffuse bands, no gloss, an optional rim
-/// light, in the colours of the skin texture (or the material's own).
+/// The cel-shaded material of the fighters: the albedo as painted in the light, tinted in two
+/// steps of shadow, a stepped highlight and a rim light on the lit side, no gloss, in the
+/// colours of the skin texture (or the material's own).
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct ToonMaterial {
     #[uniform(0)]
@@ -146,6 +156,14 @@ pub struct ToonMaterial {
     #[texture(1)]
     #[sampler(2)]
     pub texture: Option<Handle<Image>>,
+}
+
+fn bound(texture: Option<&Handle<Image>>) -> f32 {
+    if texture.is_some() { 1.0 } else { 0.0 }
+}
+
+fn rgba(rgb: [f32; 3], a: f32) -> Vec4 {
+    Vec4::new(rgb[0], rgb[1], rgb[2], a)
 }
 
 impl ToonMaterial {
@@ -156,14 +174,11 @@ impl ToonMaterial {
         ToonMaterial {
             settings: ToonSettings {
                 color: color.to_vec4(),
-                light: light.extend(0.0),
-                edges: Vec4::new(BAND_EDGES[0], BAND_EDGES[1], RIM.0, RIM.1),
-                levels: Vec4::new(
-                    BAND_LEVELS[0],
-                    BAND_LEVELS[1],
-                    BAND_LEVELS[2],
-                    if texture.is_some() { 1.0 } else { 0.0 },
-                ),
+                light: light.extend(bound(texture.as_ref())),
+                deep: rgba(SHADOW_TINTS[0], SHADOW_EDGES[0]),
+                shadow: rgba(SHADOW_TINTS[1], SHADOW_EDGES[1]),
+                specular: Vec4::new(SPECULAR.0, SPECULAR.1, SPECULAR.2, FEATHER),
+                rim: Vec4::new(RIM.0, RIM.1, 0.0, 0.0),
                 tint: Vec4::new(1.0, 1.0, 1.0, 0.0),
             },
             texture,
@@ -172,7 +187,7 @@ impl ToonMaterial {
 
     /// Wears `texture` (`None`: the colour alone).
     fn set_texture(&mut self, texture: Option<Handle<Image>>) {
-        self.settings.levels.w = if texture.is_some() { 1.0 } else { 0.0 };
+        self.settings.light.w = bound(texture.as_ref());
         self.texture = texture;
     }
 }
@@ -183,22 +198,34 @@ impl Material for ToonMaterial {
     }
 }
 
-/// The ink outline: the mesh drawn again as an inverted hull (pushed out along its normals,
-/// front faces culled) in a flat dark colour.
+/// The ink outline: the mesh drawn again as an inverted hull (pushed out along its normals by
+/// a fixed number of pixels, front faces culled) in a dark version of the colour under it.
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct OutlineMaterial {
     #[uniform(0)]
     pub settings: OutlineSettings,
+    #[texture(1)]
+    #[sampler(2)]
+    pub texture: Option<Handle<Image>>,
 }
 
-impl Default for OutlineMaterial {
-    fn default() -> Self {
+impl OutlineMaterial {
+    /// The ink around a surface of `color` and `texture` (the model's own, or a skin).
+    fn new(color: LinearRgba, texture: Option<Handle<Image>>) -> Self {
         OutlineMaterial {
             settings: OutlineSettings {
-                color: Vec4::new(OUTLINE_COLOR[0], OUTLINE_COLOR[1], OUTLINE_COLOR[2], 1.0),
+                color: color.to_vec4(),
+                shade: rgba(OUTLINE_SHADE, bound(texture.as_ref())),
                 width: Vec4::new(OUTLINE_WIDTH, 0.0, 0.0, 0.0),
             },
+            texture,
         }
+    }
+
+    /// Inks over `texture` (`None`: the colour alone).
+    fn set_texture(&mut self, texture: Option<Handle<Image>>) {
+        self.settings.shade.w = bound(texture.as_ref());
+        self.texture = texture;
     }
 }
 
@@ -469,8 +496,9 @@ struct Actor {
     /// The model was measured and scaled to [`MODEL_HEIGHT`].
     fitted: bool,
     animation: Option<Animation>,
-    /// The toon materials of the model's meshes, and the look each one had in the glTF.
-    materials: Vec<(Handle<ToonMaterial>, Option<Handle<Image>>)>,
+    /// The toon and the ink materials of the model's meshes, and the look each one had in
+    /// the glTF.
+    materials: Vec<Dressing>,
     /// The clip playing, how, and the cue it was started on ([`Stage`] actors restart a
     /// one-shot clip when their cue changes).
     playing: Option<(Clip, Playback)>,
@@ -480,6 +508,15 @@ struct Actor {
     /// The variant the materials wear (`Some(None)`: the model's own texture).
     worn: Option<Option<Variant>>,
     flash: bool,
+}
+
+/// The materials one mesh of a model was given.
+#[derive(Debug, Clone)]
+struct Dressing {
+    toon: Handle<ToonMaterial>,
+    outline: Handle<OutlineMaterial>,
+    /// The texture the mesh had in the glTF, worn without a skin.
+    own: Option<Handle<Image>>,
 }
 
 /// The animation state of an actor on stage.
@@ -717,7 +754,6 @@ fn dress(
         else {
             continue;
         };
-        let outline = outlines.add(OutlineMaterial::default());
         let mut materials = Vec::new();
         let mut player = None;
         for entity in children.iter_descendants(actor.fit) {
@@ -737,7 +773,12 @@ fn dress(
                         )
                     });
             let toon = toons.add(ToonMaterial::new(color, texture.clone()));
-            materials.push((toon.clone(), texture));
+            let outline = outlines.add(OutlineMaterial::new(color, texture.clone()));
+            materials.push(Dressing {
+                toon: toon.clone(),
+                outline: outline.clone(),
+                own: texture,
+            });
             // Never culled: the bounds of a skinned mesh are its bind pose's, which a kick
             // or a sweep reaches out of (and two fighters are cheap to draw).
             commands
@@ -746,7 +787,7 @@ fn dress(
                 .insert((MeshMaterial3d(toon), NoFrustumCulling));
             let mut twin = commands.spawn((
                 Mesh3d(mesh.0.clone()),
-                MeshMaterial3d(outline.clone()),
+                MeshMaterial3d(outline),
                 NoFrustumCulling,
                 Transform::IDENTITY,
                 Visibility::Inherited,
@@ -853,6 +894,7 @@ fn fit(
 fn wear(
     asset_server: Res<AssetServer>,
     mut toons: ResMut<Assets<ToonMaterial>>,
+    mut outlines: ResMut<Assets<OutlineMaterial>>,
     mut actors: Query<&mut Actor>,
 ) {
     for mut actor in &mut actors {
@@ -877,17 +919,21 @@ fn wear(
                 },
             };
             if let Some(skin) = texture {
-                for (handle, own) in &actor.materials {
-                    if let Some(material) = toons.get_mut(handle) {
-                        material.set_texture(skin.clone().or_else(|| own.clone()));
+                for dressing in &actor.materials {
+                    let worn = skin.clone().or_else(|| dressing.own.clone());
+                    if let Some(material) = toons.get_mut(&dressing.toon) {
+                        material.set_texture(worn.clone());
+                    }
+                    if let Some(material) = outlines.get_mut(&dressing.outline) {
+                        material.set_texture(worn);
                     }
                 }
                 actor.worn = Some(wanted);
             }
         }
         let tint = Vec4::new(1.0, 1.0, 1.0, if actor.flash { FLASH } else { 0.0 });
-        for (handle, _) in &actor.materials {
-            if let Some(material) = toons.get_mut(handle)
+        for dressing in &actor.materials {
+            if let Some(material) = toons.get_mut(&dressing.toon)
                 && material.settings.tint != tint
             {
                 material.settings.tint = tint;

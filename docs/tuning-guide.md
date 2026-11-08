@@ -167,11 +167,13 @@ models themselves are described in `docs/3d-asset-pipeline.md`.
 | Knob | Default | What it does |
 |------|---------|--------------|
 | `CROSSFADE_SECONDS` | 0.1 | Blend time when a fighter changes clip. Longer is smoother but mushier; a strike's wind-up gets lost above ~0.15. |
-| `BAND_EDGES` | [0.2, 0.55] | The cosine between the normal and the light where the shading steps from shade to half-tone, then from half-tone to lit. Moving them apart widens the half-tone. |
-| `BAND_LEVELS` | [0.45, 0.78, 1.0] | The brightness of the three bands. Use two equal values for a two-tone look. |
-| `RIM` | (0.25, 0.0) | Rim light: under which cosine to the eye it shows, and how bright it is. `0.0` turns it off (the manga look); try `(0.25, 0.3)`. |
-| `OUTLINE_WIDTH` | 1.6 | Thickness of the inverted-hull ink line, in world units (about screen pixels at fighting distance). |
-| `OUTLINE_COLOR` | dark ink | The ink's colour, in linear RGB. |
+| `SHADOW_EDGES` | [0.2, 0.5] | Where the shading steps, on the half-Lambert scale (0 facing away, 0.5 at the terminator, 1 facing the light): below the first edge the deep shadow, below the second the shadow, above it the light. Raising the second edge puts more of the body in shadow, the way the anime games push their shadow line past the terminator. |
+| `SHADOW_TINTS` | cool purples | What the texture is multiplied by in the deep shadow and in the shadow (linear RGB). The light never tints: the texture shows as painted. Warm them (more red) for a sunset, cool them for a night. |
+| `FEATHER` | 0.02 | The half-width of every edge. Smaller is crisper (and aliases); above ~0.05 the bands turn into gradients and the look is lost. Never 0. |
+| `SPECULAR` | (32, 0.5, 0.35) | The stepped highlight of the lit side: the Blinn-Phong exponent (larger is a smaller dot), the threshold it must pass, its strength. `0.0` strength turns it off. |
+| `RIM` | (0.3, 0.4) | The rim light of the lit side: under which cosine to the eye it shows (larger is a wider rim), and how bright it is. `0.0` turns it off. |
+| `OUTLINE_WIDTH` | 1.8 | Thickness of the inverted-hull ink line, in pixels of the 1280x720 virtual screen, the same near and far. |
+| `OUTLINE_SHADE` | dark purple | What the colour under the line is multiplied by (linear RGB): the ink is a dark version of the surface, brown-red on skin, deep blue on blue cloth. Lower it towards 0 for black lines. |
 | `LIGHT` | [-2, 3, -1] | Where the light comes from: the same light as the mannequins and the alley. |
 | `MODEL_HEIGHT` | 168 | How tall a standing model is drawn, in world units (it matches the stick figures). |
 | `STRIKE_WINDUP` | 0.4 | The fraction of an attack clip played over its start-up frames. |
@@ -186,10 +188,18 @@ late, move `STRIKE_WINDUP`/`STRIKE_CONTACT` (for every model), or retime the cli
 contact sits between 40 % and 60 % (for one model). Never touch the frame data to fix a
 pose.
 
-The band maths (`band`, `rim`) is plain Rust with unit tests. `toon.wgsl` steps the
-same way, and the engine passes the constants above in as uniforms, so editing the
-constant is all a change takes. `tests/models.rs` checks that the knobs stay ordered and
-in range.
+The shading maths (`step`, `lit`, `shade`, `specular`, `rim`, `outline_offset`) is plain
+Rust with unit tests. `toon.wgsl` and `outline.wgsl` step the same way, and the engine
+passes the constants above in as uniforms, so editing the constant is all a change takes.
+`tests/models.rs` checks that the knobs stay ordered and in range.
+
+The look aims at the cel shading of the anime games (Genshin Impact and its kin): a
+bright, flat lit side in the texture's own colours, one crisp shadow line with a cool
+tinted shadow (never a grey), a small hard highlight, a thin rim of light, and coloured
+ink. What the shader cannot give is in the model: those games paint their shadows,
+blushes and cloth folds into the texture, so a model from `docs/3d-asset-pipeline.md`
+with a painted texture reads far better than the cube man placeholder, whose six flat
+normals per box can only show one band each.
 
 ## How to try a change
 

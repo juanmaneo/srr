@@ -28,9 +28,23 @@
 
 #![cfg(feature = "bevy")]
 
+use std::sync::{Mutex, MutexGuard};
+
 use srr::engine::{Capture, Pixels, ServerError, boot_app, server_app};
 use srr::front::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use srr::platform::Shell;
+
+/// One rendering server at a time. WHY: the test harness runs the tests in parallel, and
+/// each rendering test creates its own wgpu device; on CI's software rasterizer (lavapipe)
+/// two devices initialising at once in one process crashed the whole binary (SIGSEGV, not a
+/// failure: run 43c447b of `ci.yml`, while `test.yml` passed the same step). Mesa shares its
+/// JIT state per process, so the devices are created and dropped one after the other. Taken
+/// first in a test, so the server is dropped before it is released.
+fn gpu() -> MutexGuard<'static, ()> {
+    static GPU: Mutex<()> = Mutex::new(());
+    // A test that panicked while holding it must not fail the next ones too.
+    GPU.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Frames to boot before asserting: enough for Startup, several fixed ticks and several
 /// draws, few enough to stay fast.
@@ -82,6 +96,7 @@ fn booting_the_real_app_survives_startup() {
 /// (consecutive captures differ).
 #[test]
 fn the_intro_renders_and_animates_headlessly() {
+    let _gpu = gpu();
     let mut server = match server_app(Shell::new(), capture()) {
         Ok(server) => server,
         // Loudly, not silently: a test that never runs protects nothing. CI has mesa (the
@@ -176,6 +191,7 @@ mod mode3d {
     /// mannequins are replaced, and the stage renders them.
     #[test]
     fn the_3d_view_dresses_the_fighters_in_toon_models() {
+        let _gpu = gpu();
         let Some(mut server) = server("the_3d_view_dresses_the_fighters_in_toon_models") else {
             return;
         };
@@ -219,6 +235,7 @@ mod mode3d {
     /// a punch its punch, standing still the idle.
     #[test]
     fn the_clips_follow_the_fighter() {
+        let _gpu = gpu();
         let Some(mut server) = server("the_clips_follow_the_fighter") else {
             return;
         };
@@ -306,6 +323,7 @@ mod mode3d {
             out
         }
 
+        let _gpu = gpu();
         let Some(mut server) = server("dump_3d_screenshots") else {
             return;
         };

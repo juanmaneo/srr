@@ -16,10 +16,11 @@ use std::collections::HashSet;
 
 use srr::front::cubeman;
 use srr::front::model::{
-    self, Actor, Audit, BAND_EDGES, BAND_LEVELS, CROSSFADE_SECONDS, Clip, HEAVY_HIT_COMBO,
-    HOLD_POSE, MODEL_HEIGHT, Models, OUTLINE_WIDTH, Playback, RIM, STRIKE_CONTACT, STRIKE_WINDUP,
-    Severity, audit, band, clip_of, clips_of, generator_of, glb_json, model_dir, model_path,
-    playback_of, rim, skin_path, strike_fraction,
+    self, Actor, Audit, CROSSFADE_SECONDS, Clip, FEATHER, HEAVY_HIT_COMBO, HOLD_POSE, MODEL_HEIGHT,
+    Models, OUTLINE_SHADE, OUTLINE_WIDTH, Playback, RIM, SHADOW_EDGES, SHADOW_TINTS, SPECULAR,
+    STRIKE_CONTACT, STRIKE_WINDUP, Severity, audit, clip_of, clips_of, generator_of, glb_json, lit,
+    model_dir, model_path, outline_offset, playback_of, rim, shade, skin_path, specular, step,
+    strike_fraction,
 };
 use srr::front::skin::SPRITE_NAMES;
 use srr::front::space::{Camera, Vec3};
@@ -34,26 +35,104 @@ use srr::net::Client;
 // Tuning and the toon bands
 // ---------------------------------------------------------------------------------------------
 
+/// The cosine between the normal and the light at which the half-Lambert is `half`.
+fn cosine_at(half: f32) -> f32 {
+    half * 2.0 - 1.0
+}
+
+fn close(a: f32, b: f32) -> bool {
+    (a - b).abs() < 1e-5
+}
+
 #[test]
-fn the_toon_bands_step_at_their_edges() {
-    assert_eq!(band(-1.0), BAND_LEVELS[0]);
-    assert_eq!(band(BAND_EDGES[0] - 0.001), BAND_LEVELS[0]);
+fn the_step_is_a_feathered_smoothstep() {
+    // Flat outside the feather, exactly 0 and 1 (the bands are flat, not gradients).
+    assert_eq!(step(0.5, 0.0), 0.0);
+    assert_eq!(step(0.5, 0.5 - 2.0 * FEATHER), 0.0);
+    assert_eq!(step(0.5, 0.5 + 2.0 * FEATHER), 1.0);
+    assert_eq!(step(0.5, 1.0), 1.0);
+    // Through the feather: the smooth S of `smoothstep`, half way on the edge, monotonic.
+    assert!(close(step(0.5, 0.5), 0.5));
+    let quarter = step(0.5, 0.5 - FEATHER / 2.0);
+    assert!(close(quarter, 0.15625), "{quarter}");
+    let mut previous = 0.0;
+    for i in 0..=40 {
+        let x = 0.5 - FEATHER + (i as f32 / 40.0) * 2.0 * FEATHER;
+        let value = step(0.5, x);
+        assert!(value >= previous, "{x}: {value} < {previous}");
+        previous = value;
+    }
+}
+
+#[test]
+fn the_toon_shading_steps_at_its_edges() {
+    let light = [1.0, 1.0, 1.0];
+    // Facing away: the deep shadow; past the terminator: the shadow; facing the light: the
+    // texture as painted. The edges are on the half-Lambert scale.
+    assert_eq!(shade(-1.0), SHADOW_TINTS[0]);
     assert_eq!(
-        band(BAND_EDGES[0]),
-        BAND_LEVELS[1],
-        "an edge belongs to the band above"
+        shade(cosine_at(SHADOW_EDGES[0] - 2.0 * FEATHER)),
+        SHADOW_TINTS[0]
     );
-    assert_eq!(band(BAND_EDGES[1] - 0.001), BAND_LEVELS[1]);
-    assert_eq!(band(BAND_EDGES[1]), BAND_LEVELS[2]);
-    assert_eq!(band(1.0), BAND_LEVELS[2]);
-    // Flat bands: three steps, darker to lighter, the lit band unshaded.
-    const { assert!(BAND_EDGES[0] < BAND_EDGES[1]) };
-    const { assert!(BAND_LEVELS[0] < BAND_LEVELS[1] && BAND_LEVELS[1] < BAND_LEVELS[2]) };
-    assert_eq!(BAND_LEVELS[2], 1.0);
-    // The rim shows on the silhouette only.
-    assert_eq!(rim(RIM.0 - 0.01), RIM.1);
-    assert_eq!(rim(RIM.0), 0.0);
-    assert_eq!(rim(1.0), 0.0);
+    assert_eq!(
+        shade(cosine_at(SHADOW_EDGES[0] + 2.0 * FEATHER)),
+        SHADOW_TINTS[1]
+    );
+    assert_eq!(
+        shade(cosine_at(SHADOW_EDGES[1] - 2.0 * FEATHER)),
+        SHADOW_TINTS[1]
+    );
+    assert_eq!(shade(cosine_at(SHADOW_EDGES[1] + 2.0 * FEATHER)), light);
+    assert_eq!(shade(1.0), light);
+    // On an edge: half way between the two tints, channel by channel.
+    for (channel, value) in shade(cosine_at(SHADOW_EDGES[1])).into_iter().enumerate() {
+        assert!(
+            close(value, (SHADOW_TINTS[1][channel] + 1.0) / 2.0),
+            "{value}"
+        );
+    }
+    // `lit` is the last step alone.
+    assert_eq!(lit(-1.0), 0.0);
+    assert_eq!(lit(cosine_at(SHADOW_EDGES[1] + 2.0 * FEATHER)), 1.0);
+    assert_eq!(lit(1.0), 1.0);
+}
+
+#[test]
+fn the_highlight_and_the_rim_show_on_the_lit_side_only() {
+    // The highlight: where the normal is close enough to the half vector, lit.
+    assert_eq!(specular(1.0, 1.0), SPECULAR.2);
+    assert_eq!(specular(1.0, -1.0), 0.0, "in the shadow");
+    assert_eq!(specular(0.0, 1.0), 0.0, "far from the half vector");
+    assert_eq!(specular(-0.5, 1.0), 0.0, "facing away from it");
+    let threshold = SPECULAR.1.powf(1.0 / SPECULAR.0);
+    assert_eq!(specular(threshold - 0.05, 1.0), 0.0);
+    assert_eq!(specular(threshold + 0.05, 1.0), SPECULAR.2);
+    // The rim: on the silhouette, lit.
+    assert_eq!(rim(RIM.0 - 2.0 * FEATHER, 1.0), RIM.1);
+    assert_eq!(rim(0.0, 1.0), RIM.1);
+    assert_eq!(rim(RIM.0 + 2.0 * FEATHER, 1.0), 0.0);
+    assert_eq!(rim(1.0, 1.0), 0.0);
+    assert_eq!(rim(0.0, -1.0), 0.0, "in the shadow");
+}
+
+#[test]
+fn the_outline_keeps_its_width_on_screen_at_any_depth() {
+    // The world length of OUTLINE_WIDTH pixels at the depth `w`: on a 720 px tall viewport
+    // through a projection of scale 2 (a 53° vertical field of view), one unit of depth
+    // shows 1 world unit over 720 px, so one pixel is 1/720 world units there.
+    assert!(close(
+        outline_offset(1.0, 2.0, 720.0),
+        OUTLINE_WIDTH / 720.0
+    ));
+    // Twice as far: twice as long, the same pixels.
+    assert!(close(
+        outline_offset(2.0, 2.0, 720.0),
+        2.0 * outline_offset(1.0, 2.0, 720.0)
+    ));
+    // A narrower field of view (a larger scale) magnifies: fewer world units per pixel.
+    assert!(outline_offset(1.0, 4.0, 720.0) < outline_offset(1.0, 2.0, 720.0));
+    // A taller viewport has smaller pixels.
+    assert!(outline_offset(1.0, 2.0, 1440.0) < outline_offset(1.0, 2.0, 720.0));
 }
 
 #[test]
@@ -64,6 +143,26 @@ fn the_tuning_knobs_are_in_range() {
         assert!(STRIKE_WINDUP < HOLD_POSE && HOLD_POSE < STRIKE_CONTACT);
         assert!(HEAVY_HIT_COMBO >= 2);
         assert!(MODEL_HEIGHT > 0.0 && OUTLINE_WIDTH > 0.0);
+        // The shadows step in order on the half-Lambert scale, with room for the feather on
+        // both sides of every edge (and the feather is never zero: the shader divides by it).
+        assert!(FEATHER > 0.0 && FEATHER < 0.1);
+        assert!(FEATHER < SHADOW_EDGES[0] && SHADOW_EDGES[0] + FEATHER < SHADOW_EDGES[1]);
+        assert!(SHADOW_EDGES[1] + FEATHER < 1.0);
+        // Darker to lighter, every tint under white: the light keeps the texture as painted.
+        let mut channel = 0;
+        while channel < 3 {
+            assert!(
+                0.0 < SHADOW_TINTS[0][channel]
+                    && SHADOW_TINTS[0][channel] < SHADOW_TINTS[1][channel]
+            );
+            assert!(SHADOW_TINTS[1][channel] < 1.0);
+            assert!(
+                0.0 < OUTLINE_SHADE[channel] && OUTLINE_SHADE[channel] < SHADOW_TINTS[0][channel]
+            );
+            channel += 1;
+        }
+        assert!(SPECULAR.0 >= 1.0 && 0.0 < SPECULAR.1 && SPECULAR.1 < 1.0 && SPECULAR.2 >= 0.0);
+        assert!(0.0 < RIM.0 && RIM.0 < 1.0 && RIM.1 >= 0.0);
     }
 }
 
