@@ -33,6 +33,11 @@ jobs:
       - name: Show the adapter the renderer will find
         run: vulkaninfo --summary 2>/dev/null | head -12 || true
 
+      # WHY: `dev-check` ends with `cargo xtask coverage`, which shells out to `cargo llvm-cov`;
+      # the runner image does not ship it (the llvm-tools component comes from the toolchain file).
+      - name: Install the coverage tool
+        run: cargo install --locked cargo-llvm-cov
+
       - name: dev-check (fmt, clippy, tests, 100 % coverage)
         run: cargo xtask dev-check
 
