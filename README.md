@@ -539,6 +539,25 @@ accident, and each can be switched off in the configuration:
 | **Crater slam** | a judo throw that lands does not just hurt the thrown fighter: the impact quakes the ground, and everybody standing near the landing point — allies included — loses health, no push, no stun: the floor does the damage |
 | **Phantom warp** | an unblocked hit taken in the air desyncs your model: besides the knockback, you snap further along the direction the hit travels |
 
+**What the glitches look like** (`src/front/glitch.rs`, the same in the arena and in the 3D
+view, whatever the fighters wear, and only while the rules of the glitch are on):
+
+* **Echo barrage**: the victim is ringed by lag copies of itself, ghosts flickering between
+  cyan and magenta, turning round it while the echoes rain; the ring thins out as they run
+  out.
+* **Phantom warp**: the model leaves fading afterimages between the place it stood and the
+  place the hit snapped it to.
+* **Stretch strike**: the stick figure's arm reaches as far as the rules say, a sprite or a 3D
+  model gets a rubber arm over it, and the fist that breaks off at full stretch floats where
+  it snapped.
+* **Crater slam**: the landing of a judo throw leaves a crater in the street, a dark pit with
+  glowing cracks and a shock ring running out to the edge of the quake, for about two thirds
+  of a second.
+
+The rules expose just enough for that, read-only (`Fighter::echoes`, `Fighter::warp`,
+`Match::craters`, like the shots in flight): the looks never feed back into the simulation,
+so replays and online matches stay exactly as deterministic.
+
 ### Play on your local network (2 to 10 players)
 
 On the machine that hosts the game (it can also be one of the players):
@@ -713,7 +732,8 @@ and the process exits 0.
   touch controls for phones (`touch.rs`), the arena with the XKCD stick figures (`stick.rs`), the
   third-person 3D view (`tps.rs`, on the fixed-point 3D maths of `space.rs`), the stage of
   its glTF fighters (`model.rs`: clips, frame-data scrubbing, toon bands, the model audit),
-  the movements they share (`moves.rs`: the thirty things a fighter can be seen doing, for
+  the glitches' looks (`glitch.rs`), the movements they share (`moves.rs`: the thirty things
+  a fighter can be seen doing, for
   the stick figure, the sprite sheets and the clips), the chalk sprite sheet (`chalk.rs`) and
   the puppet placeholder (`puppet.rs`), the
   versus HUD and the music cues. Every frame is described as plain rectangles and

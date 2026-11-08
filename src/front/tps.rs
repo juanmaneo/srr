@@ -26,11 +26,12 @@ use super::arena::{
     scale,
 };
 use super::ascii::{block_pixels, hash};
+use super::glitch;
 use super::model::Models;
 use super::scene::{Align, Frame, Rgba, SCREEN_HEIGHT, SCREEN_WIDTH};
 use super::space::{Camera, Fx, NEAR, Vec3, div_round, perspective, screen_point};
 use super::stick::{self, Accessory, Figure, HEAD_RADIUS, Mark, Point};
-use crate::game::{Fighter, MatchConfig, Projectile};
+use crate::game::{CRATER_TICKS, Crater, Fighter, Match, MatchConfig, Projectile};
 use crate::net::Client;
 
 /// Pixels per grain: the rows of every fill and the runs of every ink line are this thick and
@@ -714,6 +715,10 @@ pub fn draw_models(
             .collect();
         draw_polygon(frame, camera, &ellipse, SHADOW, None);
     }
+    // The craters the slams left, flat on the street.
+    for crater in current.craters() {
+        draw_crater(frame, camera, crater, config);
+    }
 
     // Painter's order: the farthest part of any fighter first.
     let mut parts: Vec<Part> = current
@@ -741,6 +746,12 @@ pub fn draw_models(
                 .projectiles()
                 .iter()
                 .flat_map(|shot| fireball(shot, config, camera)),
+        )
+        .chain(
+            current
+                .fighters()
+                .iter()
+                .flat_map(|fighter| glitches(fighter, current, fight_ticks, camera)),
         )
         .collect();
     parts.sort_by_key(|part| Reverse(part.depth));
@@ -821,6 +832,115 @@ pub fn draw_models(
             );
         }
     }
+}
+
+/// The crater of a slam in the street (see [`glitch::draw_crater`]): a pit, the cracks, the
+/// shock ring, flat on the pavement where the thrown fighter landed.
+fn draw_crater(frame: &mut Frame, camera: &Camera, crater: &Crater, config: &MatchConfig) {
+    let scale = scale(config);
+    let radius = crater.radius() as f32 * scale;
+    let (cx, cz) = (crater.x() as f32 * scale, crater.z() as f32 * scale);
+    // A point of the street `across` and `deep` from the middle of the crater (a fifth as
+    // deep as wide, like the flat crater of the side view).
+    let street = |across: f32, deep: f32| {
+        Vec3::new(
+            Fx::from_f32(cx + across),
+            Fx::int(1),
+            Fx::from_f32(cz + deep * 0.2),
+        )
+    };
+    let ellipse = |size: f32, steps: usize| -> Vec<Vec3> {
+        (0..steps)
+            .map(|step| {
+                let angle = std::f32::consts::TAU * step as f32 / steps as f32;
+                street(angle.cos() * size, angle.sin() * size)
+            })
+            .collect()
+    };
+    let fade = crater.remaining().min(CRATER_TICKS) as f32 / CRATER_TICKS as f32;
+    draw_polygon(
+        frame,
+        camera,
+        &ellipse(radius * 0.4, 12),
+        glitch::PIT.with_alpha(0.9),
+        None,
+    );
+    for (angle, reach) in glitch::CRACKS {
+        let at = |share: f32, kink: f32| {
+            street(
+                (angle + kink).cos() * radius * reach * share,
+                (angle + kink).sin() * radius * reach * share,
+            )
+        };
+        let points = [at(0.2, 0.0), at(0.55, 0.12), at(0.8, -0.1), at(1.0, 0.05)];
+        for pair in points.windows(2) {
+            draw_line(
+                frame,
+                camera,
+                pair[0],
+                pair[1],
+                glitch::CRACK.with_alpha(0.5 + 0.5 * fade),
+            );
+        }
+    }
+    let spread = glitch::shock(crater.remaining());
+    if spread < 1.0 {
+        let ring = ellipse(radius * spread, 16);
+        for (index, &point) in ring.iter().enumerate() {
+            draw_line(
+                frame,
+                camera,
+                point,
+                ring[(index + 1) % ring.len()],
+                glitch::COLD.with_alpha(1.0 - spread),
+            );
+        }
+    }
+}
+
+/// The glitches of `fighter` as parts of the 3D view: the lag copies of an echo barrage
+/// ringed around it on the pavement, the afterimages of a warp, the rubber arm of a stretched
+/// punch. Mannequins in the glitch colours, whatever the fighter wears (see [`glitch`]).
+fn glitches(fighter: &Fighter, current: &Match, fight_ticks: u32, camera: &Camera) -> Vec<Part> {
+    let config = current.config();
+    let rules = rules_of(current, fighter);
+    let figure = Figure::of(fighter, rules, fight_ticks);
+    let line = depth(fighter, config);
+    let mut parts = Vec::new();
+    let count = glitch::copies(fighter.echoes());
+    for copy in 0..count {
+        let (across, deep) = glitch::ring(copy, count, fight_ticks);
+        let ghost = glitch::ghosted(
+            &figure.shifted(across * glitch::RING_RADIUS),
+            glitch::tint(copy, fight_ticks).with_alpha(glitch::GHOST_ALPHA),
+        );
+        let line = line + (deep * glitch::RING_RADIUS).round() as i32;
+        parts.extend(mannequin(&ghost, line, camera));
+    }
+    if let Some(warp) = fighter.warp() {
+        let along = (warp.from() - fighter.x()) as f32 * scale(config);
+        for (index, (fraction, alpha)) in glitch::trail(warp.remaining()).into_iter().enumerate() {
+            let ghost = glitch::ghosted(
+                &figure.shifted(along * (1.0 - fraction)),
+                glitch::tint(index, fight_ticks).with_alpha(alpha),
+            );
+            parts.extend(mannequin(&ghost, line, camera));
+        }
+    }
+    if glitch::stretching(fighter, rules) {
+        let mut s = Sculpt {
+            camera,
+            parts: Vec::new(),
+        };
+        s.tube(
+            lift(figure.shoulder, line),
+            lift(figure.arms[0].end, line),
+            ARM,
+            glitch::HOT.with_alpha(glitch::GHOST_ALPHA + 0.2),
+        );
+        parts.extend(s.parts);
+    }
+    parts
 }
 
 /// The alley, from the street to the tagged wall: the big planes first, then what lies on

@@ -181,6 +181,39 @@ pub struct DetachedFist {
     pub(crate) data: AttackData,
 }
 
+/// How many ticks the afterimage of a [`Glitch::PhantomWarp`](super::Glitch::PhantomWarp) lingers.
+pub const WARP_TRAIL: u32 = 14;
+
+/// The snap of a [`Glitch::PhantomWarp`](super::Glitch::PhantomWarp) hit: where the fighter
+/// stood before it, for the afterimage that trails the model to where it landed. Only for the
+/// looks, like the shots in flight: the rules never read it back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Warp {
+    /// Where along the arena the fighter stood before it snapped.
+    pub(crate) from: i32,
+    /// Ticks the afterimage lingers.
+    pub(crate) remaining: u32,
+}
+
+impl Warp {
+    /// Where along the arena the fighter stood before it snapped.
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert!(m.fighter(PlayerId(0)).unwrap().warp().is_none());
+    /// ```
+    pub fn from(&self) -> i32 {
+        self.from
+    }
+
+    /// Ticks the afterimage lingers.
+    pub fn remaining(&self) -> u32 {
+        self.remaining
+    }
+}
+
 impl DetachedFist {
     /// A fist floating at (`x`, `y`, `z`) for `remaining` ticks, hitting for `data`.
     ///
@@ -303,6 +336,8 @@ pub struct Fighter {
     echo: u32,
     /// The fist the fighter's punch broke off during the last update ([`Glitch::StretchStrike`]).
     detached: Option<DetachedFist>,
+    /// The snap of the last [`Glitch::PhantomWarp`] hit taken, while its afterimage lingers.
+    warp: Option<Warp>,
     /// Whether high attacks from the floor pass over the special move (from the rules).
     low_profile: bool,
     /// Whether hits taken during the special move's start-up neither stun nor push.
@@ -340,6 +375,7 @@ impl Fighter {
             launched: None,
             echo: 0,
             detached: None,
+            warp: None,
             low_profile: config.special.low_profile,
             armored: config.special.armored,
             action: Action::Free,
@@ -507,6 +543,25 @@ impl Fighter {
         self.detached.as_ref()
     }
 
+    /// Hits of the [`Glitch::EchoBarrage`] barrage still to rain on the fighter: the lag copies
+    /// ringed around it are drawn for as long as this is above zero.
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, PlayerId, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert_eq!(m.fighter(PlayerId(0)).unwrap().echoes(), 0);
+    /// ```
+    pub fn echoes(&self) -> u32 {
+        self.echo
+    }
+
+    /// The snap of the last [`Glitch::PhantomWarp`] hit the fighter took, while its afterimage
+    /// lingers ([`WARP_TRAIL`] ticks).
+    pub fn warp(&self) -> Option<&Warp> {
+        self.warp.as_ref()
+    }
+
     /// The grapple the fighter is locked in, if any, seen from its side.
     ///
     /// ```
@@ -526,6 +581,7 @@ impl Fighter {
     pub(crate) fn update(&mut self, input: Input, config: &MatchConfig) {
         self.stride = 0;
         self.launched = None;
+        self.tick_warp();
         self.play_echo(config);
         self.cooldown = self.cooldown.saturating_sub(1);
         self.fresh = input.pressed_since(self.previous);
@@ -552,6 +608,16 @@ impl Fighter {
             // Grapplers stay put on the floor; the match plays the grapple.
             Action::Grappling(_) => {}
             Action::Free => self.update_free(input, config),
+        }
+    }
+
+    /// One tick less of lingering for the afterimage of a warp.
+    fn tick_warp(&mut self) {
+        if let Some(warp) = &mut self.warp {
+            warp.remaining = warp.remaining.saturating_sub(1);
+            if warp.remaining == 0 {
+                self.warp = None;
+            }
         }
     }
 
@@ -1118,10 +1184,15 @@ impl Fighter {
             && config.glitches.contains(Glitch::PhantomWarp)
             && !self.is_knocked_out()
         {
+            let from = self.x;
             self.walk_by(
                 direction.sign().saturating_mul(config.warp_distance),
                 config,
             );
+            self.warp = Some(Warp {
+                from,
+                remaining: WARP_TRAIL,
+            });
         }
 
         if self.health == 0 {

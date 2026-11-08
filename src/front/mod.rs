@@ -63,6 +63,7 @@ pub mod ascii;
 pub mod chalk;
 pub mod controls;
 pub mod gamepad;
+pub mod glitch;
 pub mod headless;
 pub mod hud;
 pub mod intro;

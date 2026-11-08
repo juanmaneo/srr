@@ -11,6 +11,7 @@
 use std::cmp::Reverse;
 
 use super::ascii::{block_pixels, hash};
+use super::glitch;
 use super::hud::tag;
 use super::scene::{Align, Frame, Rgba, SCREEN_WIDTH};
 use super::stick::{FIRE, Figure, Point, ring};
@@ -294,6 +295,19 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
         };
         (Reverse(f.z()), layer)
     });
+    // The craters the slams left, flat on the street under the fighters.
+    for crater in current.craters() {
+        let center = Point {
+            x: ARENA_LEFT + crater.x() as f32 * scale(config),
+            y: FLOOR_Y - crater.z() as f32 * scale(config) * DEPTH_RISE + 8.0,
+        };
+        glitch::draw_crater(
+            frame,
+            center,
+            crater.radius() as f32 * scale(config),
+            crater.remaining(),
+        );
+    }
     for fighter in order {
         // Every fighter wears the skin its player picked, whatever the others wear. The
         // chalk is drawn by the stick engine (the debug view); the manga fighter is its
@@ -314,6 +328,25 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
             frame.image(name, pose, x, y - risen, 195.0, facing);
         } else {
             figure(fighter).draw(frame);
+        }
+    }
+    // The glitches over the fighters: the stretched arm of a sprite, the lag copies ringed
+    // around a victim of the echo barrage, the afterimages of a warp.
+    for fighter in current.fighters() {
+        let rules = rules_of(current, fighter);
+        let figure = figure(fighter);
+        if super::skin::sprite_name_of(&client.skin(fighter.player())).is_some()
+            && glitch::stretching(fighter, rules)
+        {
+            glitch::rubber_arm(frame, &figure);
+        }
+        if fighter.echoes() > 0 {
+            glitch::draw_echo(frame, &figure, fighter.echoes(), fight_ticks, DEPTH_RISE);
+        }
+        if let Some(warp) = fighter.warp() {
+            let from = ARENA_LEFT + warp.from() as f32 * scale(config);
+            let (now, _) = feet(fighter, config);
+            glitch::draw_warp(frame, &figure, from, now, warp.remaining(), fight_ticks);
         }
     }
     for shot in current.projectiles() {

@@ -19,8 +19,8 @@ use super::model::{Clip, STRIKE_CONTACT, STRIKE_WINDUP};
 use super::moves::Move;
 use super::scene::{Frame, Rgba};
 use crate::game::{
-    Attack, AttackPhase, Character, Fighter, FighterState, GrapplePosition, GrappleRole, Limb,
-    MatchConfig, PlayerId, SpecialData, Strength, Technique,
+    Attack, AttackPhase, Character, Fighter, FighterState, Glitch, GrapplePosition, GrappleRole,
+    Limb, MatchConfig, PlayerId, SpecialData, Strength, Technique,
 };
 
 /// The chalk the figures are drawn with.
@@ -489,7 +489,14 @@ fn pose(fighter: &Fighter, config: &MatchConfig, fight_ticks: u32, screen_x: f32
             flying_kick(attack, phase, reach(config.attack(attack).range))
         }
         (FighterState::Attacking(phase), Some(attack)) => {
-            strike(attack, phase, reach(config.attack(attack).range))
+            // The arms of Glitch::StretchStrike reach as far as the rules say.
+            let stretch =
+                if attack.limb == Limb::Punch && config.glitches.contains(Glitch::StretchStrike) {
+                    config.stretch_reach
+                } else {
+                    0
+                };
+            strike(attack, phase, reach(config.attack(attack).range + stretch))
         }
         (FighterState::Special(phase), _) => {
             special(&config.special, phase, reach(config.special.attack.range))

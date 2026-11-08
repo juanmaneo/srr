@@ -88,6 +88,41 @@ struct Hit {
     blocked: bool,
 }
 
+/// How many ticks the crater of a [`Glitch::CraterSlam`] landing lingers.
+pub const CRATER_TICKS: u32 = 40;
+
+/// The crater a [`Glitch::CraterSlam`] landing left in the street: where it landed and how far
+/// the quake reached, for the looks (the quake itself hurt everybody within `radius` at once).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Crater {
+    x: i32,
+    z: i32,
+    radius: i32,
+    remaining: u32,
+}
+
+impl Crater {
+    /// Where along the arena the thrown fighter landed.
+    pub fn x(&self) -> i32 {
+        self.x
+    }
+
+    /// The line across the arena it landed on.
+    pub fn z(&self) -> i32 {
+        self.z
+    }
+
+    /// How far along the arena the quake reached on each side of [`x`](Crater::x).
+    pub fn radius(&self) -> i32 {
+        self.radius
+    }
+
+    /// Ticks the crater lingers.
+    pub fn remaining(&self) -> u32 {
+        self.remaining
+    }
+}
+
 /// A whole match. Cloning gives an independent snapshot that continues identically.
 ///
 /// The simulation is deterministic: the state after [`Match::step`] depends only on the state
@@ -124,6 +159,8 @@ pub struct Match {
     fighters: Vec<Fighter>,
     /// The shots in flight, oldest first.
     projectiles: Vec<Projectile>,
+    /// The craters the [`Glitch::CraterSlam`] landings left, oldest first, while they linger.
+    craters: Vec<Crater>,
     phase: Phase,
     remaining_ticks: u32,
     paused: bool,
@@ -224,6 +261,7 @@ impl Match {
             rules,
             fighters,
             projectiles: Vec::new(),
+            craters: Vec::new(),
             phase,
             paused: false,
         })
@@ -269,6 +307,19 @@ impl Match {
     /// The shots in flight (fireballs), oldest first.
     pub fn projectiles(&self) -> &[Projectile] {
         &self.projectiles
+    }
+
+    /// The craters the landings of judo throws left ([`Glitch::CraterSlam`]), oldest first,
+    /// for [`CRATER_TICKS`] ticks each: only for the looks, the rules never read them back.
+    ///
+    /// ```
+    /// use srr::game::{Match, MatchConfig, Roster};
+    ///
+    /// let m = Match::new(Roster::duel(), MatchConfig::default()).unwrap();
+    /// assert!(m.craters().is_empty());
+    /// ```
+    pub fn craters(&self) -> &[Crater] {
+        &self.craters
     }
 
     /// The fighter of `player`, or `None` when the player is not in the match.
@@ -380,6 +431,10 @@ impl Match {
     }
 
     fn fight(&mut self, inputs: &HashMap<PlayerId, Input>) {
+        self.craters.retain_mut(|crater| {
+            crater.remaining = crater.remaining.saturating_sub(1);
+            crater.remaining > 0
+        });
         for (fighter, rules) in self.fighters.iter_mut().zip(self.rules.iter()) {
             let input = inputs.get(&fighter.player()).copied().unwrap_or_default();
             fighter.update(input, rules);
@@ -695,6 +750,7 @@ impl Match {
     /// friendly fire). No push, no stun: the floor does the damage.
     fn quake(&mut self, landed: usize) {
         let center = self.fighters[landed].x();
+        let line = self.fighters[landed].z();
         let radius = self.config.slam_radius;
         let damage = self.config.slam_damage;
         let victims: Vec<usize> = (0..self.fighters.len())
@@ -712,6 +768,12 @@ impl Match {
         for index in victims {
             self.fighters[index].suffer(damage);
         }
+        self.craters.push(Crater {
+            x: center,
+            z: line,
+            radius,
+            remaining: CRATER_TICKS,
+        });
     }
 
     /// Connects every active technique, in roster order; see [`Match::step`].

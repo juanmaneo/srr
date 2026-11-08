@@ -53,12 +53,12 @@ pub use config::{
     AttackData, ConfigError, Glitch, GlitchSet, GrappleData, MatchConfig, TICKS_PER_SECOND,
     TechniqueData,
 };
-pub use fighter::{AttackPhase, DetachedFist, Facing, Fighter, FighterState};
+pub use fighter::{AttackPhase, DetachedFist, Facing, Fighter, FighterState, WARP_TRAIL, Warp};
 pub use grapple::{Grapple, GrapplePosition, GrappleRole};
 pub use input::{Attack, Input, Key, KeyBindings, Limb, Strength};
 pub use projectile::Projectile;
 pub use replay::{Replay, ReplayError};
 pub use roster::{PlayerId, PlayerSlot, Roster, RosterError, TeamId};
-pub use simulation::{Match, Outcome, Phase, SetupError};
+pub use simulation::{CRATER_TICKS, Crater, Match, Outcome, Phase, SetupError};
 pub use style::{Skin, Style, StyleSet, Variant};
 pub use technique::Technique;
