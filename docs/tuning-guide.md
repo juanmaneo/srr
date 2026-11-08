@@ -198,8 +198,8 @@ bright, flat lit side in the texture's own colours, one crisp shadow line with a
 tinted shadow (never a grey), a small hard highlight, a thin rim of light, and coloured
 ink. What the shader cannot give is in the model: those games paint their shadows,
 blushes and cloth folds into the texture, so a model from `docs/3d-asset-pipeline.md`
-with a painted texture reads far better than the cube man placeholder, whose six flat
-normals per box can only show one band each.
+with a painted texture reads far better than the puppet placeholder, whose texture is
+procedural grain and whose smooth shapes can only show what their normals say.
 
 ## How to try a change
 

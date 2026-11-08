@@ -15,10 +15,12 @@
 use std::f32::consts::TAU;
 
 use super::arena::{body_color, feet, player_color, scale, strength_color};
+use super::model::{Clip, STRIKE_CONTACT, STRIKE_WINDUP};
+use super::moves::Move;
 use super::scene::{Frame, Rgba};
 use crate::game::{
-    Attack, AttackPhase, Fighter, FighterState, GrapplePosition, GrappleRole, Limb, MatchConfig,
-    PlayerId, SpecialData, Strength, Technique,
+    Attack, AttackPhase, Character, Fighter, FighterState, GrapplePosition, GrappleRole, Limb,
+    MatchConfig, PlayerId, SpecialData, Strength, Technique,
 };
 
 /// The chalk the figures are drawn with.
@@ -50,8 +52,8 @@ pub const THROW_LIFT: f32 = 96.0;
 pub const MAX_REACH: f32 = 170.0;
 
 /// Length of an arm and of a leg at rest (they stretch, cartoon style, to reach further).
-const ARM: f32 = 42.0;
-const LEG: f32 = 54.0;
+pub const ARM: f32 = 42.0;
+pub const LEG: f32 = 54.0;
 /// Pen resolution: lines and circles are cut in runs this thick across their direction.
 const STEP: f32 = 1.5;
 /// Screen pixels per walk cycle.
@@ -165,24 +167,27 @@ pub struct Figure {
     pub lying: bool,
 }
 
-/// A pose in the fighter's own frame: `x` forward, `y` up, the feet at the origin.
+/// A pose in the fighter's own frame: `x` forward, `y` up, the feet at the origin. What the
+/// stick figure is inked from, what the [chalk sprite sheet](super::chalk) is drawn from and
+/// what the 3D [puppet](super::puppet) is rigged from: one set of movements for all three.
 #[derive(Debug, Clone, Copy)]
-struct Pose {
-    hip: Point,
-    neck: Point,
-    hands: [Point; 2],
-    feet: [Point; 2],
+pub struct Pose {
+    pub hip: Point,
+    pub neck: Point,
+    pub hands: [Point; 2],
+    pub feet: [Point; 2],
     /// Colours of the front arm, back arm, front leg and back leg.
-    inks: [Option<Rgba>; 4],
+    pub inks: [Option<Rgba>; 4],
     /// Which way each elbow / knee bends (see [`bend`]), same order.
-    bends: [f32; 4],
-    lying: bool,
+    pub bends: [f32; 4],
+    pub lying: bool,
 }
 
-const FRONT_ARM: usize = 0;
-const BACK_ARM: usize = 1;
-const FRONT_LEG: usize = 2;
-const BACK_LEG: usize = 3;
+/// The indices of the limbs in [`Pose::inks`] and [`Pose::bends`].
+pub const FRONT_ARM: usize = 0;
+pub const BACK_ARM: usize = 1;
+pub const FRONT_LEG: usize = 2;
+pub const BACK_LEG: usize = 3;
 
 impl Pose {
     fn new(hip: Point, neck: Point, hands: [Point; 2], feet: [Point; 2]) -> Pose {
@@ -228,7 +233,7 @@ impl Pose {
 /// The joint of a two-segment limb of `length` from `a` to `b`: in the middle when the limb is
 /// stretched, otherwise pushed sideways (`side > 0`: to the left of `a → b`, y up) so both
 /// segments keep `length / 2`.
-fn bend(a: Point, b: Point, length: f32, side: f32) -> Point {
+pub fn bend(a: Point, b: Point, length: f32, side: f32) -> Point {
     let span = a.to(b);
     let distance = span.length();
     let middle = a.plus(span, 0.5);
@@ -249,6 +254,19 @@ impl Figure {
         // A sidestep moves the legs too.
         let stride = x + fighter.z() as f32 * scale(config);
         let pose = pose(fighter, config, fight_ticks, stride);
+        Figure::posed(&pose, (x, y), facing, fighter.state(), fighter.player())
+    }
+
+    /// `pose` placed on the screen: the feet at `feet`, facing `facing` (`1.0` right, `-1.0`
+    /// left), inked for `state` (the colour of a stun or a knockout, the marks around the head)
+    /// and wearing the accessory of `player`.
+    pub fn posed(
+        pose: &Pose,
+        (x, y): (f32, f32),
+        facing: f32,
+        state: FighterState,
+        player: PlayerId,
+    ) -> Figure {
         let place = |q: Point| p(x + facing * q.x, y - q.y);
 
         let head = pose
@@ -260,8 +278,7 @@ impl Figure {
             end: place(end),
             ink: pose.inks[index],
         };
-        let state = fighter.state();
-        let accent = player_color(fighter.player());
+        let accent = player_color(player);
         Figure {
             head: place(head),
             neck: place(pose.neck),
@@ -277,7 +294,7 @@ impl Figure {
             ],
             facing,
             ink: body_color(INK, state),
-            accessory: accessory(fighter.player()),
+            accessory: accessory(player),
             accent: if state == FighterState::Knockout {
                 accent.scaled(0.5)
             } else {
@@ -463,32 +480,11 @@ fn pose(fighter: &Fighter, config: &MatchConfig, fight_ticks: u32, screen_x: f32
     let lit = (fight_ticks / 6).is_multiple_of(2);
     match (fighter.state(), fighter.attack()) {
         (FighterState::Walking, _) => walk(screen_x),
-        (FighterState::Airborne, _) => Pose::new(
-            p(0.0, 50.0),
-            p(2.0, 84.0),
-            [p(24.0, 94.0), p(-18.0, 90.0)],
-            [p(14.0, 24.0), p(-10.0, 28.0)],
-        ),
-        (FighterState::Blocking, _) => Pose::new(
-            p(-4.0, 50.0),
-            p(-6.0, 82.0),
-            [p(10.0, 98.0), p(6.0, 92.0)],
-            [p(12.0, 0.0), p(-18.0, 0.0)],
-        ),
-        // Squatting low, knees forward, fists at the chin.
-        (FighterState::Crouching, _) => Pose::new(
-            p(-6.0, 26.0),
-            p(4.0, 56.0),
-            [p(20.0, 54.0), p(12.0, 50.0)],
-            [p(18.0, 0.0), p(-20.0, 0.0)],
-        ),
-        (FighterState::HitStun, _) => Pose::new(
-            p(-4.0, 50.0),
-            p(-14.0, 80.0),
-            [p(16.0, 60.0), p(-34.0, 72.0)],
-            [p(10.0, 0.0), p(-20.0, 0.0)],
-        ),
-        (FighterState::Knockout, _) => lying([p(-40.0, 2.0), p(-6.0, 26.0)]),
+        (FighterState::Airborne, _) => airborne(),
+        (FighterState::Blocking, _) => blocking(),
+        (FighterState::Crouching, _) => crouching(),
+        (FighterState::HitStun, _) => hit_stun(),
+        (FighterState::Knockout, _) => knocked_out(),
         (FighterState::Attacking(phase), Some(attack)) if fighter.is_airborne() => {
             flying_kick(attack, phase, reach(config.attack(attack).range))
         }
@@ -510,11 +506,232 @@ fn pose(fighter: &Fighter, config: &MatchConfig, fight_ticks: u32, screen_x: f32
             grapple(role, position, distance, lit)
         }
         // Idle, breathing (an attack always has its `attack()`, so nothing else lands here).
-        _ => Pose::new(
-            p(-2.0, 50.0 - bob * 0.5),
-            p(2.0, 82.0 - bob),
-            [p(22.0, 76.0 - bob), p(12.0, 72.0 - bob)],
-            [p(16.0, 0.0), p(-16.0, 0.0)],
+        _ => idle(bob),
+    }
+}
+
+/// The keyframes of `clip` for the 3D [puppet](super::puppet): its length in seconds and the
+/// poses it passes through, each at a fraction of the clip. The poses are the ones the stick
+/// figure takes in the arena: a strike is the guard, then the start-up pose at
+/// [`STRIKE_WINDUP`], the active pose at [`STRIKE_CONTACT`] (where the engine scrubs the clip
+/// through the frame data), the recovery pose, the guard again; the loops end where they
+/// start; the clips that play once settle into the pose they hold.
+///
+/// ```
+/// use srr::front::model::Clip;
+/// use srr::front::stick::clip_poses;
+///
+/// let (seconds, keys) = clip_poses(Clip::Punch);
+/// assert!(seconds > 0.0);
+/// assert_eq!(keys.first().map(|key| key.0), Some(0.0));
+/// assert_eq!(keys.last().map(|key| key.0), Some(1.0));
+/// ```
+pub fn clip_poses(clip: Clip) -> (f32, Vec<(f32, Pose)>) {
+    let config = MatchConfig::default();
+    let guard = idle(0.0);
+    // A move wound up, struck and recovered from, between two resting poses.
+    let phases = |movement: Move, from: Pose, to: Pose| {
+        let at = |phase| move_pose(movement, phase);
+        vec![
+            (0.0, from),
+            (STRIKE_WINDUP, at(AttackPhase::Startup)),
+            (STRIKE_CONTACT, at(AttackPhase::Active)),
+            (0.8, at(AttackPhase::Recovery)),
+            (1.0, to),
+        ]
+    };
+    // The same pose all along (a loop that holds a position).
+    let hold = |pose: Pose| vec![(0.0, pose), (0.5, pose), (1.0, pose)];
+    // From the guard into `pose`, and staying there (a clip that plays once).
+    let settle = |pose: Pose| vec![(0.0, guard), (0.5, pose), (1.0, pose)];
+    let held = |movement: Move| hold(move_pose(movement, AttackPhase::Active));
+    let settled = |movement: Move| settle(move_pose(movement, AttackPhase::Active));
+    match clip {
+        Clip::Idle => (
+            2.0,
+            vec![(0.0, idle(0.0)), (0.5, idle(1.5)), (1.0, idle(0.0))],
+        ),
+        Clip::WalkF => (0.8, walk_cycle(false)),
+        Clip::WalkB => (0.8, walk_cycle(true)),
+        Clip::Crouch => (1.0, hold(crouching())),
+        Clip::Jump => (0.6, settle(airborne())),
+        Clip::Block => (1.0, hold(blocking())),
+        Clip::HitLight => (0.3, vec![(0.0, guard), (0.5, hit_stun()), (1.0, guard)]),
+        Clip::HitHeavy => (0.5, settle(hit_stun())),
+        Clip::Ko => (
+            0.8,
+            vec![(0.0, guard), (0.5, hit_stun()), (1.0, knocked_out())],
+        ),
+        Clip::Punch => (0.5, phases(Move::PunchMid, guard, guard)),
+        Clip::Kick => (0.6, phases(Move::KickMid, guard, guard)),
+        Clip::Sweep => {
+            let reach = (config.technique(Technique::Sweep).range as f32 * scale(&config))
+                .clamp(ARM, MAX_REACH);
+            let at = |phase| sweep(phase, reach);
+            (
+                0.8,
+                vec![
+                    (0.0, guard),
+                    (STRIKE_WINDUP, at(AttackPhase::Startup)),
+                    (STRIKE_CONTACT, at(AttackPhase::Active)),
+                    (0.8, at(AttackPhase::Recovery)),
+                    (1.0, guard),
+                ],
+            )
+        }
+        Clip::Special => (0.8, phases(Move::SpecialRush, guard, guard)),
+        Clip::Grab => (0.6, phases(Move::Grab, guard, guard)),
+        Clip::JumpKick => (0.6, phases(Move::JumpKick, airborne(), airborne())),
+        Clip::Throw => (0.6, held(Move::Throw)),
+        Clip::Scissor => (0.6, held(Move::Sweep)),
+        Clip::Mount => (1.0, held(Move::Mount)),
+        Clip::Submission => (1.0, held(Move::Submission)),
+        Clip::ScarfHold => (1.0, held(Move::ScarfHold)),
+        Clip::Armbar => (1.0, held(Move::Armbar)),
+        Clip::Swept => (0.6, settled(Move::Swept)),
+        Clip::Thrown => (0.6, settled(Move::Thrown)),
+        Clip::Pinned => (0.6, settled(Move::Pinned)),
+        Clip::Caught => (0.6, settled(Move::Caught)),
+    }
+}
+
+/// One cycle of the walk (reversed, stepping back): the contact poses of the stride and the
+/// passing poses between them, where a foot lifts.
+fn walk_cycle(backwards: bool) -> Vec<(f32, Pose)> {
+    let quarters = [1.0, 2.0, 3.0, 4.0, 5.0];
+    quarters
+        .iter()
+        .enumerate()
+        .map(|(step, quarter)| {
+            let along = if backwards { 6.0 - quarter } else { *quarter };
+            (step as f32 / 4.0, walk(STRIDE * along / 4.0))
+        })
+        .collect()
+}
+
+/// Standing in guard, `bob` pixels down in the breath.
+fn idle(bob: f32) -> Pose {
+    Pose::new(
+        p(-2.0, 50.0 - bob * 0.5),
+        p(2.0, 82.0 - bob),
+        [p(22.0, 76.0 - bob), p(12.0, 72.0 - bob)],
+        [p(16.0, 0.0), p(-16.0, 0.0)],
+    )
+}
+
+/// Tucked in the air.
+fn airborne() -> Pose {
+    Pose::new(
+        p(0.0, 50.0),
+        p(2.0, 84.0),
+        [p(24.0, 94.0), p(-18.0, 90.0)],
+        [p(14.0, 24.0), p(-10.0, 28.0)],
+    )
+}
+
+/// Stepping back, the guard up.
+fn blocking() -> Pose {
+    Pose::new(
+        p(-4.0, 50.0),
+        p(-6.0, 82.0),
+        [p(10.0, 98.0), p(6.0, 92.0)],
+        [p(12.0, 0.0), p(-18.0, 0.0)],
+    )
+}
+
+/// Squatting low, knees forward, fists at the chin.
+fn crouching() -> Pose {
+    Pose::new(
+        p(-6.0, 26.0),
+        p(4.0, 56.0),
+        [p(20.0, 54.0), p(12.0, 50.0)],
+        [p(18.0, 0.0), p(-20.0, 0.0)],
+    )
+}
+
+/// Recoiling from a hit.
+fn hit_stun() -> Pose {
+    Pose::new(
+        p(-4.0, 50.0),
+        p(-14.0, 80.0),
+        [p(16.0, 60.0), p(-34.0, 72.0)],
+        [p(10.0, 0.0), p(-20.0, 0.0)],
+    )
+}
+
+/// Lying knocked out.
+fn knocked_out() -> Pose {
+    lying([p(-40.0, 2.0), p(-6.0, 26.0)])
+}
+
+/// The pose of `movement` at `phase` of its timeline (the phase only matters to the moves
+/// that have one: the strikes, the specials, the grab), with the rules every fight starts
+/// from and the first player's colours. The one source of the movements: the sprite sheet of
+/// the [chalk](super::chalk) draws these, and the keyframes of the [puppet](super::puppet)
+/// are made of them.
+///
+/// ```
+/// use srr::front::moves::Move;
+/// use srr::front::stick::{BACK_ARM, move_pose};
+/// use srr::game::AttackPhase;
+///
+/// let guard = move_pose(Move::Stand, AttackPhase::Active);
+/// let punch = move_pose(Move::PunchMid, AttackPhase::Active);
+/// assert!(punch.hands[0].x > guard.hands[0].x, "the fist shoots out");
+/// assert_eq!(punch.hands[BACK_ARM].x, guard.hands[BACK_ARM].x, "the other hand stays");
+/// ```
+pub fn move_pose(movement: Move, phase: AttackPhase) -> Pose {
+    let config = MatchConfig::default();
+    let reach = |range: i32| (range as f32 * scale(&config)).clamp(ARM, MAX_REACH);
+    let striking = |attack: Attack| strike(attack, phase, reach(config.attack(attack).range));
+    let power = |character: Character| {
+        let data = character.rules(&config).special;
+        special(&data, phase, reach(data.attack.range))
+    };
+    let distance = config.grapple.grapple_distance as f32 * scale(&config);
+    match movement {
+        Move::Stand => idle(0.0),
+        Move::WalkA => walk(STRIDE / 4.0),
+        Move::WalkB => walk(STRIDE * 3.0 / 4.0),
+        Move::Crouch => crouching(),
+        Move::Block => blocking(),
+        Move::PunchLow => striking(Attack::punch(Strength::Low)),
+        Move::PunchMid => striking(Attack::punch(Strength::Medium)),
+        Move::PunchHigh => striking(Attack::punch(Strength::High)),
+        Move::KickLow => striking(Attack::kick(Strength::Low)),
+        Move::KickMid => striking(Attack::kick(Strength::Medium)),
+        Move::KickHigh => striking(Attack::kick(Strength::High)),
+        Move::Jump => airborne(),
+        Move::JumpKick => {
+            let attack = Attack::kick(Strength::Medium);
+            flying_kick(attack, phase, reach(config.attack(attack).range))
+        }
+        Move::Hit => hit_stun(),
+        Move::Grab => reaching(phase, reach(config.grapple.range), GRAB),
+        Move::Throw => grapple(GrappleRole::Top, GrapplePosition::Throw, distance, true),
+        Move::Sweep => grapple(GrappleRole::Top, GrapplePosition::Sweep, distance, true),
+        Move::SpecialRush => power(Character::Chalk),
+        Move::SpecialFireball => power(Character::Torch),
+        Move::SpecialPalm => power(Character::Brick),
+        Move::SpecialSlide => power(Character::Zip),
+        Move::Ko => knocked_out(),
+        Move::Mount => grapple(GrappleRole::Top, GrapplePosition::Mount, distance, true),
+        Move::Submission => grapple(
+            GrappleRole::Top,
+            GrapplePosition::Submission,
+            distance,
+            true,
+        ),
+        Move::ScarfHold => grapple(GrappleRole::Top, GrapplePosition::ScarfHold, distance, true),
+        Move::Armbar => grapple(GrappleRole::Top, GrapplePosition::Armbar, distance, true),
+        Move::Swept => grapple(GrappleRole::Bottom, GrapplePosition::Sweep, distance, true),
+        Move::Thrown => grapple(GrappleRole::Bottom, GrapplePosition::Throw, distance, true),
+        Move::Pinned => grapple(GrappleRole::Bottom, GrapplePosition::Mount, distance, true),
+        Move::Caught => grapple(
+            GrappleRole::Bottom,
+            GrapplePosition::Submission,
+            distance,
+            true,
         ),
     }
 }

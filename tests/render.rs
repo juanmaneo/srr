@@ -17,7 +17,7 @@
 //!    not one flat colour, and moving. Skips loudly, not silently, when no adapter exists.
 //!
 //! 3. With the `mode3d` feature (`cargo test --features mode3d --test render`), the
-//!    third-person view with its glTF fighters: the cube man of `assets/models/chalk/`
+//!    third-person view with its glTF fighters: the puppet of `assets/models/chalk/`
 //!    (generated, committed, no download) loads, gets its `AnimationPlayer` and its toon
 //!    materials, renders, and plays the clip of the fighter's state. The 2D tests above run
 //!    unchanged with the feature on.
@@ -186,7 +186,7 @@ mod mode3d {
         );
     }
 
-    /// The cube man loads for Chalk (both fighters of the practice fight), each fighter
+    /// The puppet loads for Chalk (both fighters of the practice fight), each fighter
     /// gets an animated, cel-shaded, fitted actor standing in guard, the game is told its
     /// mannequins are replaced, and the stage renders them.
     #[test]
@@ -273,8 +273,8 @@ mod mode3d {
         assert_eq!(clip_of(&mut server, 1), Some(Clip::Idle));
     }
 
-    /// Dumps PNGs of the 3D view to `target/screenshots3d/`, to eyeball the models (the cube
-    /// man now, a Meshy model later): guard, walk, punch and kick of P1 against the dummy,
+    /// Dumps PNGs of the 3D view to `target/screenshots3d/`, to eyeball the models (the
+    /// puppet now, a real model later): guard, walk, punch and kick of P1 against the dummy,
     /// plus the raw stage layer. Not run by CI (it needs a rasterizer and writes files):
     ///
     /// ```sh

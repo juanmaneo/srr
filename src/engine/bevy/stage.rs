@@ -254,7 +254,7 @@ impl Material for OutlineMaterial {
 // ---------------------------------------------------------------------------------------------
 
 /// The clips of a loaded model, by [`Clip::index`]: `None` where the model lacks the clip.
-type Clips = [Option<Handle<AnimationClip>>; 13];
+type Clips = [Option<Handle<AnimationClip>>; Clip::ALL.len()];
 
 /// Where a character's model stands.
 #[derive(Debug, Clone)]
@@ -321,8 +321,13 @@ fn load_library(
                 for clip in Clip::ALL {
                     match gltf.named_animations.get(clip.name()) {
                         Some(animation) => clips[clip.index()] = Some(animation.clone()),
-                        None => error!(
+                        None if clip.is_basic() => error!(
                             "3D model {path} has no `{}` animation clip: {} plays its idle instead",
+                            clip.name(),
+                            character.name()
+                        ),
+                        None => debug!(
+                            "3D model {path} has no `{}` animation clip: {} plays its fallback",
                             clip.name(),
                             character.name()
                         ),
@@ -478,7 +483,7 @@ struct Animation {
     /// The entity carrying the [`AnimationPlayer`] (the model's root node).
     player: Entity,
     /// The graph node and the length of every clip the model has, by [`Clip::index`].
-    nodes: [Option<(AnimationNodeIndex, f32)>; 13],
+    nodes: [Option<(AnimationNodeIndex, f32)>; Clip::ALL.len()],
 }
 
 /// One fighter's model: the root entity (position, facing) of a fit node (scale, feet on the
@@ -657,14 +662,15 @@ fn cast(
         let Ok((mut player, mut transitions)) = players.get_mut(animation.player) else {
             continue;
         };
-        // A clip the model lacks plays the idle.
-        let Some((node, duration)) =
-            animation.nodes[actor.clip.index()].or(animation.nodes[Clip::Idle.index()])
-        else {
+        // A clip the model lacks plays its fallback, or the idle.
+        let clip = actor
+            .clip
+            .resolve(&|clip| animation.nodes[clip.index()].is_some());
+        let Some((node, duration)) = animation.nodes[clip.index()] else {
             continue;
         };
         let restart = match state.playing {
-            Some((clip, playback)) if clip == actor.clip => {
+            Some((playing, playback)) if playing == clip => {
                 kind(playback) == Kind::Once
                     && kind(actor.playback) == Kind::Once
                     && state.cue != actor.cue
@@ -709,7 +715,7 @@ fn cast(
         {
             active.set_seek_time((fraction.clamp(0.0, 1.0) * duration).min(duration));
         }
-        state.playing = Some((actor.clip, actor.playback));
+        state.playing = Some((clip, actor.playback));
         state.cue = actor.cue;
     }
     for &(_, entity) in &cast.0 {
@@ -803,7 +809,7 @@ fn dress(
         match player {
             Some(player) => {
                 let mut graph = AnimationGraph::new();
-                let mut nodes = [None; 13];
+                let mut nodes = [None; Clip::ALL.len()];
                 for clip in Clip::ALL {
                     if let Some(handle) = &library_clips[clip.index()] {
                         let duration = clips.get(handle).map_or(0.0, AnimationClip::duration);

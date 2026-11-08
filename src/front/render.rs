@@ -52,6 +52,23 @@ impl Pixmap {
         }
     }
 
+    /// An image of `width` x `height` pixels, row by row (as many as the size says).
+    ///
+    /// ```
+    /// use srr::front::render::Pixmap;
+    ///
+    /// let image = Pixmap::from_pixels(2, 1, vec![[1, 2, 3], [4, 5, 6]]);
+    /// assert_eq!(image.pixel(1, 0), Some([4, 5, 6]));
+    /// ```
+    pub fn from_pixels(width: usize, height: usize, pixels: Vec<Rgb8>) -> Self {
+        assert_eq!(pixels.len(), width * height, "one pixel per place");
+        Pixmap {
+            width,
+            height,
+            pixels,
+        }
+    }
+
     /// Width in pixels.
     pub fn width(&self) -> usize {
         self.width
@@ -142,6 +159,118 @@ impl Pixmap {
         png_chunk(&mut png, b"IEND", &[]);
         png
     }
+}
+
+/// An 8-bit RGBA PNG of `width` x `height` pixels (`rgba` holds them row by row), compressed:
+/// each row is filtered against its left neighbour, so flat areas turn into runs of zeros,
+/// and the runs are what the fixed-code DEFLATE of [`zlib_runs`] squeezes. Made for sprite
+/// sheets, which are mostly one colour; `crate::front::skin::png_rgba` reads it back.
+///
+/// ```
+/// use srr::front::render::rgba_png;
+/// use srr::front::skin::png_rgba;
+///
+/// let pixels: Vec<u8> = (0..4 * 3 * 2).map(|i| (i * 7) as u8).collect();
+/// assert_eq!(png_rgba(&rgba_png(3, 2, &pixels)), Some(pixels));
+/// ```
+pub fn rgba_png(width: usize, height: usize, rgba: &[u8]) -> Vec<u8> {
+    let stride = (width * 4).max(1);
+    let mut raw = Vec::with_capacity(height * (stride + 1));
+    for row in rgba.chunks(stride).take(height) {
+        raw.push(1); // filter: sub (the byte of the pixel to the left)
+        for (i, &byte) in row.iter().enumerate() {
+            raw.push(byte.wrapping_sub(if i >= 4 { row[i - 4] } else { 0 }));
+        }
+    }
+
+    let mut header = Vec::with_capacity(13);
+    header.extend((width as u32).to_be_bytes());
+    header.extend((height as u32).to_be_bytes());
+    // 8 bits per channel, colour type 6 (RGBA), deflate, adaptive filtering, no interlacing.
+    header.extend([8, 6, 0, 0, 0]);
+
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png_chunk(&mut png, b"IHDR", &header);
+    png_chunk(&mut png, b"IDAT", &zlib_runs(&raw));
+    png_chunk(&mut png, b"IEND", &[]);
+    png
+}
+
+/// The bits of a DEFLATE stream, the least significant first.
+#[derive(Default)]
+struct BitWriter {
+    bytes: Vec<u8>,
+    used: u32,
+}
+
+impl BitWriter {
+    /// Appends the low `count` bits of `value`, the lowest first (the order of the header
+    /// bits and the extra bits).
+    fn put(&mut self, value: u32, count: u32) {
+        for bit in 0..count {
+            if self.used == 0 {
+                self.bytes.push(0);
+            }
+            let last = self.bytes.len() - 1;
+            self.bytes[last] |= (((value >> bit) & 1) as u8) << self.used;
+            self.used = (self.used + 1) % 8;
+        }
+    }
+
+    /// Appends a Huffman code of `count` bits, its most significant bit first.
+    fn code(&mut self, code: u32, count: u32) {
+        for bit in (0..count).rev() {
+            self.put((code >> bit) & 1, 1);
+        }
+    }
+
+    /// Appends the symbol of the fixed literal/length code of RFC 1951 section 3.2.6.
+    fn symbol(&mut self, symbol: u32) {
+        match symbol {
+            0..=143 => self.code(0x30 + symbol, 8),
+            144..=255 => self.code(0x190 + symbol - 144, 9),
+            256..=279 => self.code(symbol - 256, 7),
+            _ => self.code(0xc0 + symbol - 280, 8),
+        }
+    }
+}
+
+/// A zlib stream holding `data` in one DEFLATE block with the fixed Huffman codes, whose only
+/// matches are runs: a byte repeated, at distance one. Not a clever compressor, a small one:
+/// for the filtered rows of a sprite sheet it is a fraction of the stored size.
+fn zlib_runs(data: &[u8]) -> Vec<u8> {
+    use super::skin::{LENGTH_BASE, LENGTH_EXTRA};
+
+    let mut bits = BitWriter::default();
+    bits.put(0b011, 3); // BFINAL, BTYPE = 01 (the fixed codes)
+    let mut at = 0;
+    while at < data.len() {
+        // How many of the next (at most 258) bytes repeat the byte before them.
+        let run = match at.checked_sub(1) {
+            Some(before) => data[at..]
+                .iter()
+                .take(258)
+                .take_while(|&&byte| byte == data[before])
+                .count(),
+            None => 0,
+        };
+        if run >= 3 {
+            let length = run as u16;
+            let index = LENGTH_BASE.partition_point(|&base| base <= length) - 1;
+            bits.symbol(257 + index as u32);
+            bits.put(u32::from(length - LENGTH_BASE[index]), LENGTH_EXTRA[index]);
+            bits.code(0, 5); // distance code 0: one byte back
+            at += run;
+        } else {
+            bits.symbol(u32::from(data[at]));
+            at += 1;
+        }
+    }
+    bits.symbol(256); // end of block
+    let mut out = vec![0x78, 0x01];
+    out.extend(bits.bytes);
+    out.extend(adler32(data).to_be_bytes());
+    out
 }
 
 fn png_chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {

@@ -1,4 +1,4 @@
-//! Audits the 3D models of `assets/models/` and writes the cube man placeholder: no engine,
+//! Audits the 3D models of `assets/models/` and writes the puppet placeholder: no engine,
 //! no window (see `docs/3d-asset-pipeline.md`).
 //!
 //! ```sh
@@ -13,15 +13,15 @@
 //! mannequin, or the model's own texture, stands in).
 //!
 //! `--write` followed by character names (or none, for every character without a real model)
-//! writes the cube man as their model and the ten manga palettes as its skins. A real model
-//! (anything the cube man did not generate) is never overwritten.
+//! writes the puppet as their model and the ten manga palettes as its skins. A real model
+//! (anything the puppet did not generate) is never overwritten.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use srr::front::cubeman;
 use srr::front::model::{self, Severity};
+use srr::front::puppet;
 use srr::game::{Character, Variant};
 
 /// The asset root: `assets/` of the project.
@@ -69,12 +69,14 @@ fn audit() -> ExitCode {
     }
 }
 
-/// Writes the cube man and his skins for `character`, unless a real model is there.
+/// Writes the puppet and its skins for `character`, unless a real model is there.
 fn write(character: Character) -> Result<(), String> {
     let root = assets();
     let model = root.join(model::model_path(character));
     if let Ok(existing) = fs::read(&model)
-        && model::generator_of(&existing).as_deref() != Some(cubeman::GENERATOR)
+        && !model::generator_of(&existing)
+            .as_deref()
+            .is_some_and(puppet::made_here)
     {
         return Err(format!(
             "{}: a real model is there, not overwriting it",
@@ -83,11 +85,11 @@ fn write(character: Character) -> Result<(), String> {
     }
     let io = |error: std::io::Error| format!("{}: {error}", model.display());
     fs::create_dir_all(root.join(model::model_dir(character)).join("skins")).map_err(io)?;
-    fs::write(&model, cubeman::glb()).map_err(io)?;
+    fs::write(&model, puppet::glb()).map_err(io)?;
     println!("wrote {}", model.display());
     for variant in Variant::ALL {
         let skin = root.join(model::skin_path(character, variant));
-        fs::write(&skin, cubeman::skin(variant))
+        fs::write(&skin, puppet::skin(variant))
             .map_err(|error| format!("{}: {error}", skin.display()))?;
         println!("wrote {}", skin.display());
     }
@@ -110,7 +112,7 @@ fn main() -> ExitCode {
                 fs::read(assets().join(model::model_path(character)))
                     .ok()
                     .and_then(|bytes| model::generator_of(&bytes))
-                    .is_none_or(|generator| generator == cubeman::GENERATOR)
+                    .is_none_or(|generator| puppet::made_here(&generator))
             })
             .collect()
     } else {

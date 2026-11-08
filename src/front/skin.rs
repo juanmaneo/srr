@@ -27,11 +27,9 @@
 
 use std::sync::OnceLock;
 
+use super::moves::move_of;
 use super::scene::Rgba;
-use crate::game::{
-    Character, Fighter, FighterState, GrapplePosition, GrappleRole, Limb, Skin, Strength,
-    Technique, Variant,
-};
+use crate::game::{Character, Fighter, Limb, Skin, Strength, Variant};
 
 // -----------------------------------------------------------------------------------------
 // The palettes (the 3D view's volumes)
@@ -969,11 +967,11 @@ fn dynamic_codes(reader: &mut BitReader<'_>) -> Option<(Huffman, Huffman)> {
 }
 
 /// The length and distance bases of the LZ77 codes (RFC 1951 section 3.2.5).
-const LENGTH_BASE: [u16; 29] = [
+pub(super) const LENGTH_BASE: [u16; 29] = [
     3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
     163, 195, 227, 258,
 ];
-const LENGTH_EXTRA: [u32; 29] = [
+pub(super) const LENGTH_EXTRA: [u32; 29] = [
     0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
 ];
 const DIST_BASE: [u16; 30] = [
@@ -1054,56 +1052,9 @@ pub enum Facing {
 
 /// The pose `fighter` is in: the cell of the sheet the sprite engine draws for its state.
 /// A fighter without its own pose stands in guard — the art carries the movement, the
-/// game's logic the rules.
+/// game's logic the rules. The movement itself is [`move_of`]; the manga sheets paint
+/// twenty-two of its thirty (see
+/// [`Move::pose`](super::moves::Move::pose)).
 pub fn pose_of(fighter: &Fighter, character: Character, fight_ticks: u32) -> Pose {
-    match fighter.state() {
-        FighterState::Walking => {
-            // The two walk frames alternate with the screen's stride.
-            if (fight_ticks / 8).is_multiple_of(2) {
-                Pose::WalkA
-            } else {
-                Pose::WalkB
-            }
-        }
-        FighterState::Airborne => Pose::Jump,
-        FighterState::Blocking => Pose::Block,
-        FighterState::Crouching => Pose::Crouch,
-        FighterState::HitStun => Pose::Hit,
-        FighterState::Knockout => Pose::Ko,
-        // An attacking fighter always has its attack (the state is set with the strike);
-        // every phase of it poses the strike — the wind-up reads as the punch coming.
-        FighterState::Attacking(_) => {
-            let attack = fighter
-                .attack()
-                .expect("an attacking fighter has its attack");
-            if fighter.is_airborne() {
-                Pose::JumpKick
-            } else {
-                Pose::strike(attack.limb, attack.strength)
-            }
-        }
-        FighterState::Grabbing(_) => Pose::Grab,
-        FighterState::Technique(Technique::Throw, _) => Pose::Throw,
-        FighterState::Technique(Technique::Sweep, _) => Pose::Sweep,
-        FighterState::Special(_) => match character {
-            Character::Chalk => Pose::SpecialRush,
-            Character::Torch => Pose::SpecialFireball,
-            Character::Brick => Pose::SpecialPalm,
-            Character::Zip => Pose::SpecialSlide,
-        },
-        // The grab's ladder (clinch, mount, submission) and the two techniques'
-        // projections (sweep, throw) and finishes (scarf hold, armbar), on both sides.
-        // A counter (a reversal) just swaps the roles, so it lands in the same cells.
-        FighterState::Grappling(role, position) => match (role, position) {
-            (_, GrapplePosition::Clinch) => Pose::Grab,
-            (GrappleRole::Top, GrapplePosition::Throw) => Pose::Throw,
-            (GrappleRole::Top, GrapplePosition::Sweep) => Pose::Sweep,
-            (GrappleRole::Top, GrapplePosition::Mount) => Pose::Crouch,
-            (GrappleRole::Top, GrapplePosition::Submission) => Pose::Crouch,
-            (GrappleRole::Top, GrapplePosition::ScarfHold) => Pose::Crouch,
-            (GrappleRole::Top, GrapplePosition::Armbar) => Pose::Crouch,
-            (GrappleRole::Bottom, _) => Pose::Ko,
-        },
-        FighterState::Idle => Pose::Stand,
-    }
+    move_of(fighter, character, fight_ticks).pose()
 }

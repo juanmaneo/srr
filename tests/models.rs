@@ -1,5 +1,5 @@
-//! The 3D fighters as the front end describes them (`srr::front::model`), and the cube man that
-//! stands in for a real model (`srr::front::cubeman`):
+//! The 3D fighters as the front end describes them (`srr::front::model`), and the puppet that
+//! stands in for a real model (`srr::front::puppet`):
 //!
 //! * the toon band math the shader mirrors;
 //! * the clip of every state the rules can hold, and how it runs: the strikes, the special move,
@@ -8,13 +8,13 @@
 //! * the stage of the third-person view: one actor per fighter with a model, left out of the
 //!   software mannequins, never fed back into the rules;
 //! * the layout of `assets/models/` and its audit, the glTF reading behind it;
-//! * the cube man, byte for byte the committed placeholder of `assets/models/chalk/`.
+//! * the puppet, byte for byte the committed placeholder of `assets/models/chalk/`, and the
+//!   movements it shares with the stick figure and the sprite sheets.
 
 mod common;
 
 use std::collections::HashSet;
 
-use srr::front::cubeman;
 use srr::front::model::{
     self, Actor, Audit, CROSSFADE_SECONDS, Clip, FEATHER, HEAVY_HIT_COMBO, HOLD_POSE, MODEL_HEIGHT,
     Models, OUTLINE_SHADE, OUTLINE_WIDTH, Playback, RIM, SHADOW_EDGES, SHADOW_TINTS, SPECULAR,
@@ -22,7 +22,9 @@ use srr::front::model::{
     model_dir, model_path, outline_offset, playback_of, rim, shade, skin_path, specular, step,
     strike_fraction,
 };
-use srr::front::skin::SPRITE_NAMES;
+use srr::front::moves::{Move, move_of};
+use srr::front::puppet;
+use srr::front::skin::{SPRITE_NAMES, pose_of};
 use srr::front::space::{Camera, Vec3};
 use srr::front::{Game, Headless, Screen, VIEW_KEY, View};
 use srr::game::{
@@ -188,9 +190,25 @@ fn every_clip_has_its_own_name_and_index() {
             "punch",
             "kick",
             "sweep",
-            "special"
+            "special",
+            "grab",
+            "jump_kick",
+            "throw",
+            "scissor",
+            "mount",
+            "submission",
+            "scarf_hold",
+            "armbar",
+            "swept",
+            "thrown",
+            "pinned",
+            "caught"
         ]
     );
+    assert_eq!(Clip::BASIC, 13);
+    for clip in Clip::ALL {
+        assert_eq!(clip.is_basic(), clip.index() < Clip::BASIC, "{clip:?}");
+    }
     for (index, clip) in Clip::ALL.into_iter().enumerate() {
         assert_eq!(clip.index(), index);
         assert_eq!(Clip::by_name(clip.name()), Some(clip));
@@ -252,18 +270,26 @@ fn expected(fighter: &Fighter, moved: bool) -> (Clip, Kind) {
         }
         HitStun => (Clip::HitLight, Kind::Once),
         Knockout => (Clip::Ko, Kind::Once),
+        Attacking(_) if fighter.is_airborne() => (Clip::JumpKick, Kind::Scrub),
         Attacking(_) if fighter.attack().unwrap().limb == Limb::Kick => (Clip::Kick, Kind::Scrub),
-        Attacking(_) | Grabbing(_) => (Clip::Punch, Kind::Scrub),
+        Attacking(_) => (Clip::Punch, Kind::Scrub),
         Special(_) => (Clip::Special, Kind::Scrub),
-        Technique(..) => (Clip::Sweep, Kind::Scrub),
-        // Both sides of a clinch hold a pose: the top's grip, the bottom's flinch.
-        Grappling(GrappleRole::Bottom, GrapplePosition::Clinch) => (Clip::HitLight, Kind::Scrub),
-        Grappling(GrappleRole::Bottom, _) => (Clip::Ko, Kind::Once),
-        Grappling(GrappleRole::Top, GrapplePosition::Clinch) => (Clip::Punch, Kind::Scrub),
-        Grappling(GrappleRole::Top, GrapplePosition::Sweep | GrapplePosition::Throw) => {
-            (Clip::Sweep, Kind::Loop)
-        }
-        Grappling(GrappleRole::Top, _) => (Clip::Crouch, Kind::Loop),
+        // The grab reaches out, and so does the throw going for the collar; the sweep reaps.
+        Grabbing(_) | Technique(srr::game::Technique::Throw, _) => (Clip::Grab, Kind::Scrub),
+        Technique(srr::game::Technique::Sweep, _) => (Clip::Sweep, Kind::Scrub),
+        // Both sides of a clinch hold the same pose.
+        Grappling(_, GrapplePosition::Clinch) => (Clip::Grab, Kind::Scrub),
+        // The top: a position of its own, held; the bottom: what it suffers, once.
+        Grappling(GrappleRole::Top, GrapplePosition::Throw) => (Clip::Throw, Kind::Loop),
+        Grappling(GrappleRole::Top, GrapplePosition::Sweep) => (Clip::Scissor, Kind::Loop),
+        Grappling(GrappleRole::Top, GrapplePosition::Mount) => (Clip::Mount, Kind::Loop),
+        Grappling(GrappleRole::Top, GrapplePosition::Submission) => (Clip::Submission, Kind::Loop),
+        Grappling(GrappleRole::Top, GrapplePosition::ScarfHold) => (Clip::ScarfHold, Kind::Loop),
+        Grappling(GrappleRole::Top, GrapplePosition::Armbar) => (Clip::Armbar, Kind::Loop),
+        Grappling(GrappleRole::Bottom, GrapplePosition::Sweep) => (Clip::Swept, Kind::Once),
+        Grappling(GrappleRole::Bottom, GrapplePosition::Throw) => (Clip::Thrown, Kind::Once),
+        Grappling(GrappleRole::Bottom, GrapplePosition::Mount) => (Clip::Pinned, Kind::Once),
+        Grappling(GrappleRole::Bottom, _) => (Clip::Caught, Kind::Once),
     }
 }
 
@@ -282,6 +308,7 @@ fn phase(state: FighterState) -> Option<AttackPhase> {
 #[derive(Default)]
 struct Seen {
     clips: HashSet<Clip>,
+    moves: HashSet<Move>,
     kinds: HashSet<Kind>,
     phases: HashSet<AttackPhase>,
     holds: bool,
@@ -305,6 +332,14 @@ impl Seen {
                 self.clips.insert(clip);
             }
             self.kinds.insert(kind(playback));
+            // The same state is the same movement for the sprites, the stick figure and the
+            // stage: the manga cell is the movement's, the clip is the movement's.
+            let character = m.config().character(fighter.player());
+            for ticks in [0, 8] {
+                let movement = move_of(fighter, character, ticks);
+                assert_eq!(movement.pose(), pose_of(fighter, character, ticks));
+                self.moves.insert(movement);
+            }
             let Playback::Scrub(fraction) = playback else {
                 continue;
             };
@@ -379,6 +414,12 @@ fn every_state_of_the_rules_plays_its_clip_in_step_with_the_frame_data() {
     assert!(m.fighter(PlayerId(1)).unwrap().is_knocked_out());
     seen.run(&mut m, 10, &no_inputs());
 
+    // A kick thrown in the air.
+    let mut m = duel_at(cfg(), 100, 1100);
+    seen.run(&mut m, 1, &only(0, press_jump()));
+    seen.run(&mut m, 1, &only(0, press(Attack::kick(Strength::Medium))));
+    seen.run(&mut m, 14, &no_inputs());
+
     // Every character's special move.
     for character in Character::ALL {
         let mut config = cfg();
@@ -414,6 +455,8 @@ fn every_state_of_the_rules_plays_its_clip_in_step_with_the_frame_data() {
 
     let all: HashSet<Clip> = Clip::ALL.into_iter().collect();
     assert_eq!(seen.clips, all, "every clip is played by some state");
+    let moves: HashSet<Move> = Move::ALL.into_iter().collect();
+    assert_eq!(seen.moves, moves, "every movement is shown in some state");
     assert_eq!(
         seen.kinds,
         [Kind::Loop, Kind::Once, Kind::Scrub].into_iter().collect()
@@ -595,7 +638,7 @@ fn the_models_are_laid_out_by_character_and_skin() {
     }
 }
 
-/// The files of a complete model of Chalk: the cube man and every skin.
+/// The files of a complete model of Chalk: the puppet and every skin.
 fn complete_chalk() -> Vec<String> {
     let mut files = vec![model_path(Character::Chalk)];
     files.extend(Variant::ALL.map(|variant| skin_path(Character::Chalk, variant)));
@@ -627,20 +670,24 @@ fn the_audit_notes_missing_models_and_skins_and_flags_broken_ones() {
     assert_eq!(empty.lines.len(), Character::ALL.len());
     assert!(empty.lines[0].1.contains("no model"));
 
-    // The committed layout: the cube man and every skin.
-    let complete = audit_of(&complete_chalk(), Some(cubeman::glb()));
+    // The committed layout: the puppet and every skin.
+    let complete = audit_of(&complete_chalk(), Some(puppet::glb()));
     assert!(complete.passed(), "{:?}", complete.lines);
     assert!(
         complete
             .lines
             .iter()
-            .any(|(_, line)| line.contains(&format!("13 clips ({})", cubeman::GENERATOR)))
+            .any(|(_, line)| line.contains(&format!(
+                "{} clips ({})",
+                Clip::ALL.len(),
+                puppet::GENERATOR
+            )))
     );
 
     // A missing skin is only noted: the model's own texture stands in.
     let mut files = complete_chalk();
     files.pop();
-    let partial = audit_of(&files, Some(cubeman::glb()));
+    let partial = audit_of(&files, Some(puppet::glb()));
     assert!(partial.passed());
     assert!(
         partial
@@ -652,7 +699,7 @@ fn the_audit_notes_missing_models_and_skins_and_flags_broken_ones() {
     // A file in skins/ named after no manga skin is a problem.
     let mut files = complete_chalk();
     files.push("models/chalk/skins/purple.png".into());
-    let stray = audit_of(&files, Some(cubeman::glb()));
+    let stray = audit_of(&files, Some(puppet::glb()));
     assert_eq!(problems(&stray).len(), 1, "{:?}", stray.lines);
     assert!(problems(&stray)[0].contains("purple.png"));
 
@@ -661,26 +708,46 @@ fn the_audit_notes_missing_models_and_skins_and_flags_broken_ones() {
     assert!(!unreadable.passed());
     assert!(problems(&unreadable)[0].contains("truncated"));
 
-    // A model missing clips: one problem per clip, the generator unknown.
+    // A model missing clips: one problem per basic clip, a note for each of the others
+    // that says what plays instead; the generator unknown.
     let json = r#"{"asset":{"version":"2.0"},"animations":[{"name":"idle"},{"name":"kick"}]}"#;
-    let gaps = audit_of(&complete_chalk(), Some(cubeman::pack(json, &[])));
-    assert_eq!(
-        problems(&gaps).len(),
-        Clip::ALL.len() - 2,
-        "{:?}",
-        gaps.lines
-    );
+    let gaps = audit_of(&complete_chalk(), Some(puppet::pack(json, &[])));
+    assert_eq!(problems(&gaps).len(), Clip::BASIC - 2, "{:?}", gaps.lines);
     assert!(problems(&gaps).iter().any(|line| line.contains("`walk_f`")));
     assert!(
         gaps.lines
             .iter()
             .any(|(_, line)| line.contains("2 clips (unknown generator)"))
     );
+    let noted: Vec<&String> = gaps
+        .lines
+        .iter()
+        .filter(|(severity, line)| *severity == Severity::Info && line.contains("plays `"))
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(noted.len(), Clip::ALL.len() - Clip::BASIC, "{noted:?}");
+    assert!(
+        noted
+            .iter()
+            .any(|line| line.contains("no `mount` clip: the fighter plays `crouch` instead"))
+    );
+
+    // A model of the first thirteen clips only is complete: the rest falls back.
+    let names: Vec<String> = Clip::ALL[..Clip::BASIC]
+        .iter()
+        .map(|clip| format!("{{\"name\":\"{}\"}}", clip.name()))
+        .collect();
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"animations":[{}]}}"#,
+        names.join(",")
+    );
+    let old = audit_of(&complete_chalk(), Some(puppet::pack(&json, &[])));
+    assert!(old.passed(), "{:?}", old.lines);
 }
 
-/// The cube man's header with `patch` applied.
+/// The puppet's header with `patch` applied.
 fn patched(patch: impl Fn(&mut Vec<u8>)) -> Vec<u8> {
-    let mut glb = cubeman::pack("{}", &[]);
+    let mut glb = puppet::pack("{}", &[]);
     patch(&mut glb);
     glb
 }
@@ -707,13 +774,13 @@ fn a_broken_gltf_binary_says_what_is_wrong() {
     assert!(error(&patched(|glb| glb[16] = b'X')).contains("not JSON"));
     assert!(error(&patched(|glb| glb[12] = 200)).contains("truncated"));
     assert!(error(&patched(|glb| glb[20] = 0xff)).contains("UTF-8"));
-    assert_eq!(glb_json(&cubeman::pack("{}", &[1, 2, 3])).unwrap(), "{}  ");
+    assert_eq!(glb_json(&puppet::pack("{}", &[1, 2, 3])).unwrap(), "{}  ");
     assert!(clips_of(&[]).is_err());
     assert_eq!(generator_of(&[]), None);
 }
 
 fn clips_in(json: &str) -> Vec<String> {
-    clips_of(&cubeman::pack(json, &[])).unwrap()
+    clips_of(&puppet::pack(json, &[])).unwrap()
 }
 
 #[test]
@@ -742,7 +809,7 @@ fn the_clip_names_are_read_from_the_animations_only() {
 
 #[test]
 fn the_generator_is_read_when_it_is_a_string() {
-    let generator = |json: &str| generator_of(&cubeman::pack(json, &[]));
+    let generator = |json: &str| generator_of(&puppet::pack(json, &[]));
     assert_eq!(
         generator(r#"{"asset":{"generator" : "Meshy"}}"#),
         Some("Meshy".into())
@@ -754,17 +821,17 @@ fn the_generator_is_read_when_it_is_a_string() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The cube man
+// The puppet
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn the_cube_man_has_every_clip_and_is_deterministic() {
-    let glb = cubeman::glb();
-    assert_eq!(glb, cubeman::glb());
+fn the_puppet_has_every_clip_and_is_deterministic() {
+    let glb = puppet::glb();
+    assert_eq!(glb, puppet::glb());
     assert_eq!(glb.len() % 4, 0);
     let names: Vec<&str> = Clip::ALL.iter().map(|clip| clip.name()).collect();
     assert_eq!(clips_of(&glb).unwrap(), names);
-    assert_eq!(generator_of(&glb).as_deref(), Some(cubeman::GENERATOR));
+    assert_eq!(generator_of(&glb).as_deref(), Some(puppet::GENERATOR));
     let json = glb_json(&glb).unwrap();
     for needle in [
         "\"skins\"",
@@ -774,24 +841,245 @@ fn the_cube_man_has_every_clip_and_is_deterministic() {
     ] {
         assert!(json.contains(needle), "{needle}");
     }
-    const { assert!(cubeman::HEIGHT > 1.0) };
+    assert!(puppet::made_here(puppet::GENERATOR));
+    assert!(
+        puppet::made_here("srr cube man"),
+        "the old placeholder is ours"
+    );
+    assert!(!puppet::made_here("Meshy"));
 }
 
 #[test]
-fn the_cube_man_packs_padded_chunks() {
-    let glb = cubeman::pack("{\"a\":1}", &[1, 2, 3, 4, 5]);
+fn the_puppet_packs_padded_chunks() {
+    let glb = puppet::pack("{\"a\":1}", &[1, 2, 3, 4, 5]);
     assert_eq!(glb.len() % 4, 0);
     assert_eq!(glb_json(&glb).unwrap().trim_end(), "{\"a\":1}");
 }
 
 #[test]
-fn every_skin_of_the_cube_man_is_a_four_cell_palette() {
+fn the_puppet_is_a_smooth_body_standing_on_the_floor() {
+    let body = puppet::geometry();
+    let count = body.positions.len();
+    assert!(
+        count > 10_000 && count < 65_536,
+        "{count} vertices fit 16-bit indices"
+    );
+    assert_eq!(body.normals.len(), count);
+    assert_eq!(body.uvs.len(), count);
+    assert_eq!(body.joints.len(), count);
+    assert_eq!(body.indices.len() % 3, 0);
+    assert!(body.indices.iter().all(|&i| (i as usize) < count));
+    // Every joint carries something, and no vertex follows a joint the skeleton lacks.
+    let used: HashSet<u8> = body.joints.iter().copied().collect();
+    assert_eq!(used.len(), puppet::JOINT_COUNT);
+    assert!(
+        used.iter()
+            .all(|&joint| (joint as usize) < puppet::JOINT_COUNT)
+    );
+    // Unit normals, texture coordinates inside the atlas.
+    for normal in &body.normals {
+        let length = normal.iter().map(|v| v * v).sum::<f32>().sqrt();
+        assert!((length - 1.0).abs() < 1e-3, "{normal:?}");
+    }
+    for uv in &body.uvs {
+        assert!(uv.iter().all(|&c| (0.0..=1.0).contains(&c)), "{uv:?}");
+    }
+    // 1.8 m from the soles to the hair, the soles on the floor, centred, facing +z.
+    let bounds = |axis: usize| {
+        let values = body.positions.iter().map(|p| p[axis]);
+        (
+            values.clone().fold(f32::MAX, f32::min),
+            values.fold(f32::MIN, f32::max),
+        )
+    };
+    let (low, high) = bounds(1);
+    assert!(low.abs() < 0.01, "the soles are at {low}");
+    assert!((high - puppet::HEIGHT).abs() < 0.03, "{high} tall");
+    let (back, front) = bounds(2);
+    assert!(front > -back, "the nose and the shoes point to +z");
+    let (left, right) = bounds(0);
+    assert!((left + right).abs() < 0.01, "{left} {right}");
+    // A triangle faces out: the normal of its first corner is on the side of its winding.
+    let corner = |i: u16| body.positions[i as usize];
+    let mut outward = 0;
+    let mut checked = 0;
+    for triangle in body.indices.chunks(3).step_by(97) {
+        let [a, b, c] = [
+            corner(triangle[0]),
+            corner(triangle[1]),
+            corner(triangle[2]),
+        ];
+        let edge = |p: [f32; 3], q: [f32; 3]| [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+        let (u, v) = (edge(a, b), edge(a, c));
+        let face = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let size = face.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if size < 1e-9 {
+            continue; // a sliver at a pole
+        }
+        let normal = body.normals[triangle[0] as usize];
+        checked += 1;
+        if face.iter().zip(normal).map(|(f, n)| f * n).sum::<f32>() > 0.0 {
+            outward += 1;
+        }
+    }
+    assert!(
+        checked > 100 && outward * 100 >= checked * 99,
+        "{outward} of {checked}"
+    );
+}
+
+/// The pose of `movement` at its active moment.
+fn pose_at(movement: Move) -> srr::front::stick::Pose {
+    srr::front::stick::move_pose(movement, AttackPhase::Active)
+}
+
+/// The unit vector from `a` to `b` (`None` when they are the same point).
+fn direction(a: [f32; 2], b: [f32; 2]) -> Option<[f32; 2]> {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let length = dx.hypot(dy);
+    (length > 1e-4).then(|| [dx / length, dy / length])
+}
+
+#[test]
+fn the_skeleton_points_where_the_stick_figure_points() {
+    use srr::front::stick::{ARM, LEG, Point, bend};
+    // Forward kinematics of the solved pose: every bone points the way the same bone of the
+    // stick figure points (their lengths differ where the cartoon stretches), and the hips
+    // stand where the hip does, at sixty-four pixels to the metre.
+    let k = 1.0 / 64.0;
+    let flat = |q: Point| [q.x, q.y];
+    let mut bones = 0;
+    for movement in Move::ALL {
+        let pose = pose_at(movement);
+        let points = puppet::points(&puppet::solve(&pose));
+        assert!(
+            (points.hips[0] - pose.hip.x * k).abs() < 1e-5,
+            "{movement:?}"
+        );
+        assert!(
+            (points.hips[1] - 0.05 - pose.hip.y * k).abs() < 1e-5,
+            "{movement:?}"
+        );
+        let mut same = |got: Option<[f32; 2]>, want: Option<[f32; 2]>, what: &str| {
+            if let (Some(got), Some(want)) = (got, want) {
+                let error = (got[0] - want[0]).hypot(got[1] - want[1]);
+                assert!(
+                    error < 2e-3,
+                    "{movement:?} {what}: {got:?} against {want:?}"
+                );
+                bones += 1;
+            }
+        };
+        same(
+            direction(points.hips, points.neck),
+            direction(flat(pose.hip), flat(pose.neck)),
+            "torso",
+        );
+        let torso = [pose.neck.x - pose.hip.x, pose.neck.y - pose.hip.y];
+        let shoulder = Point {
+            x: pose.hip.x + torso[0] * 0.85,
+            y: pose.hip.y + torso[1] * 0.85,
+        };
+        for side in 0..2 {
+            let hand = pose.hands[side];
+            let elbow = bend(shoulder, hand, ARM, pose.bends[side]);
+            same(
+                direction(points.shoulder, points.elbows[side]),
+                direction(flat(shoulder), flat(elbow)),
+                "upper arm",
+            );
+            same(
+                direction(points.elbows[side], points.hands[side]),
+                direction(flat(elbow), flat(hand)),
+                "forearm",
+            );
+            let foot = pose.feet[side];
+            let knee = bend(pose.hip, foot, LEG, pose.bends[2 + side]);
+            same(
+                direction(points.hips, points.knees[side]),
+                direction(flat(pose.hip), flat(knee)),
+                "thigh",
+            );
+            same(
+                direction(points.knees[side], points.feet[side]),
+                direction(flat(knee), flat(foot)),
+                "shin",
+            );
+        }
+    }
+    assert!(bones > 200, "{bones} bones checked");
+}
+
+#[test]
+fn every_clip_is_keyed_from_the_poses_of_the_stick_figure() {
+    use srr::front::stick::clip_poses;
+    for clip in Clip::ALL {
+        let (seconds, keys) = clip_poses(clip);
+        assert!(seconds > 0.0 && seconds <= 2.0, "{clip:?}");
+        assert!(keys.len() >= 3, "{clip:?}");
+        assert_eq!(keys[0].0, 0.0, "{clip:?} starts at the start");
+        assert_eq!(keys.last().unwrap().0, 1.0, "{clip:?} ends at the end");
+        assert!(
+            keys.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "{clip:?}"
+        );
+        // The solved keys differ where the poses do: a clip that moves is not one pose.
+        let rigs: Vec<puppet::Rig> = keys.iter().map(|(_, pose)| puppet::solve(pose)).collect();
+        let moves = rigs.windows(2).any(|pair| pair[0] != pair[1]);
+        let holds = matches!(
+            clip,
+            Clip::Crouch
+                | Clip::Block
+                | Clip::Throw
+                | Clip::Scissor
+                | Clip::Mount
+                | Clip::Submission
+                | Clip::ScarfHold
+                | Clip::Armbar
+        );
+        assert_eq!(moves, !holds, "{clip:?}");
+    }
+    // A strike winds up at the end of the start-up and touches at the contact: the keys sit
+    // where the engine scrubs to.
+    let (_, punch) = clip_poses(Clip::Punch);
+    let times: Vec<f32> = punch.iter().map(|key| key.0).collect();
+    assert_eq!(times[1], STRIKE_WINDUP);
+    assert_eq!(times[2], STRIKE_CONTACT);
+    let contact = &punch[2].1;
+    let guard = &punch[0].1;
+    assert!(
+        contact.hands[0].x > guard.hands[0].x + 20.0,
+        "the fist is out at contact"
+    );
+    // The two walks are the same stride run in opposite directions.
+    let (_, forward) = clip_poses(Clip::WalkF);
+    let (_, backward) = clip_poses(Clip::WalkB);
+    for (a, b) in forward.iter().zip(backward.iter().rev()) {
+        assert_eq!(a.1.feet[0], b.1.feet[0]);
+    }
+    // Each ground position has its own pose, none the guard's.
+    let rigs: HashSet<Vec<u32>> = Move::ALL
+        .into_iter()
+        .map(|movement| {
+            let rig = puppet::solve(&pose_at(movement));
+            rig.pitch.iter().map(|p| p.to_bits()).collect()
+        })
+        .collect();
+    assert!(rigs.len() >= 28, "{} distinct poses", rigs.len());
+}
+
+#[test]
+fn every_skin_of_the_puppet_is_the_atlas_in_its_palette() {
     let mut palettes = HashSet::new();
     for variant in Variant::ALL {
-        let png = cubeman::skin(variant);
+        let png = puppet::skin(variant);
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
         assert_eq!(&png[12..16], b"IHDR");
-        assert_eq!(&png[16..24], [0, 0, 0, 4, 0, 0, 0, 1], "4x1 pixels");
+        assert_eq!(&png[16..24], [0, 0, 1, 32, 0, 0, 0, 192], "288x192 pixels");
         assert_eq!(png[25], 2, "opaque RGB");
         palettes.insert(png);
     }
@@ -800,22 +1088,95 @@ fn every_skin_of_the_cube_man_is_a_four_cell_palette() {
         Variant::ALL.len(),
         "every variant has its colours"
     );
+    assert!(
+        !palettes.contains(&puppet::texture(&puppet::Paints::chalk())),
+        "the chalk's own paint is none of theirs"
+    );
 }
 
 #[test]
-fn the_committed_placeholder_is_the_cube_man() {
+fn the_committed_placeholder_is_the_puppet() {
     let root = std::path::Path::new("assets");
     let read =
         |path: String| std::fs::read(root.join(&path)).unwrap_or_else(|e| panic!("{path}: {e}"));
     assert!(
-        read(model_path(Character::Chalk)) == cubeman::glb(),
+        read(model_path(Character::Chalk)) == puppet::glb(),
         "assets/models/chalk/chalk.glb is stale: \
          cargo run --no-default-features --example models -- --write chalk"
     );
     for variant in Variant::ALL {
         assert!(
-            read(skin_path(Character::Chalk, variant)) == cubeman::skin(variant),
+            read(skin_path(Character::Chalk, variant)) == puppet::skin(variant),
             "{variant:?}"
         );
+    }
+}
+
+#[test]
+fn a_model_without_the_new_clips_plays_what_it_always_played() {
+    let old = |clip: Clip| clip.is_basic();
+    for clip in Clip::ALL {
+        let played = clip.resolve(&old);
+        assert!(played.is_basic(), "{clip:?} -> {played:?}");
+        if clip.is_basic() {
+            assert_eq!(played, clip);
+            assert_eq!(clip.fallback(), None);
+        } else {
+            assert_eq!(
+                Some(played),
+                clip.fallback(),
+                "{clip:?} has a basic fallback"
+            );
+        }
+    }
+    // The grapple's ground game keeps its old look: the top crouches, the bottom lies.
+    for clip in [Clip::Mount, Clip::Submission, Clip::ScarfHold, Clip::Armbar] {
+        assert_eq!(clip.resolve(&old), Clip::Crouch);
+    }
+    for clip in [Clip::Swept, Clip::Thrown, Clip::Pinned, Clip::Caught] {
+        assert_eq!(clip.resolve(&old), Clip::Ko);
+    }
+    // And a model with none of them stands still: the idle, or nothing if it lacks that too.
+    assert_eq!(Clip::Punch.resolve(&|clip| clip == Clip::Idle), Clip::Idle);
+    assert_eq!(Clip::Punch.resolve(&|_| false), Clip::Idle);
+    assert_eq!(
+        Clip::Mount.resolve(&|clip| clip == Clip::Mount),
+        Clip::Mount
+    );
+}
+
+#[test]
+fn every_movement_has_a_clip_and_a_cell() {
+    for (index, movement) in Move::ALL.into_iter().enumerate() {
+        assert_eq!(movement.index(), index);
+        // The first twenty-two are the manga poses, in their order.
+        if index < srr::front::skin::Pose::ALL.len() {
+            assert_eq!(
+                movement.pose(),
+                srr::front::skin::Pose::ALL[index],
+                "{movement:?}"
+            );
+        }
+        // The clip of a movement keys the pose of that movement.
+        let (_, keys) = srr::front::stick::clip_poses(movement.clip());
+        assert!(keys.len() >= 3);
+    }
+    // Every clip is some movement's, but for the ones the states reach other ways.
+    let clips: HashSet<Clip> = Move::ALL.into_iter().map(Move::clip).collect();
+    for clip in Clip::ALL {
+        assert!(
+            clips.contains(&clip) || matches!(clip, Clip::WalkB | Clip::HitHeavy | Clip::Sweep),
+            "{clip:?}"
+        );
+    }
+    for (limb, strength, movement) in [
+        (Limb::Punch, Strength::Low, Move::PunchLow),
+        (Limb::Punch, Strength::Medium, Move::PunchMid),
+        (Limb::Punch, Strength::High, Move::PunchHigh),
+        (Limb::Kick, Strength::Low, Move::KickLow),
+        (Limb::Kick, Strength::Medium, Move::KickMid),
+        (Limb::Kick, Strength::High, Move::KickHigh),
+    ] {
+        assert_eq!(Move::strike(limb, strength), movement);
     }
 }

@@ -19,7 +19,7 @@ use super::space::{Camera, Fx, Vec3};
 use super::tps::depth;
 use crate::game::{
     Character, Facing, Fighter, FighterState, GrapplePosition, GrappleRole, Limb, MatchConfig,
-    PlayerId, Variant,
+    PlayerId, Technique, Variant,
 };
 use crate::net::Client;
 
@@ -147,8 +147,11 @@ pub fn outline_offset(clip_w: f32, projection_scale: f32, viewport_height: f32) 
 // Clips
 // ---------------------------------------------------------------------------------------------
 
-/// The named animation clips every model carries (see `docs/3d-asset-pipeline.md`): a model
-/// missing one plays its idle instead, and the engine logs the gap when it loads the model.
+/// The named animation clips of a model (see `docs/3d-asset-pipeline.md`): the first thirteen
+/// ([`Clip::BASIC`]) every model carries, and a model missing one plays its idle instead (the
+/// engine logs the gap when it loads the model). The twelve after them are the movements the
+/// first set merges (the grab, the flying kick, the two projections and the ground positions
+/// of a grapple): a model without them plays the [`fallback`](Clip::fallback) it always had.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Clip {
     /// Standing in guard.
@@ -173,15 +176,39 @@ pub enum Clip {
     Punch,
     /// A kick, scrubbed through the frame data.
     Kick,
-    /// A sweep: the takedowns.
+    /// A sweep: the leg that reaps, scrubbed through the technique's frame data.
     Sweep,
     /// The character's special move.
     Special,
+    /// Reaching out to grab (the grab, the throw's grip), and the clinch that follows.
+    Grab,
+    /// A kick thrown in the air.
+    JumpKick,
+    /// The shoulder throw: bent forward under the opponent (the top of the projection).
+    Throw,
+    /// The flying scissor sweep (the top of the projection).
+    Scissor,
+    /// Kneeling astride the opponent, punching down.
+    Mount,
+    /// Low over the opponent, an arm locked around the neck.
+    Submission,
+    /// Sitting at the opponent's side in the scarf hold.
+    ScarfHold,
+    /// On the back across the opponent, pulling the arm.
+    Armbar,
+    /// Swept off the feet, falling backwards (the bottom of the sweep).
+    Swept,
+    /// Flying head first over the thrower's shoulder (the bottom of the throw).
+    Thrown,
+    /// Pinned under the mount.
+    Pinned,
+    /// Caught in a finishing hold.
+    Caught,
 }
 
 impl Clip {
     /// Every clip, in the order of their [`index`](Clip::index).
-    pub const ALL: [Clip; 13] = [
+    pub const ALL: [Clip; 25] = [
         Clip::Idle,
         Clip::WalkF,
         Clip::WalkB,
@@ -195,7 +222,22 @@ impl Clip {
         Clip::Kick,
         Clip::Sweep,
         Clip::Special,
+        Clip::Grab,
+        Clip::JumpKick,
+        Clip::Throw,
+        Clip::Scissor,
+        Clip::Mount,
+        Clip::Submission,
+        Clip::ScarfHold,
+        Clip::Armbar,
+        Clip::Swept,
+        Clip::Thrown,
+        Clip::Pinned,
+        Clip::Caught,
     ];
+
+    /// How many clips lead [`Clip::ALL`] as the ones every model must carry.
+    pub const BASIC: usize = 13;
 
     /// The name of the clip inside the glTF file.
     ///
@@ -221,6 +263,18 @@ impl Clip {
             Clip::Kick => "kick",
             Clip::Sweep => "sweep",
             Clip::Special => "special",
+            Clip::Grab => "grab",
+            Clip::JumpKick => "jump_kick",
+            Clip::Throw => "throw",
+            Clip::Scissor => "scissor",
+            Clip::Mount => "mount",
+            Clip::Submission => "submission",
+            Clip::ScarfHold => "scarf_hold",
+            Clip::Armbar => "armbar",
+            Clip::Swept => "swept",
+            Clip::Thrown => "thrown",
+            Clip::Pinned => "pinned",
+            Clip::Caught => "caught",
         }
     }
 
@@ -232,6 +286,61 @@ impl Clip {
     /// Position in [`Clip::ALL`].
     pub const fn index(self) -> usize {
         self as usize
+    }
+
+    /// Whether every model must carry the clip (the first [`Clip::BASIC`]).
+    ///
+    /// ```
+    /// use srr::front::model::Clip;
+    ///
+    /// assert!(Clip::Special.is_basic());
+    /// assert!(!Clip::Mount.is_basic());
+    /// ```
+    pub const fn is_basic(self) -> bool {
+        self.index() < Clip::BASIC
+    }
+
+    /// The clip that stands in when a model lacks this one: the movement the first thirteen
+    /// merged it into, `None` for those.
+    ///
+    /// ```
+    /// use srr::front::model::Clip;
+    ///
+    /// assert_eq!(Clip::Armbar.fallback(), Some(Clip::Crouch));
+    /// assert_eq!(Clip::Caught.fallback(), Some(Clip::Ko));
+    /// assert_eq!(Clip::Punch.fallback(), None);
+    /// ```
+    pub const fn fallback(self) -> Option<Clip> {
+        match self {
+            Clip::Grab => Some(Clip::Punch),
+            Clip::JumpKick => Some(Clip::Kick),
+            Clip::Throw | Clip::Scissor => Some(Clip::Sweep),
+            Clip::Mount | Clip::Submission | Clip::ScarfHold | Clip::Armbar => Some(Clip::Crouch),
+            Clip::Swept | Clip::Thrown | Clip::Pinned | Clip::Caught => Some(Clip::Ko),
+            _ => None,
+        }
+    }
+
+    /// The clip a model plays for this one, given the clips it `has`: this one, else its
+    /// fallback, else the idle (which a model without is not drawn at all).
+    ///
+    /// ```
+    /// use srr::front::model::Clip;
+    ///
+    /// let old_model = |clip: Clip| clip.is_basic();
+    /// assert_eq!(Clip::Pinned.resolve(&old_model), Clip::Ko);
+    /// assert_eq!(Clip::Kick.resolve(&old_model), Clip::Kick);
+    /// assert_eq!(Clip::Kick.resolve(&|clip| clip == Clip::Idle), Clip::Idle);
+    /// ```
+    pub fn resolve(self, has: &dyn Fn(Clip) -> bool) -> Clip {
+        let mut clip = self;
+        while !has(clip) {
+            match clip.fallback() {
+                Some(next) => clip = next,
+                None => return Clip::Idle,
+            }
+        }
+        clip
     }
 }
 
@@ -276,10 +385,11 @@ pub fn strike_fraction(frame: u32, startup: u32, active: u32, recovery: u32) -> 
 /// The clip `fighter` plays. `moved` tells whether it changed place since the last tick: a
 /// walk or a step back that the arena's bound stops shows the stance instead of a treadmill.
 ///
-/// The mapping mirrors the poses of the sprites ([`pose_of`](super::skin::pose_of)): a strike
-/// plays its limb's clip, the takedowns and their projections the sweep, the bottom of a
-/// grapple lies like a knockout, the top of a ground position crouches over it, and a clinch
-/// holds the contact pose of a punch (see [`playback_of`]).
+/// The mapping mirrors the movements the stick figure and the sprite sheets show
+/// ([`move_of`](super::moves::move_of)): a strike plays its limb's clip (the flying kick its
+/// own), the grab and the clinch reach out, the sweep reaps, each projection and each position
+/// of the ground game has its clip, on the top's side and on the bottom's. A clinch holds its
+/// pose (see [`playback_of`]).
 pub fn clip_of(fighter: &Fighter, moved: bool) -> Clip {
     match fighter.state() {
         FighterState::Idle => Clip::Idle,
@@ -298,21 +408,25 @@ pub fn clip_of(fighter: &Fighter, moved: bool) -> Clip {
         }
         FighterState::Knockout => Clip::Ko,
         FighterState::Attacking(_) => match fighter.attack() {
+            _ if fighter.is_airborne() => Clip::JumpKick,
             Some(attack) if attack.limb == Limb::Kick => Clip::Kick,
             _ => Clip::Punch,
         },
         FighterState::Special(_) => Clip::Special,
-        // A grab reaches out like a punch; both techniques are takedowns.
-        FighterState::Grabbing(_) => Clip::Punch,
-        FighterState::Technique(_, _) => Clip::Sweep,
-        FighterState::Grappling(GrappleRole::Bottom, GrapplePosition::Clinch) => Clip::HitLight,
-        FighterState::Grappling(GrappleRole::Bottom, _) => Clip::Ko,
-        FighterState::Grappling(GrappleRole::Top, GrapplePosition::Clinch) => Clip::Punch,
-        FighterState::Grappling(
-            GrappleRole::Top,
-            GrapplePosition::Sweep | GrapplePosition::Throw,
-        ) => Clip::Sweep,
-        FighterState::Grappling(GrappleRole::Top, _) => Clip::Crouch,
+        // A grab reaches out, and so does the throw going for the collar and the sleeve.
+        FighterState::Grabbing(_) | FighterState::Technique(Technique::Throw, _) => Clip::Grab,
+        FighterState::Technique(Technique::Sweep, _) => Clip::Sweep,
+        FighterState::Grappling(_, GrapplePosition::Clinch) => Clip::Grab,
+        FighterState::Grappling(GrappleRole::Top, GrapplePosition::Throw) => Clip::Throw,
+        FighterState::Grappling(GrappleRole::Top, GrapplePosition::Sweep) => Clip::Scissor,
+        FighterState::Grappling(GrappleRole::Top, GrapplePosition::Mount) => Clip::Mount,
+        FighterState::Grappling(GrappleRole::Top, GrapplePosition::Submission) => Clip::Submission,
+        FighterState::Grappling(GrappleRole::Top, GrapplePosition::ScarfHold) => Clip::ScarfHold,
+        FighterState::Grappling(GrappleRole::Top, GrapplePosition::Armbar) => Clip::Armbar,
+        FighterState::Grappling(GrappleRole::Bottom, GrapplePosition::Sweep) => Clip::Swept,
+        FighterState::Grappling(GrappleRole::Bottom, GrapplePosition::Throw) => Clip::Thrown,
+        FighterState::Grappling(GrappleRole::Bottom, GrapplePosition::Mount) => Clip::Pinned,
+        FighterState::Grappling(GrappleRole::Bottom, _) => Clip::Caught,
     }
 }
 
@@ -594,11 +708,19 @@ pub fn audit(files: &[&str], read: impl Fn(&str) -> Option<Vec<u8>>) -> Audit {
                     generator_of(&bytes).unwrap_or_else(|| "unknown generator".into())
                 ));
                 for clip in Clip::ALL {
-                    if !found.iter().any(|name| name == clip.name()) {
-                        audit.problem(format!(
+                    if found.iter().any(|name| name == clip.name()) {
+                        continue;
+                    }
+                    match clip.fallback() {
+                        None => audit.problem(format!(
                             "{path}: no `{}` clip: the fighter plays its idle instead",
                             clip.name()
-                        ));
+                        )),
+                        Some(fallback) => audit.info(format!(
+                            "{path}: no `{}` clip: the fighter plays `{}` instead",
+                            clip.name(),
+                            fallback.name()
+                        )),
                     }
                 }
             }

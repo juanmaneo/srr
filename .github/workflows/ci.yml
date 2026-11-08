@@ -51,7 +51,7 @@ jobs:
         run: cargo test -p srr --no-default-features
 
       # WHY: the cel-shaded 3D fighters live behind the `mode3d` feature so the 2D build stays
-      # the default. The render tests then boot the 3D view with the committed cube-man
+      # the default. The render tests then boot the 3D view with the committed puppet
       # fixture (assets/models/chalk) and assert the toon material and the AnimationPlayer —
       # no Meshy download, no GPU beyond mesa.
       - name: The 3D fighters (mode3d) lint and render headlessly

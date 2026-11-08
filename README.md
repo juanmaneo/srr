@@ -365,7 +365,12 @@ models are drawing only. The rules, the hitboxes, the replays and online play ar
 unchanged, and a missing or broken model only brings that character's mannequin back. The
 models come from an AI image-to-3D pipeline fed with the manga skins
 ([docs/3d-asset-pipeline.md](docs/3d-asset-pipeline.md)). Until then, Chalk is a procedurally
-generated cube man (`src/front/cubeman.rs`), which is also the CI fixture.
+generated wooden puppet, Pinocchio style, tubes and balls with a grain texture
+(`src/front/puppet.rs`), which is also the CI fixture. It moves exactly like the stick figure
+of the arena: every keyframe of its 25 clips is a pose of the stick figure, the ground
+positions of a grapple included, and the stick figure's sprite sheet
+(`assets/skins/chalk/chalk.png`, `src/front/chalk.rs`) shows the same thirty movements in
+the grid of the manga sheets.
 
 ### HUD
 
@@ -707,8 +712,10 @@ and the process exits 0.
   character select screen (`select.rs`), the controls page (`controls.rs`), the on-screen
   touch controls for phones (`touch.rs`), the arena with the XKCD stick figures (`stick.rs`), the
   third-person 3D view (`tps.rs`, on the fixed-point 3D maths of `space.rs`), the stage of
-  its glTF fighters (`model.rs`: clips, frame-data scrubbing, toon bands, the model audit)
-  and the cube-man placeholder (`cubeman.rs`), the
+  its glTF fighters (`model.rs`: clips, frame-data scrubbing, toon bands, the model audit),
+  the movements they share (`moves.rs`: the thirty things a fighter can be seen doing, for
+  the stick figure, the sprite sheets and the clips), the chalk sprite sheet (`chalk.rs`) and
+  the puppet placeholder (`puppet.rs`), the
   versus HUD and the music cues. Every frame is described as plain rectangles and
   monospace labels on a 1280×720 virtual screen (`Frame`), so it is fully unit-tested.
   `front/render.rs` is a software renderer for those frames (pixels, PNG, text) and
@@ -721,7 +728,10 @@ and the process exits 0.
   `toon.wgsl` and `outline.wgsl`) renders the glTF fighters of the `mode3d` feature.
 * `assets/models/` – the 3D fighters: one rigged `.glb` per character plus its skin textures
   (see [docs/3d-asset-pipeline.md](docs/3d-asset-pipeline.md)); `chalk/` holds the generated
-  cube man.
+  puppet.
+* `assets/skins/` – the sprite sheets: one hand-painted PNG per manga character
+  (`manga/`), and the generated chalk (`chalk/chalk.png`, written by
+  `cargo run --no-default-features --example sheets -- --write`).
 * `assets/fonts/` – Fira Mono (SIL OFL), the monospace font of the Fyrox backend (Bevy embeds
   the same font).
 * `server/` – `srr-server`: static files + the WebSocket room (`room.rs`, pure: seats,

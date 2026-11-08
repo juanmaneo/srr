@@ -60,14 +60,16 @@ use space::Camera;
 
 pub mod arena;
 pub mod ascii;
+pub mod chalk;
 pub mod controls;
-pub mod cubeman;
 pub mod gamepad;
 pub mod headless;
 pub mod hud;
 pub mod intro;
 pub mod manga;
 pub mod model;
+pub mod moves;
+pub mod puppet;
 pub mod render;
 mod scene;
 pub mod select;

@@ -45,7 +45,7 @@ jobs:
       - name: The engine feature builds without the default one
         run: cargo test -p srr --no-default-features
 
-      - name: The 3D fighters (mode3d) render headlessly with the cube-man fixture
+      - name: The 3D fighters (mode3d) render headlessly with the puppet fixture
         run: cargo test -p srr --features mode3d --test render --test models
 
       - name: The committed 3D models pass their audit
