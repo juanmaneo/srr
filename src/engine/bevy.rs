@@ -798,9 +798,13 @@ pub fn server_app(shell: Shell, capture: Capture) -> Result<Server, ServerError>
 
     // What `App::run`'s runners do before the first frame and `App::update` does not: let
     // the plugins settle, then `finish` them (the screenshot channel, the glTF loader, the
-    // render pipelines are only set up there) and `cleanup`.
-    while app.plugins_state() == bevy::app::PluginsState::Adding {
-        bevy::tasks::tick_global_task_pools_on_main_thread();
+    // render pipelines are only set up there) and `cleanup`. Native only: the browser polls
+    // the task pools itself, and `bevy::tasks` has no manual tick for wasm32.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        while app.plugins_state() == bevy::app::PluginsState::Adding {
+            bevy::tasks::tick_global_task_pools_on_main_thread();
+        }
     }
     app.finish();
     app.cleanup();
