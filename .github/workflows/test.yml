@@ -5,8 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+# WHY: the pinned build environment of `xtask::PINNED_ENV`, so every step builds exactly like
+# `cargo xtask test` / `cargo xtask coverage` on a laptop. CARGO_INCREMENTAL=0 (common on
+# runners) makes the coverage report "functions with mismatched data" and fail the 100 % gate;
+# machine-wide RUSTFLAGS would change what is compiled. `xtask/tests/workflows.rs` keeps the
+# two in step.
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "1"
+  RUSTFLAGS: ""
 
 jobs:
   test:

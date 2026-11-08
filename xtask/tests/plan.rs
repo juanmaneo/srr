@@ -11,7 +11,9 @@
 
 use std::path::{Path, PathBuf};
 
-use xtask::{CommandSpec, DOCKER_IMAGE, DOCKER_TOOLCHAIN_STAGE, SERVE_PORT, Step, Task, plan};
+use xtask::{
+    CommandSpec, DOCKER_IMAGE, DOCKER_TOOLCHAIN_STAGE, PINNED_ENV, SERVE_PORT, Step, Task, plan,
+};
 
 const ROOT: &str = "/project";
 
@@ -82,6 +84,50 @@ fn command_specs_display_like_a_shell_command() {
         "cargo test --workspace"
     );
     assert_eq!(CommandSpec::new("docker", &[]).display(), "docker");
+}
+
+#[test]
+fn command_specs_start_without_environment() {
+    assert!(CommandSpec::new("cargo", &["test"]).env.is_empty());
+}
+
+#[test]
+fn command_specs_keep_their_environment_in_order_and_display_it_first() {
+    let command = CommandSpec::new("cargo", &["test"])
+        .with_env(&[("A", "1")])
+        .with_env(&[("B", "")]);
+    assert_eq!(
+        command.env,
+        vec![
+            ("A".to_string(), "1".to_string()),
+            ("B".to_string(), String::new())
+        ]
+    );
+    assert_eq!(command.display(), "A=1 B= cargo test");
+}
+
+fn pinned() -> Vec<(String, String)> {
+    PINNED_ENV
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
+#[test]
+fn the_pinned_environment_keeps_incremental_on_and_machine_rustflags_out() {
+    assert!(PINNED_ENV.contains(&("CARGO_INCREMENTAL", "1")));
+    assert!(PINNED_ENV.contains(&("RUSTFLAGS", "")));
+}
+
+#[test]
+fn every_gate_command_runs_in_the_pinned_environment() {
+    // Laptop and CI must compile and measure the same thing: every command of the gates
+    // carries the same pinned variables, whatever the caller's environment holds.
+    for task in [Task::Test, Task::Coverage, Task::DevCheck] {
+        for command in commands(task.clone()) {
+            assert_eq!(command.env, pinned(), "{task:?}: {command:?}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -173,6 +219,13 @@ fn coverage_fails_below_one_hundred_percent() {
     assert_eq!(gate.program, "cargo");
     assert_eq!(gate.args[0], "llvm-cov");
     assert!(gate.args.iter().any(|a| a == "--workspace"));
+    // Only the engine backends, the platform glue and the thin binaries are left out: every
+    // other file of the workspace is held to 100 %. Widening this list weakens the gate.
+    assert!(has_pair(
+        &gate.args,
+        "--ignore-filename-regex",
+        r"(^|/)src/(main\.rs|engine/|platform/)"
+    ));
 }
 
 // ---------------------------------------------------------------------------------------------

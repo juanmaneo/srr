@@ -37,6 +37,18 @@ pub const SERVE_PORT: &str = "8080";
 /// The engine backends, the platform glue (sockets, sound card) and the thin binaries are
 /// checked by playing, not by the coverage gate.
 const COVERAGE_IGNORE: &str = r"(^|/)src/(main\.rs|engine/|platform/)";
+/// The build environment of the gates (`test`, `dev-check`, `coverage`), set over the caller's
+/// so a laptop and CI compile and measure exactly the same thing. The workflows of
+/// `.github/workflows` set the same values for their other steps (a test keeps them in step).
+///
+/// - `CARGO_INCREMENTAL=1`. WHY: with incremental compilation off (`CARGO_INCREMENTAL=0`,
+///   common on CI machines) rustc makes small functions inlinable across crates, and every
+///   test binary then carries an "unused" coverage record of them that conflicts with the real
+///   one: llvm-cov warns about "functions with mismatched data" and reports tiny getters as
+///   never run, failing the 100 % gate on code the tests do execute.
+/// - `RUSTFLAGS=` (empty). WHY: machine-wide flags (`-C target-cpu=native`, `-D warnings`, ...)
+///   change the code that is compiled and measured; the project's flags live in its manifests.
+pub const PINNED_ENV: [(&str, &str); 2] = [("CARGO_INCREMENTAL", "1"), ("RUSTFLAGS", "")];
 
 const EXIT_SUCCESS: i32 = 0;
 const EXIT_FAILURE: i32 = 1;
@@ -243,6 +255,8 @@ pub struct CommandSpec {
     pub program: String,
     /// Its arguments, one entry per argument (no shell quoting involved).
     pub args: Vec<String>,
+    /// Environment variables set for it (over the inherited ones), as `(name, value)`.
+    pub env: Vec<(String, String)>,
 }
 
 impl CommandSpec {
@@ -258,12 +272,33 @@ impl CommandSpec {
         CommandSpec {
             program: program.to_string(),
             args: args.iter().map(|arg| arg.to_string()).collect(),
+            env: Vec::new(),
         }
     }
 
-    /// The command as it would be typed in a shell (without quoting).
+    /// The same command with the environment variables `vars` set as well.
+    ///
+    /// ```
+    /// use xtask::CommandSpec;
+    ///
+    /// let command = CommandSpec::new("cargo", &["test"]).with_env(&[("RUST_LOG", "info")]);
+    /// assert_eq!(command.display(), "RUST_LOG=info cargo test");
+    /// ```
+    pub fn with_env(mut self, vars: &[(&str, &str)]) -> Self {
+        self.env.extend(
+            vars.iter()
+                .map(|(name, value)| (name.to_string(), value.to_string())),
+        );
+        self
+    }
+
+    /// The command as it would be typed in a shell (without quoting), its environment first.
     pub fn display(&self) -> String {
-        let mut text = self.program.clone();
+        let mut text = String::new();
+        for (name, value) in &self.env {
+            text.push_str(&format!("{name}={value} "));
+        }
+        text.push_str(&self.program);
         for arg in &self.args {
             text.push(' ');
             text.push_str(arg);
@@ -311,25 +346,8 @@ pub enum Step {
 pub fn plan(task: &Task, root: &Path) -> Vec<Step> {
     match task {
         Task::Build => build_steps(),
-        Task::Test => vec![Step::Run(CommandSpec::new(
-            "cargo",
-            &["test", "--workspace"],
-        ))],
-        Task::Coverage => vec![Step::Run(CommandSpec::new(
-            "cargo",
-            &[
-                "llvm-cov",
-                "--workspace",
-                "--fail-under-lines",
-                "100",
-                "--fail-under-regions",
-                "100",
-                "--fail-under-functions",
-                "100",
-                "--ignore-filename-regex",
-                COVERAGE_IGNORE,
-            ],
-        ))],
+        Task::Test => vec![test_step()],
+        Task::Coverage => vec![coverage_step()],
         Task::Dist => {
             let mut steps = build_steps();
             steps.extend(dist_steps());
@@ -375,20 +393,36 @@ pub fn plan(task: &Task, root: &Path) -> Vec<Step> {
 /// ratchet. `dev-check` is the whole gate in one command.
 fn dev_check_steps() -> Vec<Step> {
     vec![
-        Step::Run(CommandSpec::new("cargo", &["fmt", "--check"])),
-        Step::Run(CommandSpec::new(
-            "cargo",
-            &[
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--",
-                "-D",
-                "warnings",
-            ],
-        )),
-        Step::Run(CommandSpec::new("cargo", &["test", "--workspace"])),
-        Step::Run(CommandSpec::new(
+        Step::Run(CommandSpec::new("cargo", &["fmt", "--check"]).with_env(&PINNED_ENV)),
+        Step::Run(
+            CommandSpec::new(
+                "cargo",
+                &[
+                    "clippy",
+                    "--workspace",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )
+            .with_env(&PINNED_ENV),
+        ),
+        test_step(),
+        coverage_step(),
+    ]
+}
+
+/// Every test of the workspace, in the [`PINNED_ENV`].
+fn test_step() -> Step {
+    Step::Run(CommandSpec::new("cargo", &["test", "--workspace"]).with_env(&PINNED_ENV))
+}
+
+/// The coverage ratchet: 100 % of the lines, the regions and the functions, engine and
+/// platform excluded, in the [`PINNED_ENV`].
+fn coverage_step() -> Step {
+    Step::Run(
+        CommandSpec::new(
             "cargo",
             &[
                 "llvm-cov",
@@ -402,8 +436,9 @@ fn dev_check_steps() -> Vec<Step> {
                 "--ignore-filename-regex",
                 COVERAGE_IGNORE,
             ],
-        )),
-    ]
+        )
+        .with_env(&PINNED_ENV),
+    )
 }
 
 fn build_steps() -> Vec<Step> {
@@ -716,6 +751,7 @@ impl Executor for SystemExecutor {
     fn run_command(&mut self, command: &CommandSpec) -> Result<(), ExecError> {
         let status = Command::new(&command.program)
             .args(&command.args)
+            .envs(command.env.iter().cloned())
             .current_dir(&self.root)
             .stdout(self.output.stdio())
             .stderr(self.output.stdio())

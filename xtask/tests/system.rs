@@ -90,6 +90,27 @@ fn a_missing_program_is_a_spawn_failure() {
 }
 
 #[test]
+fn commands_run_with_their_environment_over_the_inherited_one() {
+    // cargo rejects an unknown colour mode, so the variable visibly reaches the process.
+    let temp = TempRoot::new("run-env");
+    fs::write(
+        temp.path().join("Cargo.toml"),
+        "[package]\nname = \"probe\"\nversion = \"0.0.0\"\n",
+    )
+    .unwrap();
+    let mut executor = temp.executor();
+    let version = CommandSpec::new("cargo", &["locate-project"]);
+    assert_eq!(
+        executor.run_command(&version.clone().with_env(&[("CARGO_TERM_COLOR", "never")])),
+        Ok(())
+    );
+    assert!(matches!(
+        executor.run_command(&version.with_env(&[("CARGO_TERM_COLOR", "bogus")])),
+        Err(ExecError::CommandFailed { .. })
+    ));
+}
+
+#[test]
 fn commands_run_in_the_executors_root_directory() {
     // `cargo locate-project` succeeds only when a Cargo.toml is found from the working directory.
     let temp = TempRoot::new("run-cwd");
