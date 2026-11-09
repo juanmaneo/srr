@@ -2,9 +2,9 @@
 
 The third-person view (`Tab`) can show each fighter as a rigged, cel-shaded 3D model instead
 of the software-drawn wooden mannequin. Nobody models anything by hand: every model comes
-out of an AI image-to-3D service (Meshy or Tripo), starting from the manga art that is
-already in the repo. The game draws it with a toon shader and an ink outline, so the result
-reads like the manga skins.
+out of an AI image-to-3D service (Meshy, Tripo, or the open TRELLIS model), starting from the
+manga art that is already in the repo. The game draws it with a toon shader and an ink
+outline, so the result reads like the manga skins.
 
 All of this is optional. You only get it in a build with the `mode3d` Cargo feature
 (`cargo run --features mode3d`). If a character has no model, or its model is broken, that
@@ -18,7 +18,15 @@ assets/models/
     <character>.glb             the one canonical mesh: glTF 2.0 binary, rigged, with clips
     skins/
       <variant>.png             optional texture variants, named like assets/skins/manga/
+  manga/
+    <variant>.glb               optional: one model per manga girl, in her own texture
 ```
+
+`manga/` is the other way round: the ten manga girls are ten different characters, drawn
+ten different ways, so each one gets **her own mesh** (and wears her own texture, there is
+no `skins/` for her). A girl without a model is not left out: she is drawn as the model of
+her fighter (the puppet) in her colours, and only a fighter with neither falls back to the
+mannequin. See [the manga girls](#the-manga-girls-one-trellis-model-each).
 
 * **One mesh per character.** A skin is only a texture. The ten variants of
   `assets/skins/manga/` (`brunette`, `blonde`, `redhead`, `pink`, `white`, `black`, `green`,
@@ -165,6 +173,72 @@ cargo run --no-default-features --example sheets -- --write         # the chalk 
 `--write` never overwrites a real model. Any GLB that the puppet (or the cube man it
 replaced) didn't generate (its `asset.generator` says so) is left alone. To replace the
 placeholder with a real Chalk, overwrite `chalk.glb` and its skins.
+
+## The manga girls: one TRELLIS model each
+
+`assets/models/manga/<variant>.glb` (`brunette`, `blonde`, `redhead`, `pink`, `white`,
+`black`, `green`, `violet`, `cyan`, `raven`) is the model of one manga girl. When a fighter
+wears the manga skin of a variant that has one, the 3D view draws it instead of the puppet
+(`body_of` in `src/front/model.rs`). The choice, from the most specific:
+
+1. the girl's own model, `manga/<variant>.glb`, in the texture it carries;
+2. else the model of the character (the puppet), in the girl's colours (its `skins/`);
+3. else the mannequin.
+
+The audit (`cargo xtask models`) checks the girls like the characters: the thirteen clips
+must be there, the twelve others are noted when missing, a girl without a model is only
+noted, and a stray file under `manga/` (a name that is no variant) is a problem.
+
+**They are made by TRELLIS, not drawn.** The model is Microsoft's open
+[TRELLIS](https://github.com/microsoft/TRELLIS) (image to 3D), run on a public Hugging Face
+Space, `trellis-community/TRELLIS`. Nothing runs on this machine except the client and the
+rigger, and nothing here needs a Meshy or Tripo credit. The tools are in `tools/trellis/`
+(Python and Blender, kept out of the game and of the build) and its README gives the
+commands. The pipeline, per girl:
+
+1. **Crop** one cell of her sheet (`assets/skins/manga/<variant>.png`, 1200×3200, cells of
+   240×320; column `c`, row `r` is the crop at `(240c, 320r)`), Lanczos 3× to 720×960.
+   The cell `c3r2`, the *hit* (arms spread, three-quarter view), is the one that rigs best,
+   because the arms are away from the body. `c2r1`, a high punch, is the fallback.
+2. **Generate** with `trellis_glb.py` (25 + 25 steps, 1024 texture, simplify 0.95). One
+   call is the generation and the GLB export, about 30 s of GPU.
+3. **Clean** (`clean.py`): TRELLIS adds backdrop plates (flat sheets through the middle of
+   the figure, about a sixth of the triangles) and flakes. They are dropped.
+4. **Reject the flat ones.** The seed is a lottery: the same picture gave a real figure with
+   one seed and a flat slab, a billboard, with another. A result is accepted only when,
+   once cleaned, its thinnest extent is at least a tenth of its largest. Else try the next
+   seed, then the next cell.
+5. **Rig** (`rig.py`): the cleaned mesh is stood on the floor at the puppet's 1.8 m, given
+   the puppet's eleven joints, a smooth skin (the distance to each bone, then diffused over
+   the welded mesh so the shoulders and the hips bend instead of tearing), and the
+   **twenty-five clips of the puppet**. Every bone is made to point where the same bone of
+   the puppet points, keyframe by keyframe, by a shortest-arc rotation from the pose TRELLIS
+   modelled it in. So the girl does exactly what the stick figure does, in 2D, as a sprite
+   and in 3D. The keyframes come from the puppet itself:
+   `cargo run --no-default-features --example models -- --clips > clips.json`.
+6. **Place the joints by eye.** Measuring a mesh to guess where its shoulders are is not
+   reliable (hair, skirts and arms spread by the pose all fool it), so `rig.py --fit` draws
+   a grid over the mesh and each girl gets a small `<name>.rig.json` with the joints read off
+   it, and a `yaw` when she doesn't face +Z. Then a Blender render of a few clips
+   (`blender_clips.py`) is the check.
+7. **Commit the rigged GLB** (about 2 MB: 1024² texture, eleven joints) as
+   `assets/models/manga/<variant>.glb`. Its `asset.generator` is `srr rig (TRELLIS)`.
+   `cargo test -p srr --features mode3d --test render -- --ignored --nocapture dump_3d_screenshots`
+   writes screenshots of the arena to `target/screenshots3d/`, `6_girl_idle.png` and
+   `7_girl_punch.png` being the redhead in the game.
+
+The free quota is the bottleneck, not the machine. The Space runs on ZeroGPU, whose daily
+quota is per Hugging Face account and each call asks for 120 s of it while using about 30:
+expect three or four girls a day, and the queue to wait for the refill. The generation is
+planned as a background job (it skips the girls that are done, tries the next seed on a flat
+result, and waits out the quota), so the ten girls arrive over several days, and the game
+plays with whichever are there.
+
+**What TRELLIS does not give.** The cel look wants clean surfaces, and the model is a lumpy
+mesh with hair as thin sheets, and a texture baked from a Gaussian splat, softer than the
+manga art. The rig is approximate too (a skirt follows the legs, not the cloth, and there
+are no fingers or face bones). It moves like the stick figure, which is the aim, but it
+will not out-animate a hand-rigged character.
 
 ## The chalk sprite sheet
 

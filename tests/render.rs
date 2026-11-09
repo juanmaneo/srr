@@ -433,6 +433,24 @@ mod mode3d {
         let stage = server.capture_stage(FRAME_SECONDS, READBACK_BUDGET);
         std::fs::write(dir.join("5_stage_only.png"), png(&stage)).unwrap();
         eprintln!("wrote stage_only");
+
+        // The same, with P1 the redhead of the manga style, in her own model.
+        drop(server);
+        let skin = Skin::styled(Style::Manga, Variant::Redhead);
+        let Some(mut server) = server_as("dump_3d_screenshots (the girl)", skin) else {
+            return;
+        };
+        settle(&mut server);
+        shot(&mut server, "6_girl_idle", 2);
+        server.hold(&[Key::B]);
+        for _ in 0..30 {
+            server.run(1, FRAME_SECONDS);
+            if clip_of(&mut server, 0) == Some(Clip::Punch) {
+                break;
+            }
+        }
+        shot(&mut server, "7_girl_punch", 6);
+        server.hold(&[]);
     }
 }
 
