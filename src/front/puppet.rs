@@ -762,6 +762,59 @@ pub fn pack(json: &str, bin: &[u8]) -> Vec<u8> {
     glb
 }
 
+/// The skeleton of the puppet and every clip, keyframe by keyframe, as JSON: the movements
+/// without the wood, for the tools that put them on another body (`tools/trellis/rig.py`
+/// rigs a model from the image-to-3D pipeline with them). Each key holds the time in seconds,
+/// the hips' translation and the pitch of every joint, as [`solve`] gives them.
+///
+/// ```
+/// use srr::front::puppet::clips_json;
+///
+/// let json = clips_json();
+/// assert!(json.contains("\"name\":\"punch\""));
+/// assert!(json.contains("\"name\":\"elbow_r\""));
+/// ```
+pub fn clips_json() -> String {
+    let joints: Vec<String> = JOINTS
+        .iter()
+        .map(|&(name, parent, offset)| {
+            format!(
+                "{{\"name\":\"{name}\",\"parent\":{},\"offset\":{}}}",
+                parent.map_or(-1, |parent| parent as i32),
+                list(&offset)
+            )
+        })
+        .collect();
+    let clips: Vec<String> = Clip::ALL
+        .into_iter()
+        .map(|clip| {
+            let (seconds, keys) = clip_poses(clip);
+            let keys: Vec<String> = keys
+                .iter()
+                .map(|(at, pose)| {
+                    let rig = solve(pose);
+                    format!(
+                        "{{\"t\":{:?},\"hips\":{},\"pitch\":{}}}",
+                        at * seconds,
+                        list(&rig.hips),
+                        list(&rig.pitch)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"name\":\"{}\",\"seconds\":{seconds:?},\"keys\":[{}]}}",
+                clip.name(),
+                keys.join(",")
+            )
+        })
+        .collect();
+    format!(
+        "{{\"generator\":\"{GENERATOR}\",\"joints\":[{}],\"clips\":[{}]}}",
+        joints.join(","),
+        clips.join(",")
+    )
+}
+
 /// The puppet as a glTF binary: one scene, a root node holding the skeleton and the skinned
 /// mesh, one material with the embedded atlas, and every [`Clip`] keyed from the poses of the
 /// stick figure.

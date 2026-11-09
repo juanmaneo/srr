@@ -26,6 +26,7 @@ use srr::front::moves::{Move, move_of};
 use srr::front::puppet;
 use srr::front::skin::{SPRITE_NAMES, pose_of};
 use srr::front::space::{Camera, Vec3};
+use srr::front::stick::clip_poses;
 use srr::front::{Game, Headless, Screen, VIEW_KEY, View};
 use srr::game::{
     Attack, AttackPhase, Character, Fighter, FighterState, GrapplePosition, GrappleRole, Input,
@@ -847,6 +848,30 @@ fn the_puppet_has_every_clip_and_is_deterministic() {
         "the old placeholder is ours"
     );
     assert!(!puppet::made_here("Meshy"));
+}
+
+#[test]
+fn the_clips_export_holds_the_skeleton_and_every_key_of_every_clip() {
+    let json = puppet::clips_json();
+    assert!(json.starts_with(&format!("{{\"generator\":\"{}\"", puppet::GENERATOR)));
+    // The eleven joints, the root first, each with its parent and rest offset.
+    assert_eq!(json.matches("\"parent\":").count(), puppet::JOINT_COUNT);
+    assert!(json.contains("\"name\":\"hips\",\"parent\":-1"));
+    assert!(json.contains("\"name\":\"knee_r\",\"parent\":9"));
+    // Every clip by its name, with every keyframe of the clip, each carrying one pitch per joint.
+    let mut keys = 0;
+    for clip in Clip::ALL {
+        assert!(json.contains(&format!("\"name\":\"{}\",\"seconds\"", clip.name())));
+        keys += clip_poses(clip).1.len();
+    }
+    assert_eq!(json.matches("\"pitch\":[").count(), keys);
+    assert_eq!(json.matches("\"keys\":[").count(), Clip::ALL.len());
+    // The first key of the idle clip is the pose the puppet is solved to.
+    let rig = puppet::solve(&clip_poses(Clip::Idle).1[0].1);
+    assert!(json.contains(&format!(
+        "\"t\":0.0,\"hips\":[0.0,{:?},{:?}]",
+        rig.hips[1], rig.hips[2]
+    )));
 }
 
 #[test]

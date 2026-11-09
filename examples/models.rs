@@ -5,12 +5,16 @@
 //! cargo xtask models                                                # audit, or:
 //! cargo run --example models --no-default-features                  # the same
 //! cargo run --example models --no-default-features -- --write chalk # the placeholder
+//! cargo run --example models --no-default-features -- --clips       # the movements as JSON
 //! ```
 //!
 //! The audit lists, for every character, its model (`models/<name>/<name>.glb`), the clips it
 //! carries and the skin textures of `models/<name>/skins/`; it exits with 1 when a model is
 //! broken, misses a clip or has a stray skin (a missing model or skin is only noted: the
 //! mannequin, or the model's own texture, stands in).
+//!
+//! `--clips` prints the skeleton and the keyframes of every clip as JSON, the movements that
+//! `tools/trellis/rig.py` puts on a model of the image-to-3D pipeline.
 //!
 //! `--write` followed by character names (or none, for every character without a real model)
 //! writes the puppet as their model and the ten manga palettes as its skins. A real model
@@ -101,8 +105,12 @@ fn main() -> ExitCode {
     let Some((flag, names)) = args.split_first() else {
         return audit();
     };
+    if flag == "--clips" {
+        println!("{}", puppet::clips_json());
+        return ExitCode::SUCCESS;
+    }
     if flag != "--write" {
-        eprintln!("usage: models [--write [character...]]");
+        eprintln!("usage: models [--write [character...] | --clips]");
         return ExitCode::from(2);
     }
     let characters: Vec<Character> = if names.is_empty() {
