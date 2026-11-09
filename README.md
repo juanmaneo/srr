@@ -358,7 +358,9 @@ they stepped to, and the camera follows yours.
 character that has a rigged glTF model in `assets/models/<name>/<name>.glb` is drawn as that
 model instead of its mannequin. The model uses a toon material (three flat bands of light,
 no gloss) and an inverted-hull ink outline, and wears the texture of the fighter's manga
-variant (`skins/<variant>.png`). Its animation follows the fighter's state: named clips
+variant (`skins/<variant>.png`). A manga girl who has a model of her own
+(`assets/models/manga/<variant>.glb`, made from her sprite by TRELLIS) is drawn as her, in
+her own texture; the others are that puppet in her colours. Its animation follows the fighter's state: named clips
 (`idle`, `walk_f`, `punch`, `ko`...) blend into each other over 0.1 s, and the attack clips
 are scrubbed by the move's frame data, so the contact pose lands on the active frames. The
 models are drawing only. The rules, the hitboxes, the replays and online play are
@@ -746,9 +748,16 @@ and the process exits 0.
 * `src/engine/` – the engine backends (`bevy.rs`, `fyrox.rs`): open the window, map the
   keyboard, tick the game 60 times per second and draw its frames. `bevy/stage.rs` (with
   `toon.wgsl` and `outline.wgsl`) renders the glTF fighters of the `mode3d` feature.
-* `assets/models/` – the 3D fighters: one rigged `.glb` per character plus its skin textures
-  (see [docs/3d-asset-pipeline.md](docs/3d-asset-pipeline.md)); `chalk/` holds the generated
+* `assets/models/` – the 3D fighters: one rigged `.glb` per character plus its skin textures,
+  and one per manga girl in `manga/<variant>.glb` (see
+  [docs/3d-asset-pipeline.md](docs/3d-asset-pipeline.md)); `chalk/` holds the generated
   puppet.
+* `tools/trellis/` – the one place that is **not Rust**: the offline scripts (Python, and
+  Blender for the previews) that turn a manga sprite into a rigged `.glb` through the public
+  TRELLIS Space and give it the puppet's movements. They only *make* the files of
+  `assets/models/manga/`. The game, the build, `cargo xtask`, the tests and CI never run or
+  need them, and what they produce is audited like every other model
+  (`cargo xtask models`).
 * `assets/skins/` – the sprite sheets: one hand-painted PNG per manga character
   (`manga/`), and the generated chalk (`chalk/chalk.png`, written by
   `cargo run --no-default-features --example sheets -- --write`).
