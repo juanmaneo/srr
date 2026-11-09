@@ -1,0 +1,27 @@
+[Unit]
+Description=SRR: the TRELLIS queue that makes one 3D model per manga girl (tools/trellis/farm.py)
+Documentation=https://github.com/juanmaneo/srr/blob/main/tools/trellis/README.md
+After=network-online.target
+
+[Service]
+Type=simple
+# The checkout of the repository (edit if it is not in ~/dev/srr).
+WorkingDirectory=%h/dev/srr
+# `uv` (see farm.py) lives in ~/.local/bin or ~/.cargo/bin.
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 -u tools/trellis/farm.py
+# $SRR_WORK/logs must exist: mkdir -p ~/.cache/srr-work/logs
+StandardOutput=append:%h/.cache/srr-work/logs/trellis-farm.log
+# Never in the way of the machine or of the editor: low priority, a memory cap, and the
+# out-of-memory killer takes this unit down alone.
+MemoryMax=2G
+MemorySwapMax=0
+Nice=15
+CPUWeight=20
+OOMPolicy=kill
+# The farm ends by itself when everything is done (exit 0: no restart); a crash is retried.
+Restart=on-failure
+RestartSec=600
+
+[Install]
+WantedBy=default.target

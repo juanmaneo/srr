@@ -60,6 +60,21 @@ editor (an out-of-memory kill of a child must not take the editor down):
 systemd-run --user --unit=trellis-farm -p MemoryMax=2G python3 -u tools/trellis/farm.py
 ```
 
+A transient unit like that dies with a reboot. To keep the queue running across reboots, install
+`srr-trellis-farm.service` (same caps: 2 GB, low priority, the out-of-memory killer takes it
+down alone; restarted 10 minutes after a crash, left alone when the job is done):
+
+```sh
+mkdir -p ~/.config/systemd/user ~/.cache/srr-work/logs
+cp tools/trellis/srr-trellis-farm.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now srr-trellis-farm
+tail -f ~/.cache/srr-work/logs/trellis-farm.log
+```
+
+When a mesh is accepted, `farm.py` also draws its fit grids, `out/<name>_<cell>_fit_front.png`
+and `_side.png` (it needs `$SRR_WORK/clips.json`, see below): reading the joints off them is
+the first manual step of the rig.
+
 `farm.py` crops the sheets itself, tries `(c3r2, seed 1234)`, then `(c3r2, 4321)`, `(c3r2, 7)`,
 `(c2r1, 1234)`, `(c2r1, 4321)` for each girl, keeps a result only if it is deep enough after
 cleaning (`out/<name>_<cell>.glb`; the flat ones go to `out/rejected/`), sleeps through the

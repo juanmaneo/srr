@@ -52,7 +52,7 @@ pub const SHADOW_EDGES: [f32; 2] = [0.2, 0.5];
 /// What the albedo is multiplied by in the deep shadow and in the shadow, in linear RGB: cool
 /// and a touch purple, like the shadow ramps of the anime games, never a grey. The light keeps
 /// the texture exactly as painted.
-pub const SHADOW_TINTS: [[f32; 3]; 2] = [[0.33, 0.27, 0.46], [0.58, 0.50, 0.70]];
+pub const SHADOW_TINTS: [[f32; 3]; 2] = [[0.48, 0.42, 0.62], [0.72, 0.65, 0.84]];
 /// The half-width over which every edge of the shading is feathered (half-Lambert units for
 /// the shadows, cosines for the rim and the highlight): crisp, not aliased. Must be above
 /// zero: the shader's `smoothstep` divides by it.

@@ -49,6 +49,24 @@ def deep_enough(glb: Path) -> bool:
     log("   figure size", [round(float(v), 3) for v in size], "plates", info["plates"])
     return float(size.min()) >= 0.10 * float(size.max())
 
+def prepare_rig(name, cell):
+    """Draws the fit grids of an accepted mesh (`out/<name>_fit_front.png`, `_side.png`: the joints the
+    rigger measured on a 10 cm grid), so that reading the joints off them is the only manual step
+    left (see README.md). Never fatal: the mesh is kept whatever happens here."""
+    clips = W / "clips.json"
+    if not clips.exists():
+        log("   no", clips, "(cargo run --no-default-features --example models -- --clips): no fit grids")
+        return
+    cmd = ["uv", "run", str(REPO / "tools/trellis/rig.py"), str(W / "out" / f"{name}_{cell}.glb"),
+           "--clips", str(clips), "--fit", str(W / "out" / f"{name}_{cell}_fit")]
+    env = dict(os.environ, UV_CACHE_DIR=str(W / "uv-cache"))
+    try:
+        p = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True, timeout=900)
+        log("   fit grids", "written" if p.returncode == 0 else f"failed ({p.returncode}): {p.stderr[-300:]}")
+    except (OSError, subprocess.SubprocessError) as error:
+        log("   fit grids failed:", error)
+
+
 def crop(name, cell):
     """The cell `c<column>r<row>` of the manga sheet of `name` (cells of 240x320), Lanczos 3x."""
     from PIL import Image
@@ -99,6 +117,7 @@ def main():
                     pre = tmp.with_name(tmp.stem + "_preprocessed.png")
                     if pre.exists(): shutil.move(pre, W / "out" / f"{name}_{cell}_preprocessed.png")
                     log("   ACCEPTED", name)
+                    prepare_rig(name, cell)
                 else:
                     shutil.move(tmp, W / "out" / "rejected" / f"{name}_{cell}_{seed}.glb")
                     log("   flat, rejected", name, seed)
