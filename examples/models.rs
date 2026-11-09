@@ -56,7 +56,7 @@ fn audit() -> ExitCode {
     let mut files = Vec::new();
     list(&root.join("models"), "models/", &mut files);
     let paths: Vec<&str> = files.iter().map(String::as_str).collect();
-    let audit = model::audit(&paths, |path| fs::read(root.join(path)).ok());
+    let audit = model::audit(&paths, &|path| fs::read(root.join(path)).ok());
     for (severity, line) in &audit.lines {
         let tag = match severity {
             Severity::Info => "      ",

@@ -134,17 +134,21 @@ fn the_intro_renders_and_animates_headlessly() {
 mod mode3d {
     use super::*;
     use srr::engine::{Server, StageReport};
-    use srr::front::model::{Clip, Models};
-    use srr::front::{Headless, Screen, VIEW_KEY, View};
-    use srr::game::{Character, Key, PlayerId};
+    use srr::front::model::{Body, Clip};
+    use srr::front::{Game, Headless, Screen, VIEW_KEY, View};
+    use srr::game::{Character, Key, MatchConfig, PlayerId, Skin, Style, Variant};
+    use srr::net::Client;
 
     /// Frames to let the model load from disk, the scene spawn, the actors dress and fit:
     /// a bound, not a wait (it takes a handful).
     const LOAD_BUDGET: u32 = 240;
 
-    /// A practice fight against the dummy, on the fight screen, in the third-person view.
-    fn fight_in_3d() -> Shell {
-        let mut game = Headless::practice();
+    /// A practice fight against the dummy, on the fight screen, in the third-person view, P1
+    /// wearing `skin`.
+    fn fight_in_3d_as(skin: Skin) -> Shell {
+        let mut client = Client::practice(MatchConfig::default());
+        let _ = client.set_skin(skin);
+        let mut game = Headless::new(Game::new(client));
         game.skip_intro();
         game.tap(&[VIEW_KEY]);
         assert_eq!(game.game().screen(), Screen::Fight);
@@ -155,7 +159,12 @@ mod mode3d {
     /// The rendering server on the 3D view, or `None` when rendering is impossible here
     /// (printed, like the SSR test above).
     fn server(what: &str) -> Option<Server> {
-        match server_app(fight_in_3d(), capture()) {
+        server_as(what, Skin::STICK)
+    }
+
+    /// [`server`], P1 wearing `skin`.
+    fn server_as(what: &str, skin: Skin) -> Option<Server> {
+        match server_app(fight_in_3d_as(skin), capture()) {
             Ok(server) => Some(server),
             Err(error @ (ServerError::NoAdapter(_) | ServerError::NoDevice(_))) => {
                 eprintln!("SKIP {what}: rendering impossible here: {error}");
@@ -196,11 +205,17 @@ mod mode3d {
             return;
         };
         let report = settle(&mut server);
-        assert_eq!(report.models, Some(vec![Character::Chalk]), "{report:?}");
+        let models = report.models.expect("settled");
+        assert_eq!(models.characters(), [Character::Chalk], "{report:?}");
         let players: Vec<PlayerId> = report.actors.iter().map(|actor| actor.player).collect();
         assert_eq!(players, [PlayerId(0), PlayerId(1)]);
         for actor in &report.actors {
             assert_eq!(actor.character, Character::Chalk);
+            assert_eq!(
+                actor.body,
+                Body::Puppet(Character::Chalk),
+                "chalk: the puppet"
+            );
             assert!(
                 actor.animated,
                 "no AnimationPlayer with the clips: {actor:?}"
@@ -211,7 +226,7 @@ mod mode3d {
         }
         assert_eq!(
             server.game().models(),
-            Models::NONE.with(Character::Chalk),
+            models,
             "the game was told which mannequins the engine replaces"
         );
 
@@ -229,6 +244,42 @@ mod mode3d {
         );
         let frame = server.capture(1, FRAME_SECONDS, READBACK_BUDGET);
         assert_flat(&frame, "the 3D view");
+    }
+
+    /// The committed girls load from `assets/models/manga/`: the redhead (the first the
+    /// image-to-3D pipeline made) is P1's model in the manga style, in her own texture, rigged
+    /// with the puppet's movements; the dummy keeps the chalk puppet.
+    #[test]
+    fn a_manga_girl_is_drawn_as_her_own_model() {
+        let _gpu = gpu();
+        let skin = Skin::styled(Style::Manga, Variant::Redhead);
+        let Some(mut server) = server_as("a_manga_girl_is_drawn_as_her_own_model", skin) else {
+            return;
+        };
+        let report = settle(&mut server);
+        let models = report.models.expect("settled");
+        assert!(models.has_girl(Variant::Redhead), "{report:?}");
+        assert!(models.contains(Character::Chalk), "{report:?}");
+        let [girl, dummy] = &report.actors[..] else {
+            panic!("two actors: {report:?}");
+        };
+        assert_eq!(girl.body, Body::Girl(Variant::Redhead), "{girl:?}");
+        assert_eq!(dummy.body, Body::Puppet(Character::Chalk), "{dummy:?}");
+        for actor in [girl, dummy] {
+            assert!(
+                actor.animated,
+                "no AnimationPlayer with the clips: {actor:?}"
+            );
+            assert!(actor.toon_materials > 0, "no toon material: {actor:?}");
+            assert!(actor.fitted && actor.clip == Some(Clip::Idle), "{actor:?}");
+        }
+        server.run(30, FRAME_SECONDS);
+        let stage = server.capture_stage(FRAME_SECONDS, READBACK_BUDGET);
+        let covered = 1.0 - stage.fraction([0, 0, 0, 0]);
+        assert!(
+            covered > 0.002 && covered < 0.5,
+            "the models cover {covered} of the stage image"
+        );
     }
 
     /// The clips follow the fighter's state through the engine: walking plays the walk,

@@ -9,9 +9,11 @@
 //! fighter's state and the frame data of its strike, never the other way round, so replays
 //! and online matches stay exactly as deterministic without the models as with them.
 //!
-//! Every fighter whose character has a model ([`Models`]) is an [`Actor`] of the stage and is
-//! left out of the software mannequins of [`tps`](super::tps); the others keep their
-//! mannequins, so a missing or broken model never costs more than its looks.
+//! Every fighter that has a model ([`Models`]) is an [`Actor`] of the stage and is left out of
+//! the software mannequins of [`tps`](super::tps); the others keep their mannequins, so a
+//! missing or broken model never costs more than its looks. A fighter's model is its
+//! character's (the puppet, which a manga skin re-textures) or, in the manga style, the
+//! girl of its skin when she has her own model ([`Body`]): one glTF binary per variant.
 
 use super::arena::{ARENA_LEFT, FLOOR_Y, feet, rules_of};
 use super::skin::SPRITE_NAMES;
@@ -473,16 +475,68 @@ pub fn playback_of(fighter: &Fighter, rules: &MatchConfig) -> Playback {
 // The stage
 // ---------------------------------------------------------------------------------------------
 
-/// The characters the engine has a model for: the fighters playing them are drawn by the
-/// engine, the others stay software mannequins.
+/// What a fighter is drawn as: the model of its character, or the girl of its manga skin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Body {
+    /// The model of a character ([`model_path`]); a manga skin re-textures it ([`skin_path`]).
+    Puppet(Character),
+    /// The model of a manga girl ([`girl_path`]), in her own texture.
+    Girl(Variant),
+}
+
+impl Body {
+    /// Every body there can be a model for: the characters, then the girls.
+    pub fn all() -> Vec<Body> {
+        Character::ALL
+            .into_iter()
+            .map(Body::Puppet)
+            .chain(Variant::ALL.into_iter().map(Body::Girl))
+            .collect()
+    }
+
+    /// Where the model of this body stands under the asset root.
+    ///
+    /// ```
+    /// use srr::front::model::Body;
+    /// use srr::game::{Character, Variant};
+    ///
+    /// assert_eq!(Body::Puppet(Character::Chalk).path(), "models/chalk/chalk.glb");
+    /// assert_eq!(Body::Girl(Variant::Redhead).path(), "models/manga/redhead.glb");
+    /// ```
+    pub fn path(self) -> String {
+        match self {
+            Body::Puppet(character) => model_path(character),
+            Body::Girl(variant) => girl_path(variant),
+        }
+    }
+
+    /// What the logs call it: the character's name, or the girl's.
+    pub fn name(self) -> &'static str {
+        match self {
+            Body::Puppet(character) => character.name(),
+            Body::Girl(variant) => SPRITE_NAMES[variant.index() as usize],
+        }
+    }
+}
+
+/// The models the engine has: the fighters they dress are drawn by the engine, the others
+/// stay software mannequins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct Models(u8);
+pub struct Models {
+    /// A bit per [`Character::index`].
+    characters: u8,
+    /// A bit per [`Variant::index`].
+    girls: u16,
+}
 
 impl Models {
     /// No model at all: everything is drawn by the software renderer.
-    pub const NONE: Models = Models(0);
+    pub const NONE: Models = Models {
+        characters: 0,
+        girls: 0,
+    };
 
-    /// This set plus `character`.
+    /// This set plus the model of `character`.
     ///
     /// ```
     /// use srr::front::model::Models;
@@ -495,17 +549,60 @@ impl Models {
     /// assert!(Models::NONE.is_empty() && !models.is_empty());
     /// ```
     pub const fn with(self, character: Character) -> Models {
-        Models(self.0 | (1 << character.index()))
+        Models {
+            characters: self.characters | (1 << character.index()),
+            ..self
+        }
+    }
+
+    /// This set plus the model of the girl of `variant`.
+    ///
+    /// ```
+    /// use srr::front::model::Models;
+    /// use srr::game::Variant;
+    ///
+    /// let models = Models::NONE.with_girl(Variant::Raven);
+    /// assert!(models.has_girl(Variant::Raven));
+    /// assert!(!models.has_girl(Variant::Pink));
+    /// assert_eq!(models.girls(), vec![Variant::Raven]);
+    /// assert!(!models.is_empty());
+    /// ```
+    pub const fn with_girl(self, variant: Variant) -> Models {
+        Models {
+            girls: self.girls | (1 << variant.index()),
+            ..self
+        }
+    }
+
+    /// This set plus the model of `body`.
+    pub fn with_body(self, body: Body) -> Models {
+        match body {
+            Body::Puppet(character) => self.with(character),
+            Body::Girl(variant) => self.with_girl(variant),
+        }
     }
 
     /// Whether `character` has a model.
     pub const fn contains(self, character: Character) -> bool {
-        self.0 & (1 << character.index()) != 0
+        self.characters & (1 << character.index()) != 0
     }
 
-    /// Whether no character has a model.
+    /// Whether the girl of `variant` has a model.
+    pub const fn has_girl(self, variant: Variant) -> bool {
+        self.girls & (1 << variant.index()) != 0
+    }
+
+    /// Whether `body` has a model.
+    pub fn has(self, body: Body) -> bool {
+        match body {
+            Body::Puppet(character) => self.contains(character),
+            Body::Girl(variant) => self.has_girl(variant),
+        }
+    }
+
+    /// Whether there is no model at all.
     pub const fn is_empty(self) -> bool {
-        self.0 == 0
+        self.characters == 0 && self.girls == 0
     }
 
     /// The characters with a model, in [`Character::ALL`] order.
@@ -515,6 +612,36 @@ impl Models {
             .filter(|&character| self.contains(character))
             .collect()
     }
+
+    /// The girls with a model, in [`Variant::ALL`] order.
+    pub fn girls(self) -> Vec<Variant> {
+        Variant::ALL
+            .into_iter()
+            .filter(|&variant| self.has_girl(variant))
+            .collect()
+    }
+}
+
+/// What a fighter of `character` wearing the skin `variant` (the manga style, `None` for the
+/// chalk) is drawn as, if the engine has a model for it: the girl of the variant when she has
+/// one, else the model of the character. `None`: it stays a software mannequin.
+///
+/// ```
+/// use srr::front::model::{Body, Models, body_of};
+/// use srr::game::{Character, Variant};
+///
+/// let models = Models::NONE.with(Character::Chalk).with_girl(Variant::Pink);
+/// assert_eq!(body_of(models, Character::Zip, Some(Variant::Pink)), Some(Body::Girl(Variant::Pink)));
+/// assert_eq!(body_of(models, Character::Chalk, Some(Variant::Raven)), Some(Body::Puppet(Character::Chalk)));
+/// assert_eq!(body_of(models, Character::Chalk, None), Some(Body::Puppet(Character::Chalk)));
+/// assert_eq!(body_of(models, Character::Zip, Some(Variant::Raven)), None);
+/// ```
+pub fn body_of(models: Models, character: Character, variant: Option<Variant>) -> Option<Body> {
+    let body = match variant {
+        Some(variant) if models.has_girl(variant) => Body::Girl(variant),
+        _ => Body::Puppet(character),
+    };
+    models.has(body).then_some(body)
 }
 
 /// One fighter drawn as a model.
@@ -522,10 +649,12 @@ impl Models {
 pub struct Actor {
     /// The player it fights for.
     pub player: PlayerId,
-    /// The character, hence the model.
+    /// The character it plays.
     pub character: Character,
-    /// The manga variant it wears, the skin texture of the model (`None`: the model's own
-    /// texture, for the chalk skin).
+    /// What it is drawn as: the model of its character, or the girl of its skin.
+    pub body: Body,
+    /// The manga variant whose skin texture the model wears (`None`: the model's own
+    /// texture, for the chalk skin and for a girl, who wears hers).
     pub variant: Option<Variant>,
     /// Where its feet stand, in the world units of [`tps`](super::tps): `x` along the arena
     /// from the left bound, `y` above the pavement, `z` towards the wall.
@@ -586,9 +715,10 @@ pub fn stage(
     let config = current.config();
     for fighter in current.fighters() {
         let character = config.character(fighter.player());
-        if !models.contains(character) {
+        let variant = client.skin(fighter.player()).variant;
+        let Some(body) = body_of(models, character, variant) else {
             continue;
-        }
+        };
         let (x, y) = feet(fighter, config);
         let moved = previous
             .iter()
@@ -597,7 +727,11 @@ pub fn stage(
         stage.actors.push(Actor {
             player: fighter.player(),
             character,
-            variant: client.skin(fighter.player()).variant,
+            body,
+            variant: match body {
+                Body::Puppet(_) => variant,
+                Body::Girl(_) => None,
+            },
             position: [x - ARENA_LEFT, FLOOR_Y - y, depth(fighter, config) as f32],
             facing: fighter.facing(),
             clip: clip_of(fighter, moved),
@@ -612,6 +746,9 @@ pub fn stage(
 // ---------------------------------------------------------------------------------------------
 // The layout of assets/models/
 // ---------------------------------------------------------------------------------------------
+
+/// The directory of the girls' models under the asset root.
+pub const GIRLS_DIR: &str = "models/manga";
 
 /// The directory of `character`'s model under the asset root: its name, in lowercase.
 pub fn model_dir(character: Character) -> String {
@@ -633,6 +770,19 @@ pub fn model_path(character: Character) -> String {
         model_dir(character),
         character.name().to_lowercase()
     )
+}
+
+/// The path of the model of the girl of `variant` under the asset root: one glTF binary per
+/// manga skin, named like its sprite sheet in `assets/skins/manga/`.
+///
+/// ```
+/// use srr::front::model::girl_path;
+/// use srr::game::Variant;
+///
+/// assert_eq!(girl_path(Variant::Brunette), "models/manga/brunette.glb");
+/// ```
+pub fn girl_path(variant: Variant) -> String {
+    format!("{GIRLS_DIR}/{}.glb", SPRITE_NAMES[variant.index() as usize])
 }
 
 /// The path of the skin texture `variant` puts on `character`'s model under the asset root:
@@ -678,13 +828,49 @@ impl Audit {
     }
 }
 
+/// Checks the glTF binary `bytes` of the model at `path`: it must be readable and carry every
+/// [`Clip`] (a clip with a fallback is only noted). Whether it was readable.
+fn audit_clips(audit: &mut Audit, path: &str, bytes: &[u8]) -> bool {
+    let found = match clips_of(bytes) {
+        Err(error) => {
+            audit.problem(format!("{path}: {error}"));
+            return false;
+        }
+        Ok(found) => found,
+    };
+    audit.info(format!(
+        "{path}: {} clips ({})",
+        found.len(),
+        generator_of(bytes).unwrap_or_else(|| "unknown generator".into())
+    ));
+    for clip in Clip::ALL {
+        if found.iter().any(|name| name == clip.name()) {
+            continue;
+        }
+        match clip.fallback() {
+            None => audit.problem(format!(
+                "{path}: no `{}` clip: the fighter plays its idle instead",
+                clip.name()
+            )),
+            Some(fallback) => audit.info(format!(
+                "{path}: no `{}` clip: the fighter plays `{}` instead",
+                clip.name(),
+                fallback.name()
+            )),
+        }
+    }
+    true
+}
+
 /// Checks the layout of the models: `files` are the paths under the asset root (`models/...`)
 /// and `read` fetches the bytes of one of them. Every character may have its model
 /// ([`model_path`]), a glTF binary with every [`Clip`], and the skin textures of
-/// [`Variant::ALL`] ([`skin_path`]); a missing model or skin is only noted (the mannequin, or
-/// the model's own texture, stands in), a broken model or a clip or a stray file in `skins/`
-/// is a problem.
-pub fn audit(files: &[&str], read: impl Fn(&str) -> Option<Vec<u8>>) -> Audit {
+/// [`Variant::ALL`] ([`skin_path`]); every manga skin may have its girl ([`girl_path`]), a
+/// glTF binary with every clip too, wearing her own texture. A missing model or skin is only
+/// noted (the mannequin, the puppet in her colours, or the model's own texture, stands in); a
+/// broken model, a missing clip or a stray file in `skins/` or in the girls' directory is a
+/// problem.
+pub fn audit(files: &[&str], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Audit {
     let mut audit = Audit::default();
     for character in Character::ALL {
         let path = model_path(character);
@@ -695,35 +881,8 @@ pub fn audit(files: &[&str], read: impl Fn(&str) -> Option<Vec<u8>>) -> Audit {
             ));
             continue;
         }
-        let bytes = read(&path).unwrap_or_default();
-        match clips_of(&bytes) {
-            Err(error) => {
-                audit.problem(format!("{path}: {error}"));
-                continue;
-            }
-            Ok(found) => {
-                audit.info(format!(
-                    "{path}: {} clips ({})",
-                    found.len(),
-                    generator_of(&bytes).unwrap_or_else(|| "unknown generator".into())
-                ));
-                for clip in Clip::ALL {
-                    if found.iter().any(|name| name == clip.name()) {
-                        continue;
-                    }
-                    match clip.fallback() {
-                        None => audit.problem(format!(
-                            "{path}: no `{}` clip: the fighter plays its idle instead",
-                            clip.name()
-                        )),
-                        Some(fallback) => audit.info(format!(
-                            "{path}: no `{}` clip: the fighter plays `{}` instead",
-                            clip.name(),
-                            fallback.name()
-                        )),
-                    }
-                }
-            }
+        if !audit_clips(&mut audit, &path, &read(&path).unwrap_or_default()) {
+            continue;
         }
         for variant in Variant::ALL {
             let skin = skin_path(character, variant);
@@ -747,6 +906,29 @@ pub fn audit(files: &[&str], read: impl Fn(&str) -> Option<Vec<u8>>) -> Audit {
                     SPRITE_NAMES.join(", ")
                 ));
             }
+        }
+    }
+    for variant in Variant::ALL {
+        let path = girl_path(variant);
+        if files.contains(&path.as_str()) {
+            audit_clips(&mut audit, &path, &read(&path).unwrap_or_default());
+        } else {
+            audit.info(format!(
+                "{path}: no model: the {} is the puppet in her colours",
+                SPRITE_NAMES[variant.index() as usize]
+            ));
+        }
+    }
+    let girls_dir = format!("{GIRLS_DIR}/");
+    for file in files.iter().filter(|file| file.starts_with(&girls_dir)) {
+        if !Variant::ALL
+            .iter()
+            .any(|&variant| girl_path(variant) == *file)
+        {
+            audit.problem(format!(
+                "{file}: not the model of a manga skin ({})",
+                SPRITE_NAMES.join(", ")
+            ));
         }
     }
     audit

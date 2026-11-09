@@ -16,11 +16,11 @@ mod common;
 use std::collections::HashSet;
 
 use srr::front::model::{
-    self, Actor, Audit, CROSSFADE_SECONDS, Clip, FEATHER, HEAVY_HIT_COMBO, HOLD_POSE, MODEL_HEIGHT,
-    Models, OUTLINE_SHADE, OUTLINE_WIDTH, Playback, RIM, SHADOW_EDGES, SHADOW_TINTS, SPECULAR,
-    STRIKE_CONTACT, STRIKE_WINDUP, Severity, audit, clip_of, clips_of, generator_of, glb_json, lit,
-    model_dir, model_path, outline_offset, playback_of, rim, shade, skin_path, specular, step,
-    strike_fraction,
+    self, Actor, Audit, Body, CROSSFADE_SECONDS, Clip, FEATHER, GIRLS_DIR, HEAVY_HIT_COMBO,
+    HOLD_POSE, MODEL_HEIGHT, Models, OUTLINE_SHADE, OUTLINE_WIDTH, Playback, RIM, SHADOW_EDGES,
+    SHADOW_TINTS, SPECULAR, STRIKE_CONTACT, STRIKE_WINDUP, Severity, audit, body_of, clip_of,
+    clips_of, generator_of, girl_path, glb_json, lit, model_dir, model_path, outline_offset,
+    playback_of, rim, shade, skin_path, specular, step, strike_fraction,
 };
 use srr::front::moves::{Move, move_of};
 use srr::front::puppet;
@@ -494,6 +494,74 @@ fn the_set_of_models_holds_characters() {
     assert!(one.contains(Character::Brick) && !one.contains(Character::Torch));
 }
 
+#[test]
+fn the_set_of_models_holds_girls_too() {
+    let raven = Models::NONE.with_girl(Variant::Raven);
+    assert!(!raven.is_empty(), "a girl alone is a model");
+    assert!(raven.has_girl(Variant::Raven) && !raven.has_girl(Variant::Pink));
+    assert!(raven.characters().is_empty(), "a girl is no character");
+    assert_eq!(raven.girls(), [Variant::Raven]);
+    assert!(Models::NONE.girls().is_empty());
+    let both = raven.with(Character::Zip).with_girl(Variant::Brunette);
+    assert_eq!(both.characters(), [Character::Zip]);
+    assert_eq!(
+        both.girls(),
+        [Variant::Brunette, Variant::Raven],
+        "menu order"
+    );
+    let all = Variant::ALL
+        .into_iter()
+        .fold(Models::NONE, |models, variant| models.with_girl(variant));
+    assert_eq!(all.girls(), Variant::ALL.to_vec());
+
+    // The bodies: every character's model, then every girl's; each in the set by its own bit.
+    let bodies = Body::all();
+    assert_eq!(bodies.len(), Character::ALL.len() + Variant::ALL.len());
+    assert_eq!(bodies[0], Body::Puppet(Character::ALL[0]));
+    assert_eq!(bodies[Character::ALL.len()], Body::Girl(Variant::ALL[0]));
+    for body in bodies {
+        let alone = Models::NONE.with_body(body);
+        assert!(alone.has(body), "{body:?}");
+        for other in Body::all().into_iter().filter(|&other| other != body) {
+            assert!(!alone.has(other), "{body:?} is not {other:?}");
+        }
+        assert!(body.path().starts_with("models/") && body.path().ends_with(".glb"));
+    }
+    assert_eq!(
+        Body::Puppet(Character::Zip).path(),
+        model_path(Character::Zip)
+    );
+    assert_eq!(Body::Puppet(Character::Zip).name(), "Zip");
+    assert_eq!(Body::Girl(Variant::Pink).path(), girl_path(Variant::Pink));
+    assert_eq!(Body::Girl(Variant::Pink).name(), "pink");
+}
+
+#[test]
+fn a_skin_with_a_girl_is_drawn_as_her_else_as_its_character() {
+    let chalk = Models::NONE.with(Character::Chalk);
+    let girls = chalk.with_girl(Variant::Pink);
+    // Her own model first, whatever the character that wears her.
+    for character in Character::ALL {
+        assert_eq!(
+            body_of(girls, character, Some(Variant::Pink)),
+            Some(Body::Girl(Variant::Pink))
+        );
+    }
+    // A girl without a model is the character's model in her colours, if it has one.
+    assert_eq!(
+        body_of(girls, Character::Chalk, Some(Variant::Raven)),
+        Some(Body::Puppet(Character::Chalk))
+    );
+    assert_eq!(body_of(girls, Character::Zip, Some(Variant::Raven)), None);
+    // The chalk skin has no girl: the character's model, as it comes.
+    assert_eq!(
+        body_of(girls, Character::Chalk, None),
+        Some(Body::Puppet(Character::Chalk))
+    );
+    assert_eq!(body_of(girls, Character::Zip, None), None);
+    assert_eq!(body_of(Models::NONE, Character::Chalk, None), None);
+}
+
 /// A practice fight on the third-person view, the countdown over.
 fn third_person(client: Client) -> Headless {
     let mut game = Headless::new(Game::new(client));
@@ -579,6 +647,55 @@ fn the_fighters_with_a_model_are_actors_of_the_stage_instead_of_mannequins() {
 }
 
 #[test]
+fn a_girl_with_a_model_is_drawn_as_her_in_her_own_texture() {
+    let mut client = Client::practice(MatchConfig::default());
+    let _ = client.set_skin(Skin::styled(Style::Manga, Variant::Raven));
+    let mut game = third_person(client);
+    game.idle(1);
+    let without = game.frame().stage.unwrap().layer;
+
+    // Raven's girl alone: P1 is her, the dummy (chalk) stays a mannequin.
+    game.game_mut()
+        .set_models(Models::NONE.with_girl(Variant::Raven));
+    let stage = game.frame().stage.unwrap();
+    assert_eq!(stage.actors.len(), 1);
+    let raven = &stage.actors[0];
+    assert_eq!(raven.player, PlayerId(0));
+    assert_eq!(raven.body, Body::Girl(Variant::Raven));
+    assert_eq!(
+        raven.character,
+        Character::Chalk,
+        "the rules' character stays"
+    );
+    assert_eq!(
+        raven.variant, None,
+        "she wears her own texture, no skin on top"
+    );
+    assert!(stage.layer < without, "her mannequin is left out");
+
+    // With the chalk model as well: the dummy is an actor too, as the puppet.
+    game.game_mut().set_models(
+        Models::NONE
+            .with(Character::Chalk)
+            .with_girl(Variant::Raven),
+    );
+    let stage = game.frame().stage.unwrap();
+    let bodies: Vec<Body> = stage.actors.iter().map(|actor| actor.body).collect();
+    assert_eq!(
+        bodies,
+        [Body::Girl(Variant::Raven), Body::Puppet(Character::Chalk)]
+    );
+    assert_eq!(stage.actors[1].variant, None);
+
+    // Another girl's model: Raven is the puppet in her colours, with the skin on top.
+    game.game_mut()
+        .set_models(Models::NONE.with(Character::Chalk).with_girl(Variant::Pink));
+    let stage = game.frame().stage.unwrap();
+    assert_eq!(stage.actors[0].body, Body::Puppet(Character::Chalk));
+    assert_eq!(stage.actors[0].variant, Some(Variant::Raven));
+}
+
+#[test]
 fn a_walking_actor_plays_the_walk_while_it_moves() {
     let mut game = third_person(Client::practice(MatchConfig::default()));
     game.game_mut()
@@ -636,6 +753,9 @@ fn the_models_are_laid_out_by_character_and_skin() {
                 .exists(),
             "{name} is a sprite sheet of assets/skins/manga"
         );
+        // Her own model, next to the characters' directories: models/manga/<name>.glb.
+        assert_eq!(girl_path(variant), format!("models/manga/{name}.glb"));
+        assert!(girl_path(variant).starts_with(GIRLS_DIR));
     }
 }
 
@@ -648,8 +768,17 @@ fn complete_chalk() -> Vec<String> {
 
 fn audit_of(files: &[String], glb: Option<Vec<u8>>) -> Audit {
     let files: Vec<&str> = files.iter().map(String::as_str).collect();
-    audit(&files, |path| {
+    audit(&files, &|path| {
         assert_eq!(path, model_path(Character::Chalk), "only the model is read");
+        glb.clone()
+    })
+}
+
+/// The audit of `files`, every model of which reads as `glb`.
+fn audit_all_as(files: &[String], glb: Option<Vec<u8>>) -> Audit {
+    let files: Vec<&str> = files.iter().map(String::as_str).collect();
+    audit(&files, &|path| {
+        assert!(path.ends_with(".glb"), "only the models are read: {path}");
         glb.clone()
     })
 }
@@ -665,11 +794,21 @@ fn problems(audit: &Audit) -> Vec<&str> {
 
 #[test]
 fn the_audit_notes_missing_models_and_skins_and_flags_broken_ones() {
-    // Nothing at all: four mannequins, nothing wrong.
+    // Nothing at all: four mannequins and ten girls drawn as puppets, nothing wrong.
     let empty = audit_of(&[], None);
     assert!(empty.passed());
-    assert_eq!(empty.lines.len(), Character::ALL.len());
+    assert_eq!(empty.lines.len(), Character::ALL.len() + Variant::ALL.len());
     assert!(empty.lines[0].1.contains("no model"));
+    assert!(
+        empty
+            .lines
+            .last()
+            .unwrap()
+            .1
+            .contains("puppet in her colours"),
+        "{:?}",
+        empty.lines
+    );
 
     // The committed layout: the puppet and every skin.
     let complete = audit_of(&complete_chalk(), Some(puppet::glb()));
@@ -744,6 +883,65 @@ fn the_audit_notes_missing_models_and_skins_and_flags_broken_ones() {
     );
     let old = audit_of(&complete_chalk(), Some(puppet::pack(&json, &[])));
     assert!(old.passed(), "{:?}", old.lines);
+}
+
+#[test]
+fn the_audit_checks_the_girls_like_the_characters() {
+    let girl = girl_path(Variant::Redhead);
+    let mut files = vec![girl.clone()];
+
+    // A girl with every clip: fine, and counted with her generator.
+    let complete = audit_all_as(&files, Some(puppet::glb()));
+    assert!(complete.passed(), "{:?}", complete.lines);
+    let counted = format!("{girl}: {} clips ({})", Clip::ALL.len(), puppet::GENERATOR);
+    assert!(complete.lines.iter().any(|(_, line)| *line == counted));
+    // The nine others are only noted, the redhead is not.
+    let missing = complete
+        .lines
+        .iter()
+        .filter(|(_, line)| line.contains("puppet in her colours"))
+        .count();
+    assert_eq!(missing, Variant::ALL.len() - 1);
+
+    // A girl who cannot be read, or who misses the clips every model needs, is a problem.
+    let unreadable = audit_all_as(&files, None);
+    assert!(!unreadable.passed());
+    assert!(problems(&unreadable)[0].contains(&format!("{girl}: truncated")));
+    let json = r#"{"asset":{"version":"2.0"},"animations":[{"name":"idle"}]}"#;
+    let gaps = audit_all_as(&files, Some(puppet::pack(json, &[])));
+    assert_eq!(problems(&gaps).len(), Clip::BASIC - 1, "{:?}", gaps.lines);
+    assert!(problems(&gaps).iter().all(|line| line.contains(&girl)));
+    assert!(problems(&gaps).iter().any(|line| line.contains("`punch`")));
+
+    // A file in models/manga/ that is no girl's model is a problem.
+    files.push("models/manga/purple.glb".into());
+    files.push("models/manga/redhead.png".into());
+    let stray = audit_all_as(&files, Some(puppet::glb()));
+    let found = problems(&stray);
+    assert_eq!(found.len(), 2, "{:?}", stray.lines);
+    assert!(found[0].contains("purple.glb") && found[1].contains("redhead.png"));
+}
+
+#[test]
+fn the_committed_models_pass_the_audit() {
+    fn list(dir: &std::path::Path, prefix: &str, files: &mut Vec<String>) {
+        let mut entries: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = format!("{prefix}{}", entry.file_name().to_string_lossy());
+            if entry.path().is_dir() {
+                list(&entry.path(), &format!("{path}/"), files);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new("assets");
+    let mut files = Vec::new();
+    list(&root.join("models"), "models/", &mut files);
+    let paths: Vec<&str> = files.iter().map(String::as_str).collect();
+    let found = audit(&paths, &|path| std::fs::read(root.join(path)).ok());
+    assert!(found.passed(), "cargo xtask models: {:?}", found.lines);
 }
 
 /// The puppet's header with `patch` applied.

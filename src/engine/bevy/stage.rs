@@ -3,11 +3,13 @@
 //! that the 2D drawing of [`super::draw`] shows as one sprite — over the alley and the
 //! mannequins of the software renderer, under the HUD ([`Stage::layer`]).
 //!
-//! * The models are loaded once per character ([`load_library`]): the `Gltf` asset, whose
-//!   named animations become one [`AnimationGraph`] per actor. A model that fails to load
-//!   (missing, broken) is logged and its character keeps its mannequin: the game tells the
-//!   front end which characters it draws ([`Game::set_models`]) and never crashes on assets.
-//!   A clip the model lacks is logged too; the fighter plays its idle instead.
+//! * The models are loaded once per body ([`load_library`]): the model of each character and
+//!   the girl of each manga skin. Each is a `Gltf` asset, whose named animations become one
+//!   [`AnimationGraph`] per actor. A model that fails to load (missing, broken) is logged and
+//!   its fighters keep their mannequin (or, for a girl, the character's model in her
+//!   colours): the game tells the front end which models it draws ([`Game::set_models`]) and
+//!   never crashes on assets. A clip the model lacks is logged too; the fighter plays its
+//!   idle instead.
 //! * One actor per fighter ([`cast`]): a root entity (where the fighter stands, which way it
 //!   faces) holding a fit node (the model scaled to [`MODEL_HEIGHT`], its feet on the root)
 //!   holding the scene. Once the scene is spawned its materials are swapped for
@@ -18,8 +20,9 @@
 //!   once, or scrubbed to the fraction the frame data dictates ([`Playback::Scrub`]) — the
 //!   contact of a punch lands on its active ticks whatever the frame rate. Nothing flows back:
 //!   the rules never read this module.
-//! * A manga variant is a skin texture ([`skin_path`]) swapped into the toon materials;
-//!   without it (or when it is missing) the model wears its own texture.
+//! * A manga variant is a skin texture ([`skin_path`]) swapped into the toon materials of the
+//!   character's model; without it (or when it is missing) the model wears its own texture,
+//!   as a girl's model always does.
 
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
@@ -50,8 +53,8 @@ use bevy::window::PrimaryWindow;
 
 use super::{CurrentStage, ShellResource, depth, world};
 use crate::front::model::{
-    CROSSFADE_SECONDS, Clip, FEATHER, LIGHT, MODEL_HEIGHT, Models, OUTLINE_SHADE, OUTLINE_WIDTH,
-    Playback, RIM, SHADOW_EDGES, SHADOW_TINTS, SPECULAR, model_path, skin_path,
+    Body, CROSSFADE_SECONDS, Clip, FEATHER, LIGHT, MODEL_HEIGHT, Models, OUTLINE_SHADE,
+    OUTLINE_WIDTH, Playback, RIM, SHADOW_EDGES, SHADOW_TINTS, SPECULAR, skin_path,
 };
 use crate::front::space::{CENTER_Y, FOCAL};
 use crate::front::{SCREEN_HEIGHT, SCREEN_WIDTH, Viewport};
@@ -250,13 +253,13 @@ impl Material for OutlineMaterial {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The library: one model per character
+// The library: one model per character and per girl
 // ---------------------------------------------------------------------------------------------
 
 /// The clips of a loaded model, by [`Clip::index`]: `None` where the model lacks the clip.
 type Clips = [Option<Handle<AnimationClip>>; Clip::ALL.len()];
 
-/// Where a character's model stands.
+/// Where the model of a body stands.
 #[derive(Debug, Clone)]
 enum Model {
     /// The `Gltf` is loading.
@@ -267,51 +270,48 @@ enum Model {
         gltf: Handle<Gltf>,
         clips: Box<Clips>,
     },
-    /// Failed to load (logged): the character keeps its mannequin.
+    /// Failed to load (logged): the fighters keep their mannequin, or the character's model.
     Missing,
 }
 
-/// The models of every character ([`Character::ALL`] order), and whether the game was told
-/// which ones it has.
+/// The models of every body ([`Body::all`] order), and whether the game was told which ones
+/// it has.
 #[derive(Resource, Default)]
 struct Library {
-    models: Vec<(Character, Model)>,
+    models: Vec<(Body, Model)>,
     reported: bool,
 }
 
 impl Library {
-    fn model(&self, character: Character) -> Option<&Model> {
+    fn model(&self, body: Body) -> Option<&Model> {
         self.models
             .iter()
-            .find(|(c, _)| *c == character)
+            .find(|(b, _)| *b == body)
             .map(|(_, model)| model)
     }
 }
 
-/// Starts loading every character's model.
+/// Starts loading every model: the characters' and the girls'.
 fn open_library(asset_server: Res<AssetServer>, mut library: ResMut<Library>) {
-    library.models = Character::ALL
+    library.models = Body::all()
         .into_iter()
-        .map(|character| {
-            let path = model_path(character);
-            (character, Model::Loading(asset_server.load::<Gltf>(path)))
-        })
+        .map(|body| (body, Model::Loading(asset_server.load::<Gltf>(body.path()))))
         .collect();
 }
 
-/// Settles the models as they load (or fail), and tells the game which characters are drawn
-/// in 3D once every model has settled.
+/// Settles the models as they load (or fail), and tells the game which bodies are drawn in 3D
+/// once every model has settled.
 fn load_library(
     asset_server: Res<AssetServer>,
     gltfs: Res<Assets<Gltf>>,
     mut library: ResMut<Library>,
     mut shell: NonSendMut<ShellResource>,
 ) {
-    for (character, model) in &mut library.models {
+    for (body, model) in &mut library.models {
         let Model::Loading(handle) = model else {
             continue;
         };
-        let path = model_path(*character);
+        let path = body.path();
         match asset_server.load_state(handle.id()) {
             LoadState::Loaded => {
                 let Some(gltf) = gltfs.get(&*handle) else {
@@ -324,12 +324,12 @@ fn load_library(
                         None if clip.is_basic() => error!(
                             "3D model {path} has no `{}` animation clip: {} plays its idle instead",
                             clip.name(),
-                            character.name()
+                            body.name()
                         ),
                         None => debug!(
                             "3D model {path} has no `{}` animation clip: {} plays its fallback",
                             clip.name(),
-                            character.name()
+                            body.name()
                         ),
                     }
                 }
@@ -344,10 +344,17 @@ fn load_library(
                 };
             }
             LoadState::Failed(error) => {
-                warn!(
-                    "no 3D model for {}: {path}: {error}; its mannequin is drawn instead",
-                    character.name()
-                );
+                // The girls are optional, one per skin: their absence is the normal case.
+                match body {
+                    Body::Puppet(_) => warn!(
+                        "no 3D model for {}: {path}: {error}; its mannequin is drawn instead",
+                        body.name()
+                    ),
+                    Body::Girl(_) => debug!(
+                        "no 3D model for the {}: {path}: {error}; the character's model wears her colours",
+                        body.name()
+                    ),
+                }
                 *model = Model::Missing;
             }
             LoadState::NotLoaded | LoadState::Loading => {}
@@ -366,9 +373,7 @@ fn load_library(
         .models
         .iter()
         .filter(|(_, model)| matches!(model, Model::Ready { .. }))
-        .fold(Models::NONE, |models, (character, _)| {
-            models.with(*character)
-        });
+        .fold(Models::NONE, |models, (body, _)| models.with_body(*body));
     shell.0.game_mut().set_models(models);
 }
 
@@ -492,6 +497,8 @@ struct Animation {
 struct Actor {
     player: PlayerId,
     character: Character,
+    /// The model it is drawn with.
+    body: Body,
     /// The fit node, holding the scene.
     fit: Entity,
     /// The scene has been spawned under the fit node.
@@ -540,14 +547,15 @@ fn kind(playback: Playback) -> Kind {
     }
 }
 
-/// Spawns the actor of `player` playing `character`: hidden until fitted.
+/// Spawns the actor of `player` playing `character` drawn as `body`: hidden until fitted.
 fn spawn_actor(
     commands: &mut Commands,
     asset_server: &AssetServer,
     player: PlayerId,
     character: Character,
+    body: Body,
 ) -> Entity {
-    let scene = asset_server.load(GltfAssetLabel::Scene(0).from_asset(model_path(character)));
+    let scene = asset_server.load(GltfAssetLabel::Scene(0).from_asset(body.path()));
     let root = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -564,6 +572,7 @@ fn spawn_actor(
     commands.entity(root).add_child(fit).insert(Actor {
         player,
         character,
+        body,
         fit,
         ready: false,
         dressed: false,
@@ -608,14 +617,14 @@ fn cast(
 
     let mut on_stage = Vec::new();
     for actor in &stage.actors {
-        if !matches!(library.model(actor.character), Some(Model::Ready { .. })) {
+        if !matches!(library.model(actor.body), Some(Model::Ready { .. })) {
             continue;
         }
         let entity = match cast.0.iter().find(|(player, _)| *player == actor.player) {
             Some(&(_, entity))
                 if actors
                     .get(entity)
-                    .is_ok_and(|(a, _, _)| a.character == actor.character) =>
+                    .is_ok_and(|(a, _, _)| a.body == actor.body) =>
             {
                 entity
             }
@@ -624,8 +633,13 @@ fn cast(
                     commands.entity(old).despawn_recursive();
                     cast.0.retain(|(player, _)| *player != actor.player);
                 }
-                let entity =
-                    spawn_actor(&mut commands, &asset_server, actor.player, actor.character);
+                let entity = spawn_actor(
+                    &mut commands,
+                    &asset_server,
+                    actor.player,
+                    actor.character,
+                    actor.body,
+                );
                 cast.0.push((actor.player, entity));
                 entity
             }
@@ -756,7 +770,7 @@ fn dress(
         let Some(Model::Ready {
             clips: library_clips,
             ..
-        }) = library.model(actor.character)
+        }) = library.model(actor.body)
         else {
             continue;
         };
@@ -825,8 +839,8 @@ fn dress(
             }
             None => error!(
                 "3D model {} has no animation root: {} stands still",
-                model_path(actor.character),
-                actor.character.name()
+                actor.body.path(),
+                actor.body.name()
             ),
         }
         actor.dressed = true;
@@ -890,7 +904,7 @@ fn fit(
         actor.fitted = true;
         info!(
             "3D model of {} fitted: {height:.3} units tall, scaled by {scale:.2}",
-            actor.character.name()
+            actor.body.name()
         );
     }
 }
@@ -917,7 +931,7 @@ fn wear(
                         warn!(
                             "no skin texture {} for the 3D model of {}: {error}; it wears its own",
                             skin_path(actor.character, *variant),
-                            actor.character.name()
+                            actor.body.name()
                         );
                         Some(None)
                     }
@@ -957,8 +971,10 @@ fn wear(
 pub struct ActorReport {
     /// The player it fights for.
     pub player: PlayerId,
-    /// The character, hence the model.
+    /// The character it plays.
     pub character: Character,
+    /// The model it is drawn with.
+    pub body: Body,
     /// Whether its model's root carries an `AnimationPlayer` with the clips of the model.
     pub animated: bool,
     /// How many of its meshes are cel-shaded.
@@ -969,11 +985,11 @@ pub struct ActorReport {
     pub clip: Option<Clip>,
 }
 
-/// What the stage has, for the tests: which characters have a model and what each actor got.
+/// What the stage has, for the tests: which models loaded and what each actor got.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StageReport {
-    /// The characters whose model loaded; `None` while the models are still loading.
-    pub models: Option<Vec<Character>>,
+    /// The models that loaded (characters' and girls'); `None` while they are still loading.
+    pub models: Option<Models>,
     /// The actors spawned, in cast order.
     pub actors: Vec<ActorReport>,
 }
@@ -986,8 +1002,7 @@ pub(super) fn report(world: &mut World) -> StageReport {
             .models
             .iter()
             .filter(|(_, model)| matches!(model, Model::Ready { .. }))
-            .map(|(character, _)| *character)
-            .collect()
+            .fold(Models::NONE, |models, (body, _)| models.with_body(*body))
     });
     let mut actors = Vec::new();
     let mut query = world.query::<&Actor>();
@@ -995,6 +1010,7 @@ pub(super) fn report(world: &mut World) -> StageReport {
         actors.push(ActorReport {
             player: actor.player,
             character: actor.character,
+            body: actor.body,
             animated: actor.animation.is_some(),
             toon_materials: actor.materials.len(),
             fitted: actor.fitted,
