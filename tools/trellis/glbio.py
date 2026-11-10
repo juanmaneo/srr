@@ -1,6 +1,7 @@
 """Minimal glTF binary reader/writer for the rigging tools (numpy only).
 
-Reads what TRELLIS (trimesh) writes: one mesh, one primitive, one embedded PNG texture.
+Reads what TRELLIS (trimesh) writes: one mesh, one primitive, one embedded base colour texture
+(PNG, or WebP as TRELLIS.2 writes it, which is converted to PNG).
 Writes a skinned model with named animation clips in the layout the game expects
 (`docs/3d-asset-pipeline.md`): a root node holding the skeleton and the skinned mesh.
 """
@@ -60,6 +61,24 @@ def accessor(doc: dict, blob: bytes, index: int) -> np.ndarray:
     return data.reshape(acc["count"], width) if width > 1 else data
 
 
+def as_png(data: bytes) -> bytes:
+    """`data` as PNG bytes: PNG stays as it is, anything else Pillow reads (WebP) is converted,
+    and an alpha channel that is opaque everywhere is dropped."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return data
+    import io
+
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(data))
+    image.load()
+    if image.mode == "RGBA" and image.getchannel("A").getextrema() == (255, 255):
+        image = image.convert("RGB")
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
 def read(path: Path) -> Mesh:
     doc, blob = split(Path(path).read_bytes())
     prims = [p for m in doc["meshes"] for p in m["primitives"]]
@@ -72,10 +91,14 @@ def read(path: Path) -> Mesh:
     triangles = accessor(doc, blob, prim["indices"]).astype(np.uint32).reshape(-1, 3)
     material = doc["materials"][prim["material"]]
     texture_index = material["pbrMetallicRoughness"]["baseColorTexture"]["index"]
-    image = doc["images"][doc["textures"][texture_index]["source"]]
+    texture_entry = doc["textures"][texture_index]
+    source = texture_entry.get("source")
+    if source is None:  # EXT_texture_webp: the image is under the extension
+        source = texture_entry["extensions"]["EXT_texture_webp"]["source"]
+    image = doc["images"][source]
     view = doc["bufferViews"][image["bufferView"]]
     start = view.get("byteOffset", 0)
-    texture = blob[start:start + view["byteLength"]]
+    texture = as_png(blob[start:start + view["byteLength"]])
     return Mesh(positions, normals, uvs, triangles, texture, doc.get("asset", {}).get("generator", ""))
 
 

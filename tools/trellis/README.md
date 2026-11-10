@@ -10,6 +10,9 @@ Scratch files (crops, raw TRELLIS output, renders) go to a work directory outsid
 | Script               | What it does                                                                         |
 |----------------------|--------------------------------------------------------------------------------------|
 | `trellis_glb.py`     | image -> textured `.glb`, through the public TRELLIS Hugging Face Space              |
+| `trellis2_glb.py`    | the same through the TRELLIS.2 Space (two GPU calls; stops after the first on a flat preview) |
+| `inflate.py`         | shades a flat sprite as an inflated figure, to look less like a poster to TRELLIS    |
+| `blender_decimate.py`| decimates a TRELLIS.2 mesh (100k+ triangles, WebP) to ~16k triangles, PNG texture    |
 | `clean.py`           | drops TRELLIS's backdrop plates and flakes from a mesh                               |
 | `rig.py`             | cleans, stands, skins and rigs a mesh, and gives it the 25 clips of the puppet       |
 | `farm.py`            | the queue: crops the ten sheets, generates and cleans one mesh per girl, waits out the ZeroGPU quota, skips the girls that are done |
@@ -20,7 +23,7 @@ Scratch files (crops, raw TRELLIS output, renders) go to a work directory outsid
 | `blender_clips.py`   | Blender render of a rigged GLB at chosen moments of its clips (`idle@0 punch@0.5 ...`) |
 
 Python 3.10+, run with `uv run <script>` (each script declares its dependencies); Blender
-is only needed for the two `blender_*` previews.
+is only needed for the `blender_*` scripts (the two previews and the decimation).
 
 ## 1. Generate (`trellis_glb.py`)
 
@@ -45,13 +48,42 @@ script never reads or prints the token.
 `c3r2` (the *hit*: arms away from the body, three-quarter view) gave the best figure to rig;
 `c2r1` (a high punch) is the fallback.
 
-**Seeds are a lottery.** With 25 + 25 steps, seed 1234 gave a real figure for the redhead and
-a flat slab for the green and the blonde. The same cell with another seed (4321, 7) is the first
-thing to try. Defaults of the Space: seed 0, guidance 7.5 / 3.0, 12 + 12 steps, simplify
+**Flat results are the main failure, not bad luck with a seed.** TRELLIS reads a flat cel
+drawing as a poster and returns a thin standee: a billboard, 0.02-0.05 m thick for a 1 m
+figure. Of the first nine tries with the plain sprite, with 25 + 25 steps, one gave a figure
+(the redhead, whose long dress and hair read as volume); the brunette gave the same slab with
+three seeds. Defaults of the Space: seed 0, guidance 7.5 / 3.0, 12 + 12 steps, simplify
 0.95 (0.90-0.98; 0.98 = fewest triangles), texture 1024 (512-2048).
 
-**Quota.** ZeroGPU gives each account a daily quota; a call asks for 120 s of it and uses
-about 30 s, so three or four generations a day. Anonymous quota is zero, hence `--use-token`.
+**Recipes.** So the farm tries four ways of asking, and keeps statistics (`state.json`):
+
+| Recipe | Space      | Input                                                      |
+|--------|------------|------------------------------------------------------------|
+| `t1`   | TRELLIS    | the plain sprite (the baseline: 1 success in 6 on disk)    |
+| `t1i`  | TRELLIS    | the sprite shaded as an inflated figure (`inflate.py`)     |
+| `t2`   | TRELLIS.2  | the plain sprite                                           |
+| `t2i`  | TRELLIS.2  | the inflated sprite                                        |
+
+`inflate.py` lights the sprite as if it were a balloon (the height is the square root of the
+distance to the silhouette, light from the upper left), so every limb and lock of hair is a
+rounded tube: a drawing that looks lit like a 3D render is read as a solid more often.
+
+`trellis2_glb.py` (Space `microsoft/TRELLIS.2`, 4B model, PBR with WebP textures) is two GPU
+calls: `/image_to_3d` returns 48 preview renders (8 views x 6 modes), and `/extract_glb` the GLB.
+The latents stay in the *session* of the client, so both calls use the same `Client`. The
+script measures the silhouette of the 8 normal-map views (a box of width w and depth t looks
+`w|cos a| + t|sin a|` wide at the angle a; it fits w and t) and **stops after the first call**
+when the depth is under 9 % of the height: a billboard costs one GPU call instead of two.
+What it returns is 100k+ triangles; `farm.py` decimates it with `blender_decimate.py` to 16k
+(collapse decimation keeps the UVs; `glbio.read` turns WebP into PNG), keeps the raw GLB under
+`out/raw/`, then judges the depth like any other mesh. TRELLIS.2 meshes are one watertight
+surface, without the backdrop plates and hair sheets of the first TRELLIS.
+
+**Quota.** ZeroGPU gives each account a daily quota. What was observed with a Hugging Face
+account: a call is refused ("120s requested vs. 145s left") when fewer than about 180 s are
+left, i.e. 1.5 times what it asks, so a window gives about five generations of 25-45 s
+(about 120 s of GPU), and the whole quota comes back 24 h after the first call of the window
+(the answer says "try again in H:MM:SS"). Anonymous quota is zero, hence `--use-token`.
 When it is used up the Space answers "exceeded your ZeroGPU quota ... try again in ~Nh": wait
 for the refill. This is a job for a queue left to run in the background, detached from the
 editor (an out-of-memory kill of a child must not take the editor down):
@@ -75,10 +107,15 @@ When a mesh is accepted, `farm.py` also draws its fit grids, `out/<name>_<cell>_
 and `_side.png` (it needs `$SRR_WORK/clips.json`, see below): reading the joints off them is
 the first manual step of the rig.
 
-`farm.py` crops the sheets itself, tries `(c3r2, seed 1234)`, then `(c3r2, 4321)`, `(c3r2, 7)`,
-`(c2r1, 1234)`, `(c2r1, 4321)` for each girl, keeps a result only if it is deep enough after
-cleaning (`out/<name>_<cell>.glb`; the flat ones go to `out/rejected/`), sleeps through the
-quota, and can be restarted at any time (the file system is its state).
+`farm.py` crops the sheets itself. For each attempt it takes the recipe with the best Laplace
+score `(successes + 1) / (tries + 2)` (a recipe nobody tried beats one that mostly failed), then
+the girl that recipe has tried least, then the first of `(c3r2, 1234)`, `(c3r2, 4321)`,
+`(c2r1, 1234)`, `(c3r2, 7)`, `(c2r1, 4321)` not tried yet for that pair. It keeps a result only
+if it is deep enough after cleaning (`out/<name>_<cell>.glb`; the flat ones go to
+`out/rejected/`), sleeps through the quota, and can be restarted at any time (the file system
+and `state.json` are its state). After a quota window, `python3 -c "import json; [print(a) for a in json.load(open('$HOME/.cache/srr-work/state.json'))]"`
+lists every attempt, and `out/prev/*_clay.jpg` / `_shaded.jpg` are the previews of the TRELLIS.2
+calls.
 
 ## 2. What the output looks like (and `clean.py`)
 
@@ -126,6 +163,7 @@ was modelled in) to the direction the same bone of the puppet takes, keyframe by
 The output's `asset.generator` is `srr rig (TRELLIS)`.
 
 `tools/trellis/look.sh <name> <name>.rig.json` does steps 3 and the Blender check in one go for
-`$SRR_WORK/out/<name>_c3r2.glb` and writes the contact sheet `$SRR_WORK/preview/look_<name>.png`.
+`$SRR_WORK/out/<name>_<cell>.glb` (whichever cell the farm accepted) and writes the contact
+sheet `$SRR_WORK/preview/look_<name>.png`.
 
 Then copy the result to `assets/models/manga/<variant>.glb` and run `cargo xtask models`.

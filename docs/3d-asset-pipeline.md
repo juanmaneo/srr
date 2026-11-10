@@ -200,14 +200,18 @@ commands. The pipeline, per girl:
    240×320; column `c`, row `r` is the crop at `(240c, 320r)`), Lanczos 3× to 720×960.
    The cell `c3r2`, the *hit* (arms spread, three-quarter view), is the one that rigs best,
    because the arms are away from the body. `c2r1`, a high punch, is the fallback.
-2. **Generate** with `trellis_glb.py` (25 + 25 steps, 1024 texture, simplify 0.95). One
-   call is the generation and the GLB export, about 30 s of GPU.
+2. **Generate** with `trellis_glb.py` (25 + 25 steps, 1024 texture, simplify 0.95; one call
+   is the generation and the GLB export, about 30 s of GPU) or with `trellis2_glb.py`
+   (TRELLIS.2: a call for the shape, a second for the GLB, which is decimated to 16k
+   triangles with Blender). The sprite is sent as drawn or shaded as an inflated figure
+   (`inflate.py`): see the recipes in `tools/trellis/README.md`.
 3. **Clean** (`clean.py`): TRELLIS adds backdrop plates (flat sheets through the middle of
    the figure, about a sixth of the triangles) and flakes. They are dropped.
-4. **Reject the flat ones.** The seed is a lottery: the same picture gave a real figure with
-   one seed and a flat slab, a billboard, with another. A result is accepted only when,
-   once cleaned, its thinnest extent is at least a tenth of its largest. Else try the next
-   seed, then the next cell.
+4. **Reject the flat ones.** TRELLIS reads a flat cel drawing as a poster and often returns
+   a thin standee, a billboard (the first nine tries with the plain sprite gave one figure,
+   the redhead's; three seeds of the brunette gave the same slab). A result is accepted only
+   when, once cleaned, its thinnest extent is at least a tenth of its largest. Else the queue
+   tries another recipe, seed or cell, preferring the recipe with the best record so far.
 5. **Rig** (`rig.py`): the cleaned mesh is stood on the floor at the puppet's 1.8 m, given
    the puppet's eleven joints, a smooth skin (the distance to each bone, then diffused over
    the welded mesh so the shoulders and the hips bend instead of tearing), and the
@@ -228,11 +232,14 @@ commands. The pipeline, per girl:
    `7_girl_punch.png` being the redhead in the game.
 
 The free quota is the bottleneck, not the machine. The Space runs on ZeroGPU, whose daily
-quota is per Hugging Face account and each call asks for 120 s of it while using about 30:
-expect three or four girls a day, and the queue to wait for the refill. The generation is
-planned as a background job (it skips the girls that are done, tries the next seed on a flat
-result, and waits out the quota), so the ten girls arrive over several days, and the game
-plays with whichever are there.
+quota is per Hugging Face account; a call is refused when fewer than about 180 s are left
+(it asks for 120 s) and uses 25-45 s, so a window gives about five tries, and the quota comes
+back 24 h after the first call of the window. With a hit rate of one in six that is a girl
+every few days at best, which is why the queue learns which recipe works (and why the
+TRELLIS.2 script drops a flat preview before paying for the second call). The generation is
+a background job (it skips the girls that are done and waits out the quota), so the girls
+arrive over days or weeks, and the game plays with whichever are there; the others are the
+puppet in their colours.
 
 **What TRELLIS does not give.** The cel look wants clean surfaces, and the model is a lumpy
 mesh with hair as thin sheets, and a texture baked from a Gaussian splat, softer than the

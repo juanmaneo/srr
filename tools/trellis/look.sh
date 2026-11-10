@@ -1,5 +1,5 @@
 #!/bin/sh
-# look.sh <name> [config]: rig <name>_c3r2.glb (the output of farm.py) into <name>.glb, render a few clips
+# look.sh <name> [config]: rig <name>_<cell>.glb (the output of farm.py) into <name>.glb, render a few clips
 # with Blender and write one contact sheet, $SRR_WORK/preview/look_<name>.png.
 # $SRR_WORK is the work directory of farm.py (default ~/.cache/srr-work).
 W=${SRR_WORK:-$HOME/.cache/srr-work}
@@ -9,7 +9,9 @@ name=$1
 cfg=""
 [ -n "$2" ] && cfg="--config $2"
 mkdir -p "$W/preview"
-python3 tools/trellis/rig.py "$W/out/${name}_c3r2.glb" "$W/out/$name.glb" --clips "$W/clips.json" $cfg || exit 1
+src=$(ls "$W"/out/"${name}"_c[0-9]r[0-9].glb 2>/dev/null | head -n 1)
+[ -n "$src" ] || { echo "no $W/out/${name}_c<col>r<row>.glb (the output of farm.py)" >&2; exit 1; }
+python3 tools/trellis/rig.py "$src" "$W/out/$name.glb" --clips "$W/clips.json" $cfg || exit 1
 blender -b --python tools/trellis/blender_clips.py -- "$W/out/$name.glb" "$W/out/${name}_clip" idle@0 punch@0.5 kick@0.5 ko@1 walk_f@0.25 mount@0.5 submission@0.5 jump@0.5 || exit 1
 W="$W" NAME="$name" python3 - <<'PY'
 import os
