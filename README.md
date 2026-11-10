@@ -1,983 +1,138 @@
 [![CI](https://github.com/juanmaneo/srr/actions/workflows/ci.yml/badge.svg)](https://github.com/juanmaneo/srr/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-Shattered Realm: Rampage (SRR): Emphasizes a chaotic, broken world built for intense combat encounters.
+# Shattered Realm: Rampage (SRR)
 
-This is a game created to test and push the limits of "vibe coding".
+A versus fighting game in a broken world, made to push the limits of "vibe coding". It must:
 
-It MUST be entirely written in Rust.
-It MUST run in a browser in WASM.
-It MUST have 100% test coverage.
-It MUST have a `cargo xtask` pattern for build, tests, coverage, and distribution.
-It MUST have a Docker setup to be able to build on any machine (via Docker).
+* be written entirely in Rust;
+* run in a browser (WASM);
+* have 100 % test coverage;
+* build, test, cover and package through `cargo xtask`;
+* build anywhere through Docker.
 
-It is a versus type of game that can be played 1v1 (2 players) or 1v1v1 (3 players) or 2v1 (3 players).
-The goal is to be able to play up to 10 players online (on a local network in the first iterations) with any kind of alliance or as full brawler.
+**The glitches are the game.** In the spirit of BERP (the fictional trash game of
+*Shangri-La Frontier*), the broken physics is a skill ceiling: every exploit is a move you
+learn and combo, like a fireball. The glitches are documented, tested and switchable, and
+on by default.
 
-The lore is inspired by games like Street Fighter, Tekken and Mortal Kombat (as tone and genre
-references only — nothing is taken from them), and the idea of on-purpose "glitches" to exploit is
-inspired by BERP (BErseRk online Passion), a fictional game in the manga/anime "Shangri-La
-Frontier".
-
-**The glitches are not bugs to avoid: they are the game.** SRR is built around the idea
-that a fighting game's broken physics is not a defect but a *skill ceiling*: every
-exploit is a move you learn, time and combo, exactly like a fireball or a throw. The
-fun is not playing around the glitches — it is playing *with* them: the player who has
-mastered the desyncs, the phantom copies and the stretched limbs wins, the player who
-ignores them loses. In the spirit of the trash games that inspired the idea, the
-"bugs" here are documented, tested (they have their own test file) and deliberately
-switchable — a match can turn each one on or off, but they are all on by default,
-because exploiting them is the whole point.
-
-The street look is inspired by **Streets of Rage**: like on its cover art, the title is splashed
-over the city as graffiti, the fights happen in back alleys, and the soundtrack is club music — here
-a 90s dark acid techno groove generated live, as if played in a New York basement. To be clear,
-no art, music or code from Streets of Rage or any other game is used: everything is original work
-made for SRR, and only the general mood is a homage. The grappling is inspired by Brazilian
-jiu-jitsu and MMA (clinch, takedown, mount, submission) and by judo: two-key throws that end in
-a pin or an armlock.
-
-**Art direction:** the fighters are single-line stick figures in the style of **XKCD** and
-Osvaldo Cavandoli's **"La Linea"**: a hollow round head, one line for the body, two-segment
-arms and legs, in chalk on the alley wall. Every player wears an XKCD-ish accessory in their
-colour (P1 Black Hat Guy's top hat, P2 Beret Guy's beret, P3 a ponytail, P4 a headband), so
-the figures stay apart with the same ink. The graphics will be reworked later; the stick
-figures already have a pose for every state (guard, walk, crouch, jump, each strike, the
-flying kick, grabs, the judo throws and every grapple position).
+**Look and sound:** street brawls in back alleys and a live-generated 90s acid techno
+soundtrack, in homage to *Streets of Rage*. The fighters are chalk stick figures in the
+style of XKCD and *La Linea*, or optional manga skins. Street Fighter, Tekken and Mortal
+Kombat are tone references only: no art, music or code is taken from any game.
 
 ---
 
-## Current iteration: up to 10 players on the local network
+## Playing
 
-2 to 10 players, each on their own machine, each in a web browser, on the same local network,
-**everybody for themselves** (free-for-all), each as the [character](#characters) of their
-choice. One machine runs the small SRR server, which
-serves the game and gathers the inputs; every player opens its address in a browser. A match
-starts when everybody in the room has pressed `Enter`: from a 1v1 to a brawl of ten. Online
-play is built to put up with bad connections (Wi-Fi, a far machine, a hidden tab): one bad
-connection only slows its own fighter, never the party (see
-[How the online match works](#how-the-online-match-works)). The rules engine already
-supports alliances (2v1…), which later iterations will open up.
+2 to 10 players on a local network, free-for-all, each in their own browser. One machine
+hosts the game:
 
-Alone? **Practise** against the training dummy or the computers (the bots): `T` on the
-title screen or while waiting in the room, and `T` or the pause menu to switch between
-rivals; see
-[Playing alone](#playing-alone-the-training-dummy-or-the-computers).
+```sh
+cargo xtask serve                          # or, with only Docker: cargo xtask docker serve
+docker build -t srr . && docker run --rm -p 8080:8080 srr      # without Rust
+```
 
-Full party, not enough computers? **Spectate**: open the page with `?spectate`
-(`http://<host-ip>:8080/?spectate`) on the machine hooked to the TV (or any big screen) and
-the room shows up there — the fights, the health bars, the banners, the music, without a
-seat and without pressing anything. Any number of spectators may watch, in the side view or
-the third-person one (`Tab`), and the players' phones and the TV mix freely: a party of ten
-plays on nine machines while the tenth shows the game to the room. A player who is knocked
-out of a brawl keeps watching too: their third-person camera leaves their fighter on the
-floor and follows the ones still fighting. See
-[Spectating: the game on a TV](#spectating-the-game-on-a-tv).
+Open the printed address (`http://<host-ip>:8080`) on every machine, then press `Enter`
+on the fight screen when you are ready. The match starts when everybody in the room is
+ready. A bad connection only slows its own fighter.
 
-### Controls
+* **Alone:** `cargo run`, or `?practice` in the browser. Fight the training dummy or one of
+  three computer opponents (`T` switches).
+* **On a TV:** open `?spectate` to watch without taking a seat.
+* **Phone or tablet:** turn it sideways, and on-screen controls appear.
+* **PS4 / PS5 / Xbox pad:** plug it in and it works.
 
-Each player plays on their own keyboard and can pick their own layout on the controls page
-(press `C` on the title screen, or `P` to pause during a fight, see
-[Keyboard layout](#keyboard-layout)). The default (**WASD**) puts the attacks on the letters;
-the **Standard** preset moves them onto the arrows and the numeric keypad.
+### Controls (default WASD layout)
 
-| Action                | WASD (default) | Standard preset |
-| --------------------- | ------------------ | ----------- |
-| Walk left / right     | `←` / `→`          | `A` / `D`   |
-| Sidestep to the wall / the street | keypad `7` / `2` | `Q` / `E` |
-| Jump                  | `↑`                | `W`         |
-| Crouch                | `↓` (hold)         | `S` (hold)  |
-| Turn around           | `↓` + `←` / `↓` + `→` | `S` + `A` / `S` + `D` |
-| Low / medium / high punch (fist) | keypad `1` / `5` / `6` | `B` / `H` / `J` |
-| Low / medium / high kick         | keypad `4` / `8` / `9` | `G` / `Y` / `U` |
-| Grab / advance a grapple         | keypad `0`             | `Space`         |
-| Judo sweep → hon-gesa-gatame      | keypad `5` + `9` together | `H` + `U` together |
-| Judo throw → ude-hishigi-juji-gatame | keypad `8` + `9` together | `Y` + `U` together |
-| Special move (your [character](#characters)'s power) | keypad `3`  | `F`             |
-| Counter a judo technique         | the same two keys, while being thrown | same |
-| Escape a grapple                 | mash any key           | same |
-| Controls page (title screen)     | `C`                    | same |
-| Pause the fight / change the controls | `P`               | same |
-| Switch the view (side / third-person 3D) | `Tab`          | same |
-| Skip the title screen   | `Enter` or `Esc` | same |
-| Ready for the next match (lobby, or after a round) | `Enter` | same |
-| Practice: go practising (title screen), start a practice fight while waiting online, switch the rival (dummy / computer) | `T` | same |
-| Leave a practice fight played while online | `Esc` | same |
-
-* **Low, Medium, High** are damage tiers. A stronger attack hits harder and pushes further,
-  but takes longer to come out and to recover from, so it is easier to punish. Kicks reach
-  further and hit a little harder than punches of the same tier, but are slower.
-  With several attack keys held, the strongest wins (a kick beats a punch of the same tier).
-* **Your fighter never turns by itself: press `↓` + `←` or `↓` + `→` to face that way.**
-  Fighters start facing each other. Jump over the opponent (or let it walk around you) and
-  you keep looking the old way, with your back to it, until you turn. The two keys can come
-  in either order (holding `↓` then pressing a direction, or the other way round); holding
-  them does nothing more, and `←` + `→` together face nowhere. Turning is instant, works on
-  the ground and in the air (where you keep drifting), and can be combined with an attack on
-  the same tick (the turn comes first); it is ignored, not delayed, while attacking,
-  grabbing, stunned or grappling.
-* **Hold `↓` to crouch.** A crouching fighter squats on the spot: it does not walk and does
-  not block, but **high punches and high kicks pass over its head**; low and medium attacks
-  still hit it with full damage. Attacking, grabbing, the judo techniques and jumping work
-  from a crouch (they take priority over it), and landing with `↓` held lands crouching.
-* **There is no block button: you block by stepping back**, Tekken style: holding the
-  direction *away* from where you face walks backwards with the guard up. A hit landing while
-  you step back away from it is blocked: it does a quarter of the damage, no stun and no
-  push. Standing still, walking forward, jumping or attacking does not block. Facing the
-  wrong way, "back" is towards the opponent, so turn first.
-* **Fighters are solid**: you cannot walk through the opponent. Walking into it pushes both
-  of you (each moves half the overlap), and against a wall it does not budge. You can still
-  **jump over** it: a fighter high enough above the other passes over its body (push box
-  50 × 90 units by default), and lands on the other side if it got past the middle.
-  Knocked-out and grappling fighters have no push box.
-* **Sidestep to dodge**, Tekken style: keypad `7` steps into the alley, towards the wall,
-  keypad `2` out, towards the street (`Q` / `E` in WASD). Everybody starts on the middle line;
-  the alley is 150 units deep on each side. Strikes, grabs and judo techniques only reach 40
-  units across, so **9 ticks of sidestep (150 ms) take you out of their line**: too slow to
-  dodge a jab on reaction, enough for a high kick seen coming. Fighters 40 units apart across
-  walk past each other. A grab or a technique pulls its catch onto the catcher's line.
-  Sidestepping works on the floor only, together with walking (and stepping back still
-  blocks); jumping, crouching and attacking take priority over it. The side view shows the
-  depth like the belt scrollers: a fighter further back stands higher and is drawn behind.
-* **Kick from the air.** A kick pressed while jumping is a flying kick (punches, grabs and the
-  judo techniques need the floor). It keeps the kick's numbers and flies on with the jump,
-  steering included; strikes reach 60 units up or down, so **press it near the top of the
-  jump to come down active** during the last steps of the fall. Landing ends the kick
-  whatever its phase: pressed too late, it never comes out (a key still held kicks again
-  from the floor). A flying kick comes from above, so even a high one hits a crouching
-  fighter; stepping back still blocks it.
-* **Combos: chain into a stronger strike.** Once a strike has landed (neither blocked nor
-  whiffed), holding a stronger attack key cancels the rest of it into that strike at once:
-  low → medium → high, punch or kick in any mix (keypad `1` → `5` → `9`), skipping a tier
-  if you like; in the air only a stronger kick chains. Nothing chains after a high strike,
-  and a blocked first hit leaves you in the full recovery: block the jab and punish. With the
-  default numbers every next-tier link lands inside the stun of the previous hit, so jab,
-  straight, high kick is a true 3-hit combo (5 + 9 + 17 damage) as long as the knockback has
-  not pushed the opponent out of reach (start close: the punch chain needs you within 58
-  units, the kick chain within 83), while skipping straight to the high kick lets the
-  opponent recover just in time. A flying kick that connects opens the combo: you land free
-  and jab at once. The hits a fighter takes without recovering are counted under its bar
-  (`3 HITS`), whoever lands them.
-* The figure turns white (with stars around the head) while stunned, and grey once knocked
-  out; blocking raises the hands. The striking limb stretches to the attack's range in the
-  colour of its strength (yellow, orange, red). The yellow marker shows which fighter is
-  yours. A grab shows as green arms, a judo technique as blue limbs, a submission as a red
-  locked limb.
-
-### Playing on a phone or a tablet
-
-Open the same address in the phone's browser (`http://<host-ip>:8080`, or `?practice` to play
-alone) and **turn the phone sideways**. As soon as you touch the screen, on-screen controls
-appear (a keyboard player never sees them):
-
-* on the title: **START** and **PRACTICE**;
-* on the select screen: **tap a character's card** to choose it (tap it again to fight),
-  **OK** and **BACK**; in the pause menu: a directional pad (the arrows), **OK** and
-  **BACK**;
-* in the fight: the **floating stick** on the left (left / right to walk, up to jump,
-  down to crouch; push it diagonally for down + a direction to turn around, or up + a
-  direction to jump sideways), **WALL** / **STREET** to sidestep next to it; on the right
-  the six attacks (**LK MK HK** above, **LP MP HP** below), **GRAB** and **SPECIAL**; at
-  the top **BACK**, **READY** (between rounds), **RIVAL** (practice), **VIEW** (3D) and
-  **PAUSE**.
-
-The controls are translucent and the stick is a smooth joystick (a ring with a knob that
-follows the thumb), so the fight is always in view. Like GeForce Now's virtual controller,
-they can be hidden and brought back: the small **TOGGLE** button (or the `X` key) flips
-them; while they are hidden only that button stays in the corner.
-
-Several fingers press several buttons, so the judo techniques work as on a keyboard (**MP** +
-**HK** for the sweep, **MK** + **HK** for the throw). The buttons press the keys of your
-layout, so phones and keyboards can play in the same room. Added to the home screen, the page
-opens full screen like an app. The controls are drawn by the game itself (`src/front/touch.rs`),
-like every other screen, and tested headlessly.
-
-### Playing with a PS4 / PS5 controller
-
-Plug in a **DualShock 4** (PS4) or a **DualSense** (PS5) — or pair it over Bluetooth — and it
-just works, natively and in the browser (the browser's Gamepad API: press any button once so
-the page sees the pad). Any standard pad does: an Xbox controller maps the same way, with
-A B X Y instead of the shapes. The mapping (`src/front/gamepad.rs`) follows the on-screen
-controls of a phone:
-
-| Action                     | PS4 / PS5 (or Xbox) pad                    |
-| -------------------------- | ------------------------------------------ |
-| Walk left / right           | left stick or D-pad `◀` / `▶` (Xbox: `◀` / `▶`) |
-| Jump                       | left stick or D-pad `▲`                    |
-| Crouch / turn around       | left stick or D-pad `▼` (diagonals turn)    |
-| Low / medium / high punch  | `Square` / `Triangle` / `R1` (Xbox: `X` / `Y` / `RB`) |
-| Low / medium / high kick   | `Cross` / `Circle` / `R2` (Xbox: `A` / `B` / `RT`) |
-| Grab / advance a grapple   | `L1` (Xbox: `LB`)                           |
-| Sidestep to the wall / the street | `L3` / `R3` (the stick clicks)        |
-| Special move               | `L2` (Xbox: `LT`)                           |
-| Judo sweep / throw         | `Triangle` + `R2` / `Circle` + `R2`         |
-| Confirm / ready            | `Cross` (Xbox: `A`)                          |
-| Back / leave a practice fight | `Circle` (Xbox: `B`); `Share` on the fight screen |
-| Pause / resume             | `Options` (Xbox: `Menu`)                    |
-| Controls page (title screen) / practice | `Triangle` / `Square` on the title (Xbox: `Y` / `X`) |
-
-A thumb resting on the stick presses nothing (a worn stick does not drift the fighter
-around), every pad connected steers the same fighter, and the buttons press the keys of your
-layout, so a pad and a keyboard can play in the same room. `Tab` (switching the view) stays on
-the keyboard; the PS button belongs to the console / the browser / the OS.
-
-### Skins (the styles and the variants)
-
-Every fighter can wear a **skin**: how it is drawn, nothing to do with the rules. The styles
-are two, and a match can mix them freely — a chalk stick figure against a full-colour
-heroine, or a brawl of ten fighters all dressed differently:
-
-* **Stick (chalk)**, the default: the game's own ink on the alley wall.
-* **Manga**: the ten fighters as girls of the KonoSuba school — bright cel shading, big
-  glossy eyes, bold ink outlines, twintails, braids and manes, fighting dresses and
-  thigh-high stockings (in the broad tradition of sprite brawlers like Phantom Breaker:
-  Battle Grounds; nothing copied from either: every face, haircut and outfit is the
-  game's own).
-
-Each player wears their **own** variant (the ten players of a brawl each look different, like
-the accessories of the chalk ink), picked on the **Skin** row of the controls page / pause
-menu (`←` / `→`); the choice takes effect **immediately**: locally at once, online the server
-tells every browser in the same round, so the whole room sees the change together. Every
-fighter keeps the game's poses, marks and effects whatever it wears — a skin is a layer over
-the ink, never a replacement.
-
-**The styles on offer are decided by the server hosting the game** (`--styles stick,manga`
-on the command line of `srr-server`, all of them by default; the chalk is always allowed). A
-style the server does not allow never reaches the menus.
-
-Each manga fighter is **one PNG sprite sheet** in `assets/skins/manga/`: every movement of
-the character — the guard, the two walk frames, the punch, the kick, the crouch, the jump,
-the hit recoil, the knockout — in one 3 x 3 grid in a fixed order, the same cell layout for
-all ten. The game decodes the PNG itself (a small DEFLATE decoder, no dependency) and slices
-the grid deterministically (`src/front/skin.rs`), so both engines and the headless tests draw
-the same art; every cell is normalised to the same box with the fighter seated on the same
-floor, the reason a manga girl and a chalk stick can trade blows at the same on-screen size.
-One image per character is the point: a model asked for one pose at a time drifts (hair
-colour, hem length, broken legs), one sheet keeps the fighter identical across its
-movements. The 3D view (`Tab`) reads the same palettes for its cel-shaded mannequins.
-
-### Characters
-
-Every player picks a character on the **select screen** that follows the title (`Left` /
-`Right` to choose, `Enter` to fight, `Esc` back to the title), and can change it at any time
-from the **Character** row of the controls page / pause menu. Each character has its own
-numbers and one **special move** on keypad `3` (`F` in WASD):
-
-| Character | Health | Speed | Jump | Power | Reach | Grab | Special move |
-| --------- | -----: | ----: | ---: | ----: | ----: | ---: | ------------ |
-| **Chalk**, the all-rounder | 100 | 100 % | 100 % | 100 % | 100 % | 100 % | **Shoulder Rush**: a lunging charge across the alley (12 damage) |
-| **Torch**, the zoner | 90 | 95 % | 100 % | 95 % | 100 % | 100 % | **Fireball**: a flaming shot that flies across the arena (10 damage, one every 1.25 s) |
-| **Brick**, the heavy | 130 | 75 % | 85 % | 115 % | 105 % | 125 % | **Iron Palm**: a slow palm (20 damage) that shrugs off hits while it winds up |
-| **Zip**, the rushdown | 80 | 135 % | 112 % | 85 % | 95 % | 90 % | **Slide Tackle**: a low slide that passes under high attacks |
-
-* A special move works from the floor only, and like a strike it can be **blocked by
-  stepping back** and is **cancelled by a hit** — except the Iron Palm, which takes the
-  hits of its start-up without flinching (they still hurt; a grab still beats it).
-* **Combos**: a strike that connected can be cancelled into the special move, like into a
-  stronger strike (jab → straight → shoulder rush). Nothing chains after a special move.
-* **The fireball** leaves Torch's hands on the 13th tick and flies 11 units a tick for 70
-  ticks, on Torch's line: **step back** to block it, **sidestep** out of its line or
-  **jump** over it. It vanishes on its first hit, and two fireballs meeting head-on put
-  each other out. Torch must wait 75 ticks before the next one: the orange gauge along
-  the bottom of its health bar refills meanwhile.
-* **The slide** keeps Zip under high punches and high kicks until it recovers; low and
-  medium attacks still catch it.
-* The bars, the name tags (`P1 Torch`) and the health count follow each character; at
-  time-up, fighters with different health compare their health *shares*, so a full Brick
-  and a full Zip draw.
-* Online, your pick is sent to the server when you get ready (`Enter`) and every browser
-  plays the characters the match started with; picking another one while ready tells the
-  server at once. In practice the round restarts at once with the new character, and the
-  computer plays another character every round.
-
-The numbers are in the [tuning guide](docs/tuning-guide.md#characters-percentages-and-special-moves).
-A new character is one more entry in `src/game/character.rs`.
-
-### Keyboard layout
-
-Press `C` on the title screen to open the controls page, or `P` at any time during a fight:
-the fight **pauses** and the same page opens as the pause menu (titled PAUSED), so the layout
-can be changed whenever you want, not only before playing.
-
-* `↑` / `↓` choose a row (the arrows always drive this page, whatever the layout);
-* on the **Preset** row, `←` / `→` (or `Enter`) switch between **WASD (letters + space)**
-  (the default) and **Standard (arrows + keypad)**;
-* on an action row, `Enter` then the new key remaps it (`Esc` cancels). A key already used by
-  another action swaps with it, so a key never does two things. `Enter`, `Esc`, `P`, `Tab` and
-  `T` cannot be bound (they drive the menus, the readiness for the next match, the pause, the
-  view and practice). The preset row then reads **Custom**;
-* on the **Character** row, `←` / `→` (or `Enter`) choose your
-  [character](#characters): alone the round restarts at once with it, online it is used
-  for the next match;
-* on the **Practice** row, `←` / `→` (or `Enter`) choose who to practise against: **the
-  computer**, **the patient computer**, **the aggressive computer** or **the training
-  dummy** (and, online, **off**: no practice fight, the room only); the change is carried
-  out at once, even in the middle of a round. See
-  [Playing alone](#playing-alone-the-training-dummy-or-the-computers);
-* `Esc` (or `Enter` on "Back to the title") goes back to the title; from the pause menu, `Esc`,
-  `P` or `Enter` on "Resume the fight" goes back to the fight.
-
-Pausing freezes a practice fight. An online match cannot wait for one player: it goes on while
-the pause menu is open, with your fighter standing still (the others see it idle), so pause
-between rounds when you can.
-
-The layout is local to your machine: each player picks their own, and the in-fight controls
-reminder and the `COUNTER` prompts name your keys. Keys are **physical positions**, so the
-WASD preset sits in the same place on an AZERTY keyboard (`Z` `Q` `S` `D` there). The layout
-lasts until the page is reloaded (it is not saved yet).
-
-### Title screen
-
-The game opens on an animated ASCII-art title: "SHATTERED" and "REALM:" are spray-painted in
-cold neon on a basement brick wall, then "RAMPAGE" in hot, slanted, dripping letters, Streets
-of Rage style. The title then *shatters* (flash, glitching rows, chromatic split, cracks that
-stay), the tagline is typed and "PRESS ENTER" blinks; a glitch burst keeps the wall alive
-every few seconds. Press `Enter` or `Esc` to choose your [character](#characters), then
-the fight, or `C` for the controls page
-(hinted in the top-left corner; the sound status is in the top-right one). Online, a match
-starts once every player in the room is on the fight screen and has pressed `Enter`.
-
-### Third-person 3D view (`Tab`)
-
-`Tab` switches the fight, at any moment, between the side view (chalk stick figures on the
-alley wall) and a third-person view over the shoulder of your fighter, like the brawls of
-Tekken's story mode. The camera glides behind you and looks towards the others, so a crowded
-free-for-all stays readable.
-
-The 3D is drawn by the game itself, the old-school way (`src/front/space.rs`,
-`src/front/tps.rs`): integer fixed-point maths, a quaternion camera, the painter's algorithm
-and everything snapped to a 2-pixel grain, for the look of a 90s console. The figures become
-wooden mannequins (every bone a tube, every joint a ball) in a comic-book style: flat two-tone
-shading and dark ink outlines, in a colour palette evoking the Streets of Rage title screen
-(a nod to its mood; no palette or asset is copied from it). Like every screen,
-the result is only rectangles and labels, so both engines draw it unchanged. The rules are
-the same in both views; this is where sidesteps read best: the mannequins stand on the line
-they stepped to, and the camera follows yours.
-
-**Cel-shaded 3D fighters (`--features mode3d`, Bevy only).** With the `mode3d` feature, a
-character that has a rigged glTF model in `assets/models/<name>/<name>.glb` is drawn as that
-model instead of its mannequin. The model uses a toon material (three flat bands of light,
-no gloss) and an inverted-hull ink outline, and wears the texture of the fighter's manga
-variant (`skins/<variant>.png`). A manga girl who has a model of her own
-(`assets/models/manga/<variant>.glb`, made from her sprite by TRELLIS) is drawn as her, in
-her own texture; the others are that puppet in her colours. Its animation follows the fighter's state: named clips
-(`idle`, `walk_f`, `punch`, `ko`...) blend into each other over 0.1 s, and the attack clips
-are scrubbed by the move's frame data, so the contact pose lands on the active frames. The
-models are drawing only. The rules, the hitboxes, the replays and online play are
-unchanged, and a missing or broken model only brings that character's mannequin back. The
-models come from an AI image-to-3D pipeline fed with the manga skins
-([docs/3d-asset-pipeline.md](docs/3d-asset-pipeline.md)). Until then, Chalk is a procedurally
-generated wooden puppet, Pinocchio style, tubes and balls with a grain texture
-(`src/front/puppet.rs`), which is also the CI fixture. It moves exactly like the stick figure
-of the arena: every keyframe of its 25 clips is a pose of the stick figure, the ground
-positions of a grapple included, and the stick figure's sprite sheet
-(`assets/skins/chalk/chalk.png`, `src/front/chalk.rs`) shows the same thirty movements in
-the grid of the manga sheets.
-
-### HUD
-
-Like in every versus game: in a 1v1, player 1's health bar on the left, player 2's on the
-right, both emptying towards the round timer in the middle. In bigger matches the bars get
-thinner and stack, the first half of the players on the left and the rest on the right (up
-to five a side in a brawl of ten, tinier beyond four players). Recent damage stays
-visible as a red trail that drains after half a second, so a combo reads at a glance; the
-bar blinks orange below 25 %. Under each bar: name, character and HP (`P1 (you) Torch`,
-`P3 Brick`, or `CPU Zip` for the computer), round wins as pips, the combo counter (`2 HITS`, `3 HITS`..., hotter with every
-hit: the hits that fighter took without recovering, kept for three quarters of a second
-after it recovers), and during a grapple either the position ladder
-(`[CLINCH] > mount > submission`, or `[IPPON-SEOI-NAGE] > juji-gatame` for a judo technique)
-for the fighter on top, or for the one underneath the escape gauge (in the air: the counter
-to enter, e.g. `IPPON-SEOI-NAGE!  COUNTER 8+9`). Big graffiti words announce READY, FIGHT!,
-KO and TIME; between matches the banner shows the lobby (who is here, who is ready, who
-left). Online, a bar reads `LAG` while the server stands in for that player's late inputs
-(their fighter repeats its moves) and `LEFT` once they left the match (their fighter stands
-still); when the server itself is not heard from, the banner says `Waiting for the server...`.
-
-### Grappling (BJJ / MMA)
-
-Press keypad `0` next to the opponent to grab (start-up 4 ticks, active 2, range 55; a whiff
-leaves you open for 20 ticks). A connected grab locks both fighters in a **clinch** and the
-fighter who grabbed is on **top**:
-
-| Position   | Top (attacker)                                             | Bottom (defender)          |
-| ---------- | ---------------------------------------------------------- | -------------------------- |
-| Clinch     | strikes: 3 damage; grab again → takedown (8 damage)         | escape: 4 points            |
-| Mount      | ground strikes: 4 damage; grab again → submission          | escape: 7 points            |
-| Submission | drains 2 health every 12 ticks until the tap-out (a KO)   | escape: 10 points           |
-
-* The top advances with a fresh press of grab once it held the position for 0.75 s, and
-  strikes with a fresh punch or kick press (at most one every 15 ticks).
-* The bottom escapes by mashing: every tick with any fresh key press scores a point. Breaking
-  free pushes the fighters apart and stuns the top for 20 ticks.
-* The referee stands both fighters up after 5 s in the same position, and a hit from a third
-  fighter breaks the hold.
-* Grabs are unblockable (stepping back does not help), but a strike beats a grab: getting hit
-  during the start-up cancels it. Stunned or airborne fighters cannot be grabbed.
-
-### Judo techniques (grab and counter-grab)
-
-Two keypad keys pressed **simultaneously** (at most 3 ticks, 50 ms, apart) throw the
-opponent. The first key usually starts its own attack; the second one, arriving while that
-attack still winds up, turns it into the technique. If one press completes both
-combinations, an attack already started turns into the technique that uses its key;
-otherwise the sweep wins.
-
-| Keys | Technique | Projection (in the air) | Finish on the ground |
-| ---- | --------- | ----------------------- | -------------------- |
-| `5` + `9` (medium punch + high kick) | aerial foot sweep | a flying **juji-gatame** leg kick scissors the opponent and sweeps it off its feet | **Hon-gesa-gatame** (scarf-hold pin) |
-| `8` + `9` (medium kick + high kick)  | grab and projection | **Ippon-seoi-nage**, the one-arm shoulder throw (te-waza) | **Ude-hishigi-juji-gatame** (cross armbar) |
-
-| Default numbers | Sweep `5`+`9` | Throw `8`+`9` |
-| --------------- | ------------: | ------------: |
-| Start-up / active / whiff recovery (ticks) | 6 / 3 / 24 | 8 / 2 / 28 |
-| Range | 75 | 65 |
-| Projection (counter window) | 24 ticks (first 12) | 30 ticks (first 12) |
-| Landing damage | 10 | 14 |
-| Escape from the finish | 9 points | 11 points |
-
-* Like a grab, a technique is unblockable, a strike during its start-up cancels it, and it
-  only catches fighters on the floor that are neither stunned nor grappling. A whiff cannot
-  be cancelled: it is very punishable.
-* Nobody can escape during the projection. On landing, the thrower holds the finish: it
-  drains like the submission (2 health every 12 ticks) until the tap-out, an escape (mash any
-  key), or the referee's stand-up after 5 s.
-* **Counter-grabbing needs the exact same combination**: `5` + `9` counters `5` + `9`, `8` +
-  `9` counters `8` + `9`. Either enter it during the first ticks of the projection, or be
-  winding up the same technique when the opponent's connects: the roles are reversed and you
-  throw the thrower. A counter cannot be countered again. Another combination, a grab or
-  mashing does nothing in the air. If both fighters' same technique becomes active on the same
-  tick, they clash and bounce apart.
-
-### Music
-
-The soundtrack is synthesised live (no audio file), in pure Rust, and follows the fight:
-
-* a distorted 909-style kick with an off-beat sub rumble, hats and claps, a dark drone, and a
-  303-style acid line (sawtooth into a resonant 4-pole ladder filter, with accents and
-  slides) in A phrygian;
-* 138 BPM on the title screen, 145 BPM in the fight (the tempos of the reference mix); the
-  acid pattern mutates a few steps every 8 bars, so it evolves but stays recognisable;
-* the filter opens and the acid line gets more resonance, accents and drive as the round gets
-  tense (low health, a grapple heading for a submission, the last ten seconds), and the
-  music drops to a breakdown between rounds.
-
-The native build starts the music with the title screen. Browsers only allow sound after a
-user gesture, so in the browser the music starts on the first key press or click in the
-page. The top-right corner of the title screen tells where the sound is at:
-`sound: press a key or click`, `sound: on`, or `sound: no audio output` (the reason is printed
-on stderr natively, in the browser console on the web). No sound? Check that the tab is not
-muted, click into the page, and look at the console.
-
-Default frame data (60 ticks per second, arena 1200 units wide, 100 health):
-
-| Attack       | Start-up | Active | Recovery | Range | Damage | Knockback | Hit-stun |
-| ------------ | -------: | -----: | -------: | ----: | -----: | --------: | -------: |
-| Low punch    | 3        | 2      | 6        | 80    | 5      | 12        | 10       |
-| Medium punch | 5        | 3      | 10       | 85    | 9      | 20        | 14       |
-| High punch   | 8        | 3      | 16       | 90    | 14     | 32        | 18       |
-| Low kick     | 5        | 3      | 9        | 105   | 7      | 16        | 12       |
-| Medium kick  | 7        | 3      | 13       | 115   | 11     | 26        | 16       |
-| High kick    | 11       | 4      | 20       | 125   | 17     | 40        | 22       |
-
-Kicks keep their numbers in the air (a flying kick is cut short by the landing). Every strike
-reaches 60 units up or down. These are Chalk's numbers; the other characters scale damage
-and range (see [Characters](#characters)).
-
-A round lasts 99 seconds after a 2-second countdown. It ends when only one fighter is still
-standing, or at time-up (most health wins). Every player then presses `Enter` to get ready
-("Waiting for P2, P3 to get ready..."); the next round starts when everybody in the room is
-ready, including players who arrived meanwhile ("P4 joins the next round"). Round wins are
-counted on the scoreboard as long as the same players keep fighting.
-
-### Playing alone: the training dummy or the computers
-
-A practice fight is a 1v1 against a **rival** played by the game, as player 2:
-
-* **the training dummy** (`P2`), which never moves: try moves on it;
-* **the computer** (`CPU`), the bot. It walks in, sidesteps back onto your line when you
-  dodge, picks strikes, grabs and both judo techniques, chains every strike that lands into
-  the next tier (a combo), kicks on the way down when it jumps in, steps back to block or
-  crouches under high attacks (never under a flying kick), turns around with `↓` + direction
-  like you, mashes out of grapples, climbs to the submission, and sometimes counters a judo
-  throw with the same two keys. It is deterministic (seeded, no real randomness), so it is
-  fully tested;
-* **the patient computer** and **the aggressive computer**: the same brawler with another
-  tuning (`BrawlerConfig`, see the [tuning guide](docs/tuning-guide.md)). The patient one
-  guards nearly everything, waits for its openings and escapes grapples with method, but
-  jumps rarely and never rushes in; the aggressive one decides twice as often, presses hard
-  in the grapples and jumps at you, but guards only one strike in five.
-
-All four are bots behind the same `Bot` trait (`src/game/bot.rs`), listed by `Rival`;
-switching the rival just swaps the bot, in the middle of the round if you like, and a new
-strategy is a new implementation.
-
-* **Practice mode** (`cargo run`, or `?practice` in the browser) is nothing but a practice
-  fight: `Enter` (or `T`) on the title screen starts it against the training dummy. The
-  notice under the banner says who you fight and that **`T` switches to the next rival**;
-  the **Practice** row of the pause menu (`P`) does the same.
-* **Online**, while waiting in the room (alone, or for the others to get ready), `T` starts a
-  practice fight against the computer; `T` again goes through the patient and aggressive
-  computers and the dummy, then back to the room.
-  `T` on the title screen goes straight to it. The fight runs only in your browser while the
-  room stays open: when someone joins, the notice says so ("P2 is here - Esc: leave the
-  practice"); `Esc` brings you back to the room, where `Enter` gets you ready for the real
-  match, and a real match that starts takes over anyway. The pause menu's Practice row offers
-  the same choices (the three computers, the dummy, off). During an online match the row reads
-  "not during a match" and `T` does nothing.
-
-After a round alone, `Enter` starts the next one at once.
-
-The intentional glitches are on by default — each one is a learned move, not an
-accident, and each can be switched off in the configuration:
-
-| Glitch | What it does |
+| Action | Keys |
 | --- | --- |
-| **Recovery cancel** | a jump pressed during an attack's *recovery* throws the rest of it away and takes off at once |
-| **Super jump** | a jump pressed again on the very tick you land re-launches you, higher than a normal jump (held down, you keep bouncing) |
-| **Reversal** | pressing grab on the very first tick you are grabbed swaps the roles (not during a judo projection, which has its own counter) |
-| **Echo barrage** | a punch that lands unblocked desyncs the attacker: lag copies of it appear in a ring around the victim and rain extra hits, one per tick, from every direction — they cannot be blocked, but they only hurt: no push, no stun |
-| **Stretch strike** | your arms lengthen: every punch reaches further than its frame data says, and a punch that whiffs its way to the end of its timeline breaks its fist off at full stretch. The floating fist keeps existing and can still hit — blockable, like the punch that lost it |
-| **Quick draw** | a punch pressed while a punch is in its recovery restarts a fresh punch at once, whichever strength is held: held down, the button keeps the fists flying — a flurry no recovery can slow down |
-| **Crater slam** | a judo throw that lands does not just hurt the thrown fighter: the impact quakes the ground, and everybody standing near the landing point — allies included — loses health, no push, no stun: the floor does the damage |
-| **Phantom warp** | an unblocked hit taken in the air desyncs your model: besides the knockback, you snap further along the direction the hit travels |
+| Walk / jump / crouch | `A` `D` / `W` / `S` |
+| Turn around | `S` + `A` or `S` + `D` (you never turn by yourself) |
+| Block | walk backwards |
+| Sidestep | `Q` / `E` |
+| Punch low / medium / high | `B` / `H` / `J` |
+| Kick low / medium / high | `G` / `Y` / `U` |
+| Grab, then climb the grapple | `Space` |
+| Judo sweep / throw | `H` + `U` / `Y` + `U` |
+| Special move | `F` |
+| Switch view (side / 3D) | `Tab` |
+| Pause, change the controls | `P` (or `C` on the title screen) |
 
-**What the glitches look like** (`src/front/glitch.rs`, the same in the arena and in the 3D
-view, whatever the fighters wear, and only while the rules of the glitch are on):
+The **Standard** preset moves the attacks onto the arrows and the numeric keypad. Every key
+can be remapped.
 
-* **Echo barrage**: the victim is ringed by lag copies of itself, ghosts flickering between
-  cyan and magenta, turning round it while the echoes rain; the ring thins out as they run
-  out.
-* **Phantom warp**: the model leaves fading afterimages between the place it stood and the
-  place the hit snapped it to.
-* **Stretch strike**: the stick figure's arm reaches as far as the rules say, a sprite or a 3D
-  model gets a rubber arm over it, and the fist that breaks off at full stretch floats where
-  it snapped.
-* **Crater slam**: the landing of a judo throw leaves a crater in the street, a dark pit with
-  glowing cracks and a shock ring running out to the edge of the quake, for about two thirds
-  of a second.
+### Fighting
 
-The rules expose just enough for that, read-only (`Fighter::echoes`, `Fighter::warp`,
-`Match::craters`, like the shots in flight): the looks never feed back into the simulation,
-so replays and online matches stay exactly as deterministic.
+* **Strikes:** stronger attacks hit harder but are slower. A strike that lands chains
+  into a stronger one (low → medium → high).
+* **Grappling:** a grab leads to clinch → mount → submission. The fighter underneath
+  escapes by mashing.
+* **Judo:** a two-key throw ends in a pin or an armlock. The same two keys counter it.
+* **Characters**, each with one special move:
 
-### Play on your local network (2 to 10 players)
+  | Character | Style | Special move |
+  | --- | --- | --- |
+  | Chalk | all-rounder | Shoulder Rush |
+  | Torch | zoner | Fireball |
+  | Brick | heavy | Iron Palm (shrugs off hits) |
+  | Zip | rushdown | Slide Tackle (under high attacks) |
 
-On the machine that hosts the game (it can also be one of the players):
+* **Glitches:** recovery cancel, super jump, grab reversal, echo barrage (lag copies rain
+  hits), stretch strike (rubber arms, flying fists), quick draw, crater slam and phantom
+  warp.
 
-```sh
-cargo xtask serve            # or, with only Docker installed: cargo xtask docker serve
-```
+### Looks
 
-Without Rust at all (only Docker, e.g. on NixOS), plain `docker` does the same:
+* **Skins:** chalk stick figures (the default) or ten manga girls drawn from sprite
+  sheets. Each player picks their own, and the hosting server decides which styles are
+  allowed (`--styles`).
+* **3D view (`Tab`):** a third-person camera over your shoulder, drawn in software as
+  wooden mannequins. With `--features mode3d` (Bevy only), it draws rigged, cel-shaded glTF
+  fighters instead (see the [3D asset pipeline](docs/3d-asset-pipeline.md)).
 
-```sh
-docker build -t srr .
-docker run --rm -p 8080:8080 srr
-```
-
-With Podman instead of Docker (Linux, or FreeBSD without a Linux VM), see
-[Podman (Buildah) instead of Docker](#podman-buildah-instead-of-docker):
-
-```sh
-podman build -t srr .
-podman run --rm -p 0.0.0.0:8080:8080 srr
-```
-
-This builds the web version into `dist/` and starts the server on port 8080. It prints the
-address to use, for example:
-
-```text
-Shattered Realm: Rampage - serving dist
-  this machine:  http://localhost:8080
-  local network: http://192.168.1.42:8080   <- open this on every machine
-```
-
-1. Open `http://<host-ip>:8080` in a browser on each machine, up to ten (the host can use
-   `http://localhost:8080`). Click into the page so it gets the keyboard.
-2. Leave the title screen (`Enter`). On the fight screen, press `Enter` when you are ready:
-   the banner shows who is in the room and who is ready. The match starts as soon as
-   everybody in the room (at least two) is ready: from a 1v1 to a brawl of ten.
-3. Somebody who opens the page during a match waits in the room and joins the next round
-   once everybody presses `Enter` again. An eleventh browser is told the room is full.
-4. If a player leaves, the match goes on without them: their fighter stands still (`LEFT`).
-   Once only one fighter of the match is still connected, they go back to the room
-   ("P3 left") and press `Enter` for a new match. Whoever is left alone can practise
-   meanwhile (`T`).
-
-To try it on a single computer, open several browser windows (or a private window, or
-another browser) on `http://localhost:8080`; each window is a player.
-
-Notes:
-
-* Allow incoming TCP connections on port 8080 in the host's firewall
-  (e.g. `sudo ufw allow 8080/tcp`).
-* With `cargo xtask docker serve`, `docker run` or `podman run`, the address printed may be
-  the container's; use the host machine's LAN address instead (`ip addr` / `ipconfig`).
-* With the default layout, keep Num Lock on to be safe. Without a numeric keypad (laptops),
-  pick the WASD preset on the controls page (`C` on the title screen).
-* Keep the game tab in the foreground: a hidden tab stops sending inputs, so its fighter
-  repeats its last move (`LAG`) while the others play on; back in the foreground, the tab
-  jumps straight to the current state of the match.
-* Practice alone, without the server's room, by opening `http://<host-ip>:8080/?practice`:
-  you fight the training dummy, or the computer (`T` switches). `cargo run` (native window)
-  also plays alone.
-
-#### Spectating: the game on a TV
-
-Open the page with `?spectate` on the machine hooked to the big screen
-(`http://<host-ip>:8080/?spectate`): it takes no seat, so a full party of ten can play while
-the tenth machine shows the game to the room. The spectator's page skips the title and the
-select screens and shows the fights as they are — the arena, the versus HUD, the banners, the
-music — with new matches showing up on their own, so nobody has to touch the TV once it is
-set up:
-
-* the page connects to the server's `/watch` endpoint instead of `/ws`, and the server marks
-  it a spectator: it is told everything the players are told (the room, the matches, every
-  frame, the skins, the departures) and nothing it sends is listened to;
-* it plays the frames of the server exactly, never guessing anything: the fight on the TV is
-  always the confirmed one, so it never rolls back or hesitates;
-* several pages may spectate at once (say, one per screen of the room) — they cost the
-  server one connection each, like a player;
-* a spectator arriving in the middle of a match sees it from the frames on (`Tab` switches
-  to the third-person view, which stands behind a fighter still standing, since a spectator
-  owns nobody).
-
-A knocked-out player's third-person camera does the same: it leaves their fighter lying on
-the pavement and follows the fight that goes on, so being eliminated from a brawl means
-watching the rest of it from the corner, not staring at the floor.
-
-#### How the online match works
-
-Every browser runs the same deterministic simulation from the same inputs; no game state is
-ever sent. With ten players, somebody always has a bad connection, so nobody waits for
-anybody:
-
-* **Server frames.** Each browser sends its input for every tick (60 per second), scheduled
-  2 ticks (33 ms) ahead. The server gathers the inputs of everybody into one frame per tick,
-  sent as soon as all of them are there. When an input is late, the server waits a short
-  grace period (8 ticks), then repeats that player's previous input and marks them late
-  (`LAG`): only the laggard's fighter hesitates, and everybody gets the same frame.
-* **Rollback.** A browser does not wait for the frames: it shows the match ahead of them,
-  guessing that the others keep doing what they did, and when a frame proves a guess wrong it
-  replays the ticks since then with the right inputs (up to 30 ticks, half a second; beyond
-  that it waits, `Waiting for the server...`). A browser left behind (a paused tab) jumps
-  straight to the frames.
-* **Timing.** Every quarter of a second the server tells each browser how early its inputs
-  arrive, at worst. The browser then runs a few ticks twice, or skips a few, to keep about
-  two ticks of margin, whatever its round trip to the server and the drift of its clock.
-* **Adaptive input delay.** Far from the server, running further ahead would mean guessing
-  the others for too long (big rollbacks); the browser schedules its inputs further ahead
-  instead (up to 30 ticks) and gives that delay back when the connection gets better.
-* **The server never blocks.** Each connection has its own writer with a bounded queue: a
-  connection that stops reading is cut off instead of stalling the room for the others.
-
-`server/tests/network.rs` checks all of this with a deterministic simulation of ten browsers
-behind cables, Wi-Fi, far links, freezing tabs and drifting clocks: everybody's confirmed
-match is the same, and only the bad connections are ever late.
-
-The protocol is a handful of binary WebSocket frames (integers little-endian; a set of
-players is a `u16`, bit `i` for player `i`):
-
-| Tag | Message        | Direction        | Fields                                        |
-| --: | -------------- | ---------------- | --------------------------------------------- |
-| 1   | `Welcome`      | server → browser | your seat / player `u8`                       |
-| 2   | `Start`        | server → browser | session `u8`, players (set), then one character `u8` per player, by id |
-| 3   | `Input`        | browser → server | session `u8`, tick `u32`, input `u16`         |
-| 4   | `PlayerLeft`   | server → browser | player `u8`                                   |
-| 5   | `RoomFull`     | server → browser | –                                             |
-| 6   | `Lobby`        | server → browser | seated (set), ready (set)                     |
-| 7   | `Ready`        | browser → server | character `u8` (0 Chalk, 1 Torch, 2 Brick, 3 Zip) |
-| 8   | `Frame`        | server → browser | session `u8`, tick `u32`, players (set), late (set), then one input `u16` per player, by id |
-| 9   | `Timing`       | server → browser | tick `u32`, lead `i8` (ticks of margin of the input for that tick) |
-
-### The server
-
-`srr-server` (package in `server/`) is a dependency-free, std-only HTTP + WebSocket server:
-
-```sh
-cargo run --release -p srr-server -- --dir dist --port 8080
-```
-
-| Option        | Default | Meaning                               |
-| ------------- | ------- | ------------------------------------- |
-| `--port PORT` | `8080`  | TCP port, listened on all interfaces  |
-| `--dir DIR`   | `dist`  | directory with the web build to serve |
-| `-h, --help`  |         | show the usage                        |
-
-It serves the files of `DIR` on `GET`, the room (up to 10 players) on the WebSocket at
-`/ws`, and the spectators on the WebSocket at `/watch` (the page opened with `?spectate`),
-and runs the room's clock (60 ticks per second) that sends the frames of late players.
-`Ctrl-C` stops it cleanly: the browsers are told with a close frame, the sockets are flushed,
-and the process exits 0.
+Every rule, key and number: the [player manual](docs/manual.md) and the
+[tuning guide](docs/tuning-guide.md).
 
 ---
 
 ## Building and testing
 
-### Layout
-
-* `src/game/` – the engine-agnostic rules: roster and alliances, the characters and their
-  special moves (`character.rs`) and the fireballs in flight (`projectile.rs`), fixed-step
-  deterministic match simulation, the six attacks and their frame data, blocking, crouching, push boxes, manual
-  turning, the key bindings and their presets, grappling, the judo techniques and their counters, intentional glitches,
-  the computer opponents (`bot.rs`: the `Bot` trait, the training dummy and the seeded
-  brawler behind three tunings, listed by `Rival`) and the replays (`replay.rs`: the input
-  frames of a match are the match).
-  No engine, clock, thread or randomness, so it runs the same in the browser and on every
-  machine of an online match.
-* `src/net/` – the pure networking logic: the binary protocol, sets of players, the
-  rollback session (`rollback.rs`) and the client state machine (lobby, readiness, timing and
-  input delay, playing alone against a rival bot); no sockets, so it is fully
-  unit-tested.
-* `src/front/` – the screens as a pure state machine (`Game`): the graffiti ASCII intro, the
-  character select screen (`select.rs`), the controls page (`controls.rs`), the on-screen
-  touch controls for phones (`touch.rs`), the arena with the XKCD stick figures (`stick.rs`), the
-  third-person 3D view (`tps.rs`, on the fixed-point 3D maths of `space.rs`), the stage of
-  its glTF fighters (`model.rs`: clips, frame-data scrubbing, toon bands, the model audit),
-  the glitches' looks (`glitch.rs`), the movements they share (`moves.rs`: the thirty things
-  a fighter can be seen doing, for
-  the stick figure, the sprite sheets and the clips), the chalk sprite sheet (`chalk.rs`) and
-  the puppet placeholder (`puppet.rs`), the
-  versus HUD and the music cues. Every frame is described as plain rectangles and
-  monospace labels on a 1280×720 virtual screen (`Frame`), so it is fully unit-tested.
-  `front/render.rs` is a software renderer for those frames (pixels, PNG, text) and
-  `front/headless.rs` plays the `Game` without any engine (see [Headless rendering](#headless-rendering-tests-and-screenshots)).
-* `src/audio/` – the acid techno synthesiser (pure DSP, deterministic, fully tested).
-* `src/platform/` – engine-independent client glue: the browser WebSocket and the sound card
-  output (`cpal`).
-* `src/engine/` – the engine backends (`bevy.rs`, `fyrox.rs`): open the window, map the
-  keyboard, tick the game 60 times per second and draw its frames. `bevy/stage.rs` (with
-  `toon.wgsl` and `outline.wgsl`) renders the glTF fighters of the `mode3d` feature.
-* `assets/models/` – the 3D fighters: one rigged `.glb` per character plus its skin textures,
-  and one per manga girl in `manga/<variant>.glb` (see
-  [docs/3d-asset-pipeline.md](docs/3d-asset-pipeline.md)); `chalk/` holds the generated
-  puppet.
-* `tools/trellis/` – the one place that is **not Rust**: the offline scripts (Python, and
-  Blender for the previews) that turn a manga sprite into a rigged `.glb` through the public
-  TRELLIS Space and give it the puppet's movements. They only *make* the files of
-  `assets/models/manga/`. The game, the build, `cargo xtask`, the tests and CI never run or
-  need them, and what they produce is audited like every other model
-  (`cargo xtask models`).
-* `assets/skins/` – the sprite sheets: one hand-painted PNG per manga character
-  (`manga/`), and the generated chalk (`chalk/chalk.png`, written by
-  `cargo run --no-default-features --example sheets -- --write`).
-* `assets/fonts/` – Fira Mono (SIL OFL), the monospace font of the Fyrox backend (Bevy embeds
-  the same font).
-* `server/` – `srr-server`: static files + the WebSocket room (`room.rs`, pure: seats,
-  frames, timing reports) for LAN matches of 2 to 10 players; `server/tests/network.rs`
-  simulates ten browsers over bad networks.
-* `xtask/` – the `cargo xtask` build automation.
-* `benches/` – the `criterion` benchmarks: the simulation (`Match::step` at 2, 5 and 10
-  players), the music renderer and the protocol round-trip (`cargo bench`).
-* `docs/` – the [tuning guide](docs/tuning-guide.md): the frame data of the whole game
-  (attacks, grappling, techniques), the bot tunings and the 3D view's knobs, explained for
-  balance work; the [3D asset pipeline](docs/3d-asset-pipeline.md).
-* `web/index.html` – the page that loads the WASM build.
-
-### Native (development)
-
 ```sh
-cargo run                                   # alone: the training dummy, or the bot (T)
-cargo run --features bevy/dynamic_linking   # faster incremental builds (native only)
-cargo run --features mode3d                 # the glTF cel-shaded fighters in the 3D view (Tab)
+cargo run                        # native, alone against the dummy or the bot
+cargo run --features mode3d      # with the glTF fighters in the 3D view
+cargo xtask dev-check            # everything a push must pass
 ```
 
-On Linux the native build needs the ALSA headers for the music (`libasound2-dev` and
-`pkg-config` on Debian / Ubuntu).
+On Linux, the native build needs `libasound2-dev` and `pkg-config` for the music.
 
-### Engines: Bevy or Fyrox
+| Command | What it does |
+| --- | --- |
+| `cargo xtask build` | compile to WASM and run `wasm-bindgen` |
+| `cargo xtask test` | run every test of the workspace |
+| `cargo xtask coverage` | fail below 100 % of the lines, regions or functions |
+| `cargo xtask dev-check` | `fmt`, clippy `-D warnings`, the tests, then coverage |
+| `cargo xtask dist` / `serve` | the web build in `dist/` / served for LAN play |
+| `cargo xtask screenshots` | play a scripted game headlessly and save PNGs |
+| `cargo xtask models` | audit the 3D models in `assets/models/` |
+| `cargo xtask docker <task>` | run a task in the toolchain image (`docker-image` builds it) |
 
-The game is engine-agnostic: everything but `src/engine/<engine>.rs` is shared, and a backend
-only implements the small `Engine` trait (open a window, call `Shell::tick` at 60 Hz with the
-keys held, draw `Shell::frame`). The engine is chosen at compile time:
+The rules (`src/game/`), the netcode (`src/net/`) and the screens (`src/front/`) never touch
+an engine. Bevy (the default) or Fyrox (`--no-default-features --features fyrox`) only draws
+the frames, so everything is tested headlessly, without a window or a GPU.
 
-| Engine          | Command                                              | Web build |
-| --------------- | ---------------------------------------------------- | --------- |
-| Bevy (default)  | `cargo run`                                          | yes       |
-| Fyrox           | `cargo run --no-default-features --features fyrox`   | native only for now |
+CI (`.github/workflows/ci.yml`) runs `cargo xtask dev-check` and a build without default
+features on every push.
 
-When both features are enabled, Bevy wins. The relay server never compiles an engine. `cpal`
-is pinned to 0.17.1 because Fyrox's audio links the same `alsa-sys` version (Cargo allows a
-single crate per `links = "alsa"`).
-
-### `cargo xtask`
-
-| Command                        | What it does                                                   |
-| ------------------------------ | -------------------------------------------------------------- |
-| `cargo xtask build`            | compile to `wasm32-unknown-unknown` and run `wasm-bindgen`     |
-| `cargo xtask test`             | run every test of the workspace                                |
-| `cargo xtask coverage`         | run the tests with `cargo llvm-cov`, fail below 100 % of the lines, regions or functions |
-| `cargo xtask dev-check`        | everything a push must pass: `fmt --check`, clippy with `-D warnings`, the tests, then `coverage` |
-| `cargo xtask dist`             | build and assemble the playable web build in `dist/`           |
-| `cargo xtask serve`            | `dist`, then run `srr-server` on port 8080 for LAN matches     |
-| `cargo xtask screenshots`      | play a scripted game headlessly, save PNGs in `target/screenshots` |
-| `cargo xtask models`           | audit `assets/models/`: every GLB, its named clips and its skins |
-| `cargo xtask docker-image`     | build the Docker image with the whole toolchain                |
-| `cargo xtask docker <task>`    | run `build`, `test`, `coverage`, `dev-check`, `dist` or `serve` in that image |
-
-Native requirements for the non-Docker tasks: the `wasm32-unknown-unknown` target,
-`wasm-bindgen-cli` (same version as the `wasm-bindgen` crate in `Cargo.lock`) and
-`cargo-llvm-cov`. With Docker only Docker itself is needed, e.g. `cargo xtask docker dist`.
-`cargo xtask docker serve` publishes port 8080 of the container. The container runs as the
-owner of the mounted project, so the `target/` and `dist/` it writes belong to you, not to
-root, and the native tasks keep working afterwards.
-
-The `Dockerfile` has two targets. `cargo xtask docker` uses its `toolchain` stage (the Rust
-toolchain and the tools above, nothing else) and mounts the project into it. Its default
-target is a ready-to-run image for machines without Rust: it copies the project in, runs
-`cargo xtask dist`, compiles `srr-server`, and serves `dist/` on port 8080:
-
-```sh
-docker build -t srr .                 # compiles the game, long the first time
-docker run --rm -p 8080:8080 srr      # same as `cargo xtask serve`
-```
-
-`dist/` must be served over HTTP (WASM cannot be loaded from `file://`); `srr-server` does it,
-and only it provides the `/ws` endpoint needed to play online. Any other static server is fine
-for `?practice`.
-
-### Podman (Buildah) instead of Docker
-
-The `Dockerfile` builds with Podman (which uses Buildah) as well as with Docker; it needs
-Buildah 1.33 / Podman 4.8 or newer, because the toolchain stage uses a heredoc. The base
-images are fully qualified (`docker.io/library/...`), so no `registries.conf` short-name setup
-is needed. Rootless Podman works: the project is owned by root inside the container, which is
-you on the host, so `target/` and `dist/` still belong to you.
-
-The playable image:
-
-```sh
-podman build -t srr .                       # or: buildah build -t srr .
-podman run --rm -p 0.0.0.0:8080:8080 srr    # then open http://localhost:8080
-```
-
-With rootless Podman, publish the port on IPv4 (`0.0.0.0:`), as above. `srr-server` only
-listens on IPv4. With a plain `-p 8080:8080`, Podman also accepts connections on IPv6
-(`::1`) and forwards them to the container, where nobody is listening. `localhost` then
-fails with "connection reset", while `http://127.0.0.1:8080` and the LAN address keep working.
-
-`cargo xtask docker <task>` runs the `docker` command. Make `docker` run Podman (the
-`podman-docker` package, or a `docker` symlink to `podman` on your `PATH`) and it works as
-is. Or run the same commands yourself:
-
-```sh
-podman build --target toolchain -t srr-builder .
-podman run --rm -v "$PWD":/work:z -v srr-cargo-registry:/usr/local/cargo/registry \
-    -w /work srr-builder cargo xtask dist        # or build, test, coverage
-podman run --rm --init -p 0.0.0.0:8080:8080 \
-    -v "$PWD":/work:z -v srr-cargo-registry:/usr/local/cargo/registry \
-    -w /work srr-builder cargo xtask serve
-```
-
-The `:z` suffix relabels the mount for SELinux (Fedora, RHEL); without SELinux, Podman
-ignores it. `cargo xtask docker` does not add it, so on an SELinux host use the commands above.
-
-#### FreeBSD
-
-On FreeBSD, Podman runs the image's Linux binaries directly through the Linuxulator (Linux
-binary compatibility). You don't need a Linux VM under bhyve. Podman on FreeBSD runs as root.
-One-time setup:
-
-```sh
-pkg install podman-suite
-mount -t fdescfs fdesc /dev/fd                # and add it to /etc/fstab:
-                                              # fdesc  /dev/fd  fdescfs  rw  0  0
-sysrc linux_enable=YES && service linux start
-cp /usr/local/etc/containers/pf.conf.sample /etc/pf.conf   # set your network interface in it
-sysrc pf_enable=YES && service pf start
-# Storage: on ZFS,
-zfs create -o mountpoint=/var/db/containers zroot/containers
-# otherwise set driver = "vfs" in /usr/local/etc/containers/storage.conf
-```
-
-Then build and run the Linux image with `--os=linux`:
-
-```sh
-podman build --os=linux -t srr .
-podman run --rm --os=linux -p 8080:8080 srr
-```
-
-Published ports go through `pf`'s redirections, so other machines on the LAN reach
-`http://<host-ip>:8080`. To reach them from the FreeBSD host itself, read the comments in
-`pf.conf.sample` (`net.pf.filter_local`). The image builds and runs with Docker and with
-rootless Podman on Linux. The FreeBSD steps follow the FreeBSD Podman documentation but have
-not been tested with this project.
-
-The engine backends (`src/engine/`), the platform glue (`src/platform/`) and the thin
-`main.rs` files (game and server) are excluded from the coverage gate: they only draw, read
-the keyboard, play samples, or open sockets and print, and are checked by playing. Everything else, including the server's HTTP / WebSocket handling over
-real sockets, is covered by tests.
-
-### Headless rendering (tests and screenshots)
-
-The tests never show anything on screen: no window opens, no sound plays, and the xtask
-process tests discard the output of the commands they run (`SystemExecutor::quiet`).
-`tests/project_layout.rs` enforces it.
-
-Screens are still tested as a player sees them, the way
-[Blitz](https://github.com/DioxusLabs/blitz) renders Dioxus apps server-side without a
-browser:
-
-* `srr::front::render` is a software renderer for the same `Frame` that Bevy and Fyrox draw.
-  It follows the same contract: background, letterboxing with `Viewport`, rectangles then
-  labels with alpha blending, a built-in 5×7 font on the monospace grid. It outputs
-  * a `Pixmap`, with `to_png()` (a dependency-free PNG encoder),
-  * or a `text_snapshot` (shaded characters, readable in a terminal or in an assertion).
-* `srr::front::Headless` is a third, headless "engine". It ticks the real `Game` with scripted
-  keys and renders it in memory.
-
-```rust
-use srr::front::Headless;
-use srr::game::Key;
-
-let mut game = Headless::practice();
-game.skip_intro();                          // the training dummy is waiting (T: the computer)
-game.hold(&[Key::ArrowRight], 60);
-game.press(&[Key::Numpad8, Key::Numpad9]); // Ippon-seoi-nage
-let png = game.screenshot().to_png();       // what a 1280x720 window would show
-println!("{}", game.text_snapshot(160, 45)); // the same screen as text
-```
-
-`cargo xtask screenshots` runs `examples/screenshots.rs`. It plays the intro, opens the
-controls page, shows the character select screen and the pause menu, plays a short fight against the dummy (crouch, strikes,
-a flying kick into a 3-hit combo, ippon-seoi-nage, juji-gatame), a round against the
-computer, an online 1v1v1 and a brawl of
-ten (the other players simulated, one of the ten lagging), then each special move (Torch's
-fireball in both views, Brick's palm, Zip's slide) and the phone's touch controls, headlessly, and writes PNGs to `target/screenshots/`. It is built with `--no-default-features`,
-so no engine, window or GPU is needed: it works in CI or over SSH.
-
----
-
-## Continuous integration
-
-`.github/workflows/ci.yml` runs on every push and pull request:
-
-- **dev-check**: the whole gate in one command (`cargo xtask dev-check`): `cargo fmt
-  --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test
-  --workspace`, then the coverage ratchet (`cargo xtask coverage`): 100 % of the lines,
-  the regions and the functions. Mesa (llvmpipe/lavapipe) is installed first so the
-  headless engine test of `tests/render.rs` renders for real on the software rasterizer
-  instead of skipping
-- **no-default-features**: `cargo test -p srr --no-default-features`, proving the rules,
-  the protocol and the headless renderer build and pass without compiling any engine
-  (the relay server's configuration)
+The layout, the netcode and its protocol, the server, Podman and FreeBSD, and headless
+rendering are covered in [docs/development.md](docs/development.md).
 
 ## License
 
-Licensed under either of
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option. The bundled Fira Mono font is under the SIL
+Open Font License 1.1 ([LICENSE-FiraMono.txt](assets/fonts/LICENSE-FiraMono.txt)).
 
-* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
-  <http://www.apache.org/licenses/LICENSE-2.0>)
-* MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
-
-at your option.
-
-The bundled Fira Mono font (`assets/fonts/`) is not covered by these licenses: it is
-distributed under the SIL Open Font License 1.1, see
-[LICENSE-FiraMono.txt](assets/fonts/LICENSE-FiraMono.txt).
-
-### Contribution
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion
-in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
-without any additional terms or conditions.
+Unless you explicitly state otherwise, any contribution intentionally submitted for
+inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed
+as above, without any additional terms or conditions.
