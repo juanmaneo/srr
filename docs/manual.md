@@ -50,27 +50,26 @@ the **Standard** preset moves them onto the arrows and the numeric keypad.
   from a crouch (they take priority over it), and landing with `↓` held lands crouching.
 * **There is no block button: you block by stepping back**, Tekken style: holding the
   direction *away* from where you face walks backwards with the guard up. A hit landing while
-  you step back away from it is blocked: it does a quarter of the damage, no stun and no
+  you step back away from it is blocked: it does a fraction of the damage, no stun and no
   push. Standing still, walking forward, jumping or attacking does not block. Facing the
   wrong way, "back" is towards the opponent, so turn first.
 * **Fighters are solid**: you cannot walk through the opponent. Walking into it pushes both
   of you (each moves half the overlap), and against a wall it does not budge. You can still
-  **jump over** it: a fighter high enough above the other passes over its body (push box
-  50 × 90 units by default), and lands on the other side if it got past the middle.
+  **jump over** it: a fighter high enough above the other passes over its body, and lands
+  on the other side if it got past the middle.
   Knocked-out and grappling fighters have no push box.
 * **Sidestep to dodge**, Tekken style: keypad `7` steps into the alley, towards the wall,
-  keypad `2` out, towards the street (`Q` / `E` in WASD). Everybody starts on the middle line;
-  the alley is 150 units deep on each side. Strikes, grabs and judo techniques only reach 40
-  units across, so **9 ticks of sidestep (150 ms) take you out of their line**: too slow to
-  dodge a jab on reaction, enough for a high kick seen coming. Fighters 40 units apart across
-  walk past each other. A grab or a technique pulls its catch onto the catcher's line.
+  keypad `2` out, towards the street (`Q` / `E` in WASD). Everybody starts on the middle line.
+  Strikes, grabs and judo techniques only reach a little way across, so **a short sidestep
+  (150 ms) takes you out of their line**: too slow to dodge a jab on reaction, enough for a
+  high kick seen coming. Fighters far enough apart across walk past each other. A grab or a technique pulls its catch onto the catcher's line.
   Sidestepping works on the floor only, together with walking (and stepping back still
   blocks); jumping, crouching and attacking take priority over it. The side view shows the
   depth like the belt scrollers: a fighter further back stands higher and is drawn behind.
 * **Kick from the air.** A kick pressed while jumping is a flying kick (punches, grabs and the
   judo techniques need the floor). It keeps the kick's numbers and flies on with the jump,
-  steering included; strikes reach 60 units up or down, so **press it near the top of the
-  jump to come down active** during the last steps of the fall. Landing ends the kick
+  steering included; strikes only reach a little way up or down, so **press it near the top
+  of the jump to come down active** during the last steps of the fall. Landing ends the kick
   whatever its phase: pressed too late, it never comes out (a key still held kicks again
   from the floor). A flying kick comes from above, so even a high one hits a crouching
   fighter; stepping back still blocks it.
@@ -80,7 +79,7 @@ the **Standard** preset moves them onto the arrows and the numeric keypad.
   if you like; in the air only a stronger kick chains. Nothing chains after a high strike,
   and a blocked first hit leaves you in the full recovery: block the jab and punish. With the
   default numbers every next-tier link lands inside the stun of the previous hit, so jab,
-  straight, high kick is a true 3-hit combo (5 + 9 + 17 damage) as long as the knockback has
+  straight, high kick is a true 3-hit combo as long as the knockback has
   not pushed the opponent out of reach (start close: the punch chain needs you within 58
   units, the kick chain within 83), while skipping straight to the high kick lets the
   opponent recover just in time. A flying kick that connects opens the combo: you land free
@@ -189,25 +188,25 @@ movements. The 3D view (`Tab`) reads the same palettes for its cel-shaded manneq
 Every player picks a character on the **select screen** that follows the title (`Left` /
 `Right` to choose, `Enter` to fight, `Esc` back to the title), and can change it at any time
 from the **Character** row of the controls page / pause menu. Each character has its own
-numbers and one **special move** on keypad `3` (`F` in WASD):
+numbers ([tuning guide](tuning-guide.md#characters-percentages-and-special-moves)) and one
+**special move** on keypad `3` (`F` in WASD):
 
-| Character | Health | Speed | Jump | Power | Reach | Grab | Special move |
-| --------- | -----: | ----: | ---: | ----: | ----: | ---: | ------------ |
-| **Chalk**, the all-rounder | 100 | 100 % | 100 % | 100 % | 100 % | 100 % | **Shoulder Rush**: a lunging charge across the alley (12 damage) |
-| **Torch**, the zoner | 90 | 95 % | 100 % | 95 % | 100 % | 100 % | **Fireball**: a flaming shot that flies across the arena (10 damage, one every 1.25 s) |
-| **Brick**, the heavy | 130 | 75 % | 85 % | 115 % | 105 % | 125 % | **Iron Palm**: a slow palm (20 damage) that shrugs off hits while it winds up |
-| **Zip**, the rushdown | 80 | 135 % | 112 % | 85 % | 95 % | 90 % | **Slide Tackle**: a low slide that passes under high attacks |
+| Character | Special move |
+| --------- | ------------ |
+| **Chalk**, the all-rounder | **Shoulder Rush**: a lunging charge across the alley |
+| **Torch**, the zoner | **Fireball**: a flaming shot that flies across the arena, with a cooldown |
+| **Brick**, the heavy (more health, slower) | **Iron Palm**: a slow, heavy palm that shrugs off hits while it winds up |
+| **Zip**, the rushdown (less health, faster) | **Slide Tackle**: a low slide that passes under high attacks |
 
 * A special move works from the floor only, and like a strike it can be **blocked by
   stepping back** and is **cancelled by a hit** — except the Iron Palm, which takes the
   hits of its start-up without flinching (they still hurt; a grab still beats it).
 * **Combos**: a strike that connected can be cancelled into the special move, like into a
   stronger strike (jab → straight → shoulder rush). Nothing chains after a special move.
-* **The fireball** leaves Torch's hands on the 13th tick and flies 11 units a tick for 70
-  ticks, on Torch's line: **step back** to block it, **sidestep** out of its line or
-  **jump** over it. It vanishes on its first hit, and two fireballs meeting head-on put
-  each other out. Torch must wait 75 ticks before the next one: the orange gauge along
-  the bottom of its health bar refills meanwhile.
+* **The fireball** flies along Torch's line: **step back** to block it, **sidestep** out of
+  its line or **jump** over it. It vanishes on its first hit, and two fireballs meeting
+  head-on put each other out. Until Torch can throw the next one, the orange gauge along
+  the bottom of its health bar refills.
 * **The slide** keeps Zip under high punches and high kicks until it recovers; low and
   medium attacks still catch it.
 * The bars, the name tags (`P1 Torch`) and the health count follow each character; at
@@ -218,7 +217,6 @@ numbers and one **special move** on keypad `3` (`F` in WASD):
   server at once. In practice the round restarts at once with the new character, and the
   computer plays another character every round.
 
-The numbers are in the [tuning guide](tuning-guide.md#characters-percentages-and-special-moves).
 A new character is one more entry in `src/game/character.rs`.
 
 ## Keyboard layout
@@ -323,22 +321,18 @@ still); when the server itself is not heard from, the banner says `Waiting for t
 
 ## Grappling (BJJ / MMA)
 
-Press keypad `0` next to the opponent to grab (start-up 4 ticks, active 2, range 55; a whiff
-leaves you open for 20 ticks). A connected grab locks both fighters in a **clinch** and the
-fighter who grabbed is on **top**:
+Press keypad `0` next to the opponent to grab; a whiff leaves you open. A connected grab
+locks both fighters in a **clinch** and the fighter who grabbed is on **top**. The top climbs
+the ladder **clinch → mount (takedown) → submission** with a fresh press of grab once it has
+held the position long enough, and strikes with a fresh punch or kick press. The submission
+drains health until the tap-out (a KO). The numbers are in the
+[tuning guide](tuning-guide.md#grappling-the-ladder).
 
-| Position   | Top (attacker)                                             | Bottom (defender)          |
-| ---------- | ---------------------------------------------------------- | -------------------------- |
-| Clinch     | strikes: 3 damage; grab again → takedown (8 damage)         | escape: 4 points            |
-| Mount      | ground strikes: 4 damage; grab again → submission          | escape: 7 points            |
-| Submission | drains 2 health every 12 ticks until the tap-out (a KO)   | escape: 10 points           |
-
-* The top advances with a fresh press of grab once it held the position for 0.75 s, and
-  strikes with a fresh punch or kick press (at most one every 15 ticks).
-* The bottom escapes by mashing: every tick with any fresh key press scores a point. Breaking
-  free pushes the fighters apart and stuns the top for 20 ticks.
-* The referee stands both fighters up after 5 s in the same position, and a hit from a third
-  fighter breaks the hold.
+* The bottom escapes by mashing: every tick with any fresh key press scores a point, and each
+  rung of the ladder needs more points. Breaking free pushes the fighters apart and stuns the
+  top.
+* The referee stands both fighters up after a while in the same position, and a hit from a
+  third fighter breaks the hold.
 * Grabs are unblockable (stepping back does not help), but a strike beats a grab: getting hit
   during the start-up cancels it. Stunned or airborne fighters cannot be grabbed.
 
@@ -355,20 +349,15 @@ otherwise the sweep wins.
 | `5` + `9` (medium punch + high kick) | aerial foot sweep | a flying **juji-gatame** leg kick scissors the opponent and sweeps it off its feet | **Hon-gesa-gatame** (scarf-hold pin) |
 | `8` + `9` (medium kick + high kick)  | grab and projection | **Ippon-seoi-nage**, the one-arm shoulder throw (te-waza) | **Ude-hishigi-juji-gatame** (cross armbar) |
 
-| Default numbers | Sweep `5`+`9` | Throw `8`+`9` |
-| --------------- | ------------: | ------------: |
-| Start-up / active / whiff recovery (ticks) | 6 / 3 / 24 | 8 / 2 / 28 |
-| Range | 75 | 65 |
-| Projection (counter window) | 24 ticks (first 12) | 30 ticks (first 12) |
-| Landing damage | 10 | 14 |
-| Escape from the finish | 9 points | 11 points |
+The sweep is quicker and reaches further; the throw hits harder and is harder to escape
+([numbers](tuning-guide.md#grappling-the-ladder)).
 
 * Like a grab, a technique is unblockable, a strike during its start-up cancels it, and it
   only catches fighters on the floor that are neither stunned nor grappling. A whiff cannot
   be cancelled: it is very punishable.
 * Nobody can escape during the projection. On landing, the thrower holds the finish: it
-  drains like the submission (2 health every 12 ticks) until the tap-out, an escape (mash any
-  key), or the referee's stand-up after 5 s.
+  drains like the submission until the tap-out, an escape (mash any key), or the referee's
+  stand-up.
 * **Counter-grabbing needs the exact same combination**: `5` + `9` counters `5` + `9`, `8` +
   `9` counters `8` + `9`. Either enter it during the first ticks of the projection, or be
   winding up the same technique when the opponent's connects: the roles are reversed and you
@@ -396,20 +385,11 @@ page. The top-right corner of the title screen tells where the sound is at:
 on stderr natively, in the browser console on the web). No sound? Check that the tab is not
 muted, click into the page, and look at the console.
 
-Default frame data (60 ticks per second, arena 1200 units wide, 100 health):
+## Rounds
 
-| Attack       | Start-up | Active | Recovery | Range | Damage | Knockback | Hit-stun |
-| ------------ | -------: | -----: | -------: | ----: | -----: | --------: | -------: |
-| Low punch    | 3        | 2      | 6        | 80    | 5      | 12        | 10       |
-| Medium punch | 5        | 3      | 10       | 85    | 9      | 20        | 14       |
-| High punch   | 8        | 3      | 16       | 90    | 14     | 32        | 18       |
-| Low kick     | 5        | 3      | 9        | 105   | 7      | 16        | 12       |
-| Medium kick  | 7        | 3      | 13       | 115   | 11     | 26        | 16       |
-| High kick    | 11       | 4      | 20       | 125   | 17     | 40        | 22       |
-
-Kicks keep their numbers in the air (a flying kick is cut short by the landing). Every strike
-reaches 60 units up or down. These are Chalk's numbers; the other characters scale damage
-and range (see [Characters](#characters)).
+The frame data of every attack (60 ticks per second) is in the
+[tuning guide](tuning-guide.md#the-six-attacks); those are
+Chalk's numbers, and the other [characters](#characters) scale damage and range.
 
 A round lasts 99 seconds after a 2-second countdown. It ends when only one fighter is still
 standing, or at time-up (most health wins). Every player then presses `Enter` to get ready

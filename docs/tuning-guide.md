@@ -61,7 +61,9 @@ pokes into long-range threats, so mind its sum with `range` against `walk_speed`
 the slam turns a throw into area denial — raise `slam_radius` and a throw into a crowd
 becomes the play.
 
-The six attacks (start-up, active, recovery, range, damage, knockback, hitstun):
+## The six attacks
+
+Start-up, active, recovery, range, damage, knockback and hitstun, in ticks and units:
 
 | Attack          | start-up | active | recovery | **total** | range | damage | knockback | hitstun |
 | --------------- | --------: | -----: | -------: | --------: | ----: | -----: | --------: | ------: |
