@@ -391,6 +391,30 @@ def texture_colours(mesh):
     return image[v, u]
 
 
+def surface_samples(mesh, per_triangle: int = 8):
+    """Points spread over every triangle with their texture colours: the vertices alone leave
+    the limbs of a decimated mesh too sparse to read the joints off."""
+    import io
+
+    from PIL import Image
+
+    rng = np.random.default_rng(0)
+    tri = np.asarray(mesh.triangles).reshape(-1, 3)
+    a, b = rng.random((2, len(tri), per_triangle, 1))
+    flip = (a + b) > 1
+    a, b = np.where(flip, 1 - a, a), np.where(flip, 1 - b, b)
+    def lerp(values):
+        v = np.asarray(values)[tri]
+        return v[:, None, 0] + a * (v[:, None, 1] - v[:, None, 0]) + b * (v[:, None, 2] - v[:, None, 0])
+    points = lerp(mesh.positions).reshape(-1, 3)
+    uvs = lerp(mesh.uvs).reshape(-1, 2)
+    image = np.asarray(Image.open(io.BytesIO(mesh.texture)).convert("RGB"))
+    h, w = image.shape[:2]
+    u = np.clip((uvs[:, 0] * w).astype(int), 0, w - 1)
+    v = np.clip((uvs[:, 1] * h).astype(int), 0, h - 1)
+    return points, image[v, u]
+
+
 def splat(points, colours, view: str, size=(300, 400), box=(-1.2, 1.2, -0.1, 2.0), skeleton=None):
     """Orthographic dots: `front` looks down -z at x/y, `side` looks at z/y."""
     from PIL import Image, ImageDraw
@@ -424,8 +448,8 @@ def fit_view(prefix: Path, mesh, at, view: str = "front", size=(1040, 800), box=
     the coordinates for a `--config` off."""
     from PIL import ImageDraw
 
-    colours = texture_colours(mesh)
-    img = splat(mesh.positions, colours, view, size=size, box=box, skeleton=skeleton_lines(at))
+    points, colours = surface_samples(mesh)
+    img = splat(points, colours, view, size=size, box=box, skeleton=skeleton_lines(at))
     draw = ImageDraw.Draw(img)
     sx = size[0] / (box[1] - box[0])
     sy = size[1] / (box[3] - box[2])
