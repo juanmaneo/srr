@@ -144,7 +144,7 @@ fn run() -> Result<(), String> {
                         crop_reference(&sheet, validate_variant_pose(&variant, "walk_a")?)?;
                     let walk_b =
                         crop_reference(&sheet, validate_variant_pose(&variant, "walk_b")?)?;
-                    generate_walk_inbetween(&key, &identity, &walk_a, &walk_b, &pose)?
+                    generate_walk_inbetween(&key, &identity, &walk_a, &walk_b, &pose, send_request)?
                 }
                 _ => {
                     let pose_reference = match image::image_dimensions(&sheet) {
@@ -153,7 +153,7 @@ fn run() -> Result<(), String> {
                         })?,
                         _ => crop_reference(&sheet, pose_index)?,
                     };
-                    generate_image(&key, &identity, &pose_reference, &pose)?
+                    generate_image(&key, &identity, &pose_reference, &pose, send_request)?
                 }
             };
             let cell = prepare_cell(&generated, &identity)?;
@@ -251,7 +251,7 @@ fn generate_sheet(variant: &str, output: &Path, seed: Option<&Path>) -> Result<(
                 index + 1,
                 POSES.len()
             );
-            let generated = generate_image(&key, identity, &old_pose, pose)?;
+            let generated = generate_image(&key, identity, &old_pose, pose, send_request)?;
             prepare_cell(&generated, identity)?
         };
         save_png(
@@ -311,8 +311,12 @@ fn generate_walk_cycle(
     let b_reference = crop_reference(sheet_path, validate_variant_pose(variant, "walk_b")?)?;
     let prompt = "Create a polished 2D anime character WALK CYCLE sprite sheet featuring the same adult brunette woman from reference image 1. Output exactly four full-body animation frames in a strict 2-column by 2-row grid, with equal portrait cells filling the whole 3:4 canvas edge-to-edge: top-left is frame 1, top-right frame 2, bottom-left frame 3, bottom-right frame 4. The order is a seamless loop: frame 1 is the forward stride matching reference image 2; frame 2 is the passing pose as her weight moves between steps; frame 3 is the opposite stride matching reference image 3; frame 4 is the returning passing pose that leads smoothly back to frame 1. Show the same facing direction and camera in all four cells. The torso, head, hair, outfit, proportions, scale and foot baseline must stay fixed; only the natural walk-cycle limb positions and slight body bob change. Draw exactly one complete character in each cell, with no clipping and no changes of costume or face. In every frame both eyes are open and BOTH irises are clearly emerald green, matching each other. No brown, blue, hazel, gray, or mismatched irises. Use crisp clean linework and restrained cel shading. Pure solid green (#00FF00) fills every cell behind the character. No gutters, borders, panels, text, arrows, speed lines, shadows, blur, extra characters, or poses outside the four cells. This is a harmless walking animation for a game character, not a storyboard or 3D render.";
     println!("Generating one four-frame {variant} walk-cycle sheet...");
-    let generated =
-        generate_referenced_image(&key, prompt, &[&identity, &a_reference, &b_reference])?;
+    let generated = generate_referenced_image(
+        &key,
+        prompt,
+        &[&identity, &a_reference, &b_reference],
+        send_request,
+    )?;
     let sheet = image::load_from_memory(&generated)
         .map_err(|error| format!("decode generated walk-cycle sheet: {error}"))?
         .to_rgba8();
@@ -357,15 +361,19 @@ fn generate_walk_cycle(
     Ok(())
 }
 
-fn generate_walk_inbetween(
+fn generate_walk_inbetween<F>(
     key: &str,
     identity: &[u8],
     walk_a: &[u8],
     walk_b: &[u8],
     pose: &str,
-) -> Result<Vec<u8>, String> {
+    request: F,
+) -> Result<Vec<u8>, String>
+where
+    F: FnOnce(&str, &Value) -> Result<Value, String>,
+{
     let prompt = walk_inbetween_prompt(pose)?;
-    generate_referenced_image(key, prompt, &[identity, walk_a, walk_b])
+    generate_referenced_image(key, prompt, &[identity, walk_a, walk_b], request)
 }
 
 fn walk_inbetween_prompt(pose: &str) -> Result<&'static str, String> {
@@ -382,12 +390,16 @@ fn walk_inbetween_prompt(pose: &str) -> Result<&'static str, String> {
     }
 }
 
-fn generate_image(
+fn generate_image<F>(
     key: &str,
     identity_reference: &[u8],
     pose_reference: &[u8],
     pose: &str,
-) -> Result<Vec<u8>, String> {
+    request: F,
+) -> Result<Vec<u8>, String>
+where
+    F: FnOnce(&str, &Value) -> Result<Value, String>,
+{
     let pose_detail = match pose {
         "ko" => {
             "The exact action is a knockout: she has fallen onto her side and lies horizontally on the ground, with her head and shoulders toward the right side of the frame and her legs and boots extending toward the left. Her eyes are closed and her limbs rest naturally on the ground. Keep the pose strongly asymmetrical so horizontal mirroring makes her lie in the opposite direction. Do not draw her flat on her back, star-shaped, sitting, standing, crouching, kneeling, or hovering."
@@ -438,14 +450,18 @@ fn generate_image(
         POSE_DESCRIPTIONS[POSES.iter().position(|known| *known == pose).unwrap()],
         effects
     );
-    generate_referenced_image(key, &prompt, &[identity_reference, pose_reference])
+    generate_referenced_image(key, &prompt, &[identity_reference, pose_reference], request)
 }
 
-fn generate_referenced_image(
+fn generate_referenced_image<F>(
     key: &str,
     prompt: &str,
     references: &[&[u8]],
-) -> Result<Vec<u8>, String> {
+    transport: F,
+) -> Result<Vec<u8>, String>
+where
+    F: FnOnce(&str, &Value) -> Result<Value, String>,
+{
     let input_references: Vec<Value> = references
         .iter()
         .map(|reference| {
@@ -467,7 +483,7 @@ fn generate_referenced_image(
         "n": 1,
         "input_references": input_references
     });
-    let response = send_request(key, &request)?;
+    let response = transport(key, &request)?;
     if let Some(cost) = response.pointer("/usage/cost") {
         println!("  OpenRouter reported cost: ${cost}");
     }
@@ -857,6 +873,115 @@ mod tests {
             assert!(prompt.contains("natural in-between frame"));
         }
         assert!(walk_inbetween_prompt("walk_a").is_err());
+    }
+
+    fn mock_green_screen_response() -> Value {
+        let mut image = RgbaImage::from_pixel(512, 512, Rgba([0, 255, 0, 255]));
+        for y in 48..464 {
+            for x in 176..336 {
+                image.put_pixel(x, y, Rgba([220, 30, 30, 255]));
+            }
+        }
+        json!({
+            "data": [{"b64_json": STANDARD.encode(encode_png(&image).unwrap())}],
+            "usage": {"cost": 0.0}
+        })
+    }
+
+    #[test]
+    fn walk_inbetween_generation_uses_a_mock_and_processes_its_image_response() {
+        let identity = b"identity-reference";
+        let walk_a = b"walk-a-reference";
+        let walk_b = b"walk-b-reference";
+        let response = mock_green_screen_response();
+        let generated = generate_walk_inbetween(
+            "test-key",
+            identity,
+            walk_a,
+            walk_b,
+            "walk_c",
+            |key, request| {
+                assert_eq!(key, "test-key");
+                assert_eq!(request["model"], MODEL);
+                assert_eq!(request["resolution"], "2K");
+                assert_eq!(request["aspect_ratio"], "3:4");
+                assert_eq!(request["n"], 1);
+                let prompt = request["prompt"].as_str().unwrap();
+                assert!(prompt.contains("Both eyes are open"));
+                assert!(prompt.contains("matching emerald green"));
+                let references = request["input_references"].as_array().unwrap();
+                assert_eq!(references.len(), 3);
+                for (reference, expected) in references.iter().zip([
+                    identity.as_slice(),
+                    walk_a.as_slice(),
+                    walk_b.as_slice(),
+                ]) {
+                    let data_url = reference["image_url"]["url"].as_str().unwrap();
+                    let encoded = data_url.strip_prefix("data:image/png;base64,").unwrap();
+                    assert_eq!(STANDARD.decode(encoded).unwrap(), expected);
+                }
+                Ok(response)
+            },
+        )
+        .unwrap();
+        let generated = image::load_from_memory(&generated).unwrap().to_rgba8();
+
+        assert_eq!(generated.dimensions(), (512, 512));
+        assert_eq!(generated.get_pixel(0, 0)[3], 0);
+        assert_eq!(generated.get_pixel(256, 256), &Rgba([220, 30, 30, 255]));
+    }
+
+    #[test]
+    fn standard_pose_generation_uses_a_mocked_request_transport() {
+        let response = mock_green_screen_response();
+        let generated = generate_image(
+            "test-key",
+            b"identity-reference",
+            b"pose-reference",
+            "stand",
+            |key, request| {
+                assert_eq!(key, "test-key");
+                assert_eq!(request["model"], MODEL);
+                assert!(
+                    request["prompt"]
+                        .as_str()
+                        .unwrap()
+                        .contains("BOTH irises vivid emerald green")
+                );
+                let references = request["input_references"].as_array().unwrap();
+                assert_eq!(references.len(), 2);
+                Ok(response)
+            },
+        )
+        .unwrap();
+        let generated = image::load_from_memory(&generated).unwrap().to_rgba8();
+
+        assert_eq!(generated.dimensions(), (512, 512));
+        assert_eq!(generated.get_pixel(0, 0)[3], 0);
+        assert_eq!(generated.get_pixel(256, 256), &Rgba([220, 30, 30, 255]));
+    }
+
+    #[test]
+    fn mocked_generation_response_without_an_image_returns_an_error() {
+        let error = generate_walk_inbetween(
+            "test-key",
+            b"identity",
+            b"walk-a",
+            b"walk-b",
+            "walk_d",
+            |_, request| {
+                assert!(
+                    request["prompt"]
+                        .as_str()
+                        .unwrap()
+                        .contains("Walk B back to Walk A")
+                );
+                Ok(json!({"data": []}))
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("OpenRouter response has no image"));
     }
 
     #[test]
