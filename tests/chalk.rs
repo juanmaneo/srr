@@ -54,8 +54,8 @@ fn the_sheet_has_a_cell_for_every_movement_in_the_grid_of_the_manga() {
         let (left, top) = cell_origin(movement, Facing::Right);
         assert_eq!(left, index % COLUMNS * CELL_WIDTH);
         assert_eq!(top, index / COLUMNS * CELL_HEIGHT);
-        if let Some(pose) = Pose::ALL.get(index) {
-            assert_eq!(movement.pose(), *pose);
+        if index < 22 {
+            assert_eq!(movement.pose(), Pose::ALL[index]);
         }
         let (_, below) = cell_origin(movement, Facing::Left);
         assert_eq!(

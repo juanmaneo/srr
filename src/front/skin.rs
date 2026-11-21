@@ -33,7 +33,7 @@ use std::sync::OnceLock;
 
 use super::moves::move_of;
 use super::scene::Rgba;
-use crate::game::{Character, Fighter, Limb, Skin, Strength, Variant};
+use crate::game::{Character, Fighter, FighterState, Limb, Skin, Strength, Variant};
 
 // -----------------------------------------------------------------------------------------
 // The palettes (the 3D view's volumes)
@@ -334,11 +334,15 @@ pub enum Pose {
     SpecialSlide,
     /// Lying knocked out.
     Ko,
+    /// Passing between the first and opposite walking strides.
+    WalkC,
+    /// Passing between the opposite and first walking strides.
+    WalkD,
 }
 
 impl Pose {
     /// Every pose, in the fixed order of the sheet's cells (row-major).
-    pub const ALL: [Pose; 22] = [
+    pub const ALL: [Pose; 24] = [
         Pose::Stand,
         Pose::WalkA,
         Pose::WalkB,
@@ -361,6 +365,8 @@ impl Pose {
         Pose::SpecialPalm,
         Pose::SpecialSlide,
         Pose::Ko,
+        Pose::WalkC,
+        Pose::WalkD,
     ];
 
     /// The index of the pose's cell in reading order: `self as usize`, since `ALL` is
@@ -495,10 +501,17 @@ fn cells() -> &'static Cells {
     CELLS.get_or_init(|| {
         let mut bytes = Vec::with_capacity(SHEETS.len() * Pose::ALL.len() * 2);
         for sheet in SHEETS {
-            let pixels = sheet_rgba(sheet).expect("the sheet decodes");
+            let sheet_pixels = sheet_rgba(sheet).expect("the sheet decodes");
             for pose in Pose::ALL {
                 for facing in [Facing::Right, Facing::Left] {
-                    bytes.push(centred(&cell(&pixels, SHEET_WIDTH, pose.index(), facing)));
+                    let pose_pixels =
+                        centred(&cell(&sheet_pixels, SHEET_WIDTH, pose.index(), facing));
+                    let pose_pixels = fallback_pose_if_empty(pose, &pose_pixels)
+                        .map(|fallback| {
+                            centred(&cell(&sheet_pixels, SHEET_WIDTH, fallback.index(), facing))
+                        })
+                        .unwrap_or(pose_pixels);
+                    bytes.push(pose_pixels);
                 }
             }
         }
@@ -559,7 +572,20 @@ fn centred(cell: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The index of the cell `variant`/`pose`/`facing` in [`cells`]: `const fn` so the whole
+/// Empty new walk cells in older sheets borrow the matching existing stride. Generated sheets
+/// with actual artwork keep their own pixels, so upgrading the runtime never makes old assets blank.
+fn fallback_pose_if_empty(pose: Pose, pixels: &[u8]) -> Option<Pose> {
+    if !pixels.chunks_exact(4).all(|pixel| pixel[3] <= 16) {
+        return None;
+    }
+    match pose {
+        Pose::WalkC => Some(Pose::WalkA),
+        Pose::WalkD => Some(Pose::WalkB),
+        _ => None,
+    }
+}
+
+/// The offset of the cell `variant`/`pose`/`facing` in [`cells`]: `const fn` so the whole
 /// addressing is checked by the compiler wherever it is used in a `const` context.
 const fn cell_index(variant: u8, pose: Pose, facing: Facing) -> usize {
     variant as usize * Pose::ALL.len() * 2
@@ -1090,8 +1116,35 @@ pub enum Facing {
 /// The pose `fighter` is in: the cell of the sheet the sprite engine draws for its state.
 /// A fighter without its own pose stands in guard — the art carries the movement, the
 /// game's logic the rules. The movement itself is [`move_of`]; the manga sheets paint
-/// twenty-two of its thirty (see
+/// twenty-four of its thirty (see
 /// [`Move::pose`](super::moves::Move::pose)).
 pub fn pose_of(fighter: &Fighter, character: Character, fight_ticks: u32) -> Pose {
-    move_of(fighter, character, fight_ticks).pose()
+    if fighter.state() == FighterState::Walking {
+        super::animation::walking_pose(fight_ticks)
+    } else {
+        move_of(fighter, character, fight_ticks).pose()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Pose, fallback_pose_if_empty};
+
+    #[test]
+    fn empty_walk_slots_fall_back_but_authored_cells_do_not() {
+        let transparent = [0, 0, 0, 0, 0, 0, 0, 16];
+        let authored = [0, 0, 0, 255];
+
+        assert_eq!(
+            fallback_pose_if_empty(Pose::WalkC, &transparent),
+            Some(Pose::WalkA)
+        );
+        assert_eq!(
+            fallback_pose_if_empty(Pose::WalkD, &transparent),
+            Some(Pose::WalkB)
+        );
+        assert_eq!(fallback_pose_if_empty(Pose::WalkC, &authored), None);
+        assert_eq!(fallback_pose_if_empty(Pose::WalkD, &authored), None);
+        assert_eq!(fallback_pose_if_empty(Pose::Stand, &transparent), None);
+    }
 }

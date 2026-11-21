@@ -1373,7 +1373,7 @@ fn every_movement_has_a_clip_and_a_cell() {
     for (index, movement) in Move::ALL.into_iter().enumerate() {
         assert_eq!(movement.index(), index);
         // The first twenty-two are the manga poses, in their order.
-        if index < srr::front::skin::Pose::ALL.len() {
+        if index < 22 {
             assert_eq!(
                 movement.pose(),
                 srr::front::skin::Pose::ALL[index],

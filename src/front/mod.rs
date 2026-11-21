@@ -58,6 +58,7 @@ use crate::game::{
 use crate::net::{Client, MAX_PLAYERS, Status};
 use space::Camera;
 
+mod animation;
 pub mod arena;
 pub mod ascii;
 pub mod chalk;

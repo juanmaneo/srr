@@ -496,7 +496,7 @@ fn a_manga_fighter_poses_with_its_state() {
     use srr::front::skin::Pose;
     use srr::game::Key;
 
-    // Every pose of every fighter decodes: all ten women, all twenty-two poses.
+    // Every pose of every fighter decodes: all ten women, all twenty-four poses.
     for variant in Variant::ALL {
         for pose in Pose::ALL {
             let sprite = srr::front::skin::sprite(variant, pose, srr::front::skin::Facing::Right);
@@ -508,7 +508,7 @@ fn a_manga_fighter_poses_with_its_state() {
         }
     }
 
-    // And the fight animates: walking alternates the two frames.
+    // And the fight animates through four deterministic walk-cycle frames.
     let mut game = Headless::practice();
     game.skip_intro();
     game.game_mut().client_mut().handle(ServerMessage::SkinOf {
@@ -525,7 +525,10 @@ fn a_manga_fighter_poses_with_its_state() {
         game.ticks() as u32,
     );
     assert!(
-        pose == Pose::WalkA || pose == Pose::WalkB || pose == Pose::Stand,
+        matches!(
+            pose,
+            Pose::WalkA | Pose::WalkB | Pose::WalkC | Pose::WalkD | Pose::Stand
+        ),
         "walking poses the fighter: {pose:?}"
     );
     // Both facings reach the arena's sprite draw: walk right, then turn (down + left)
@@ -609,7 +612,7 @@ fn the_sheet_grid_slices_every_pose_of_every_character() {
 
     // The grid: every cell the same box, the poses in the fixed order, every character
     // the same sheet layout — a manga girl fights a chalk stick at the same size.
-    assert_eq!(Pose::ALL.len(), 22);
+    assert_eq!(Pose::ALL.len(), 24);
     for (index, pose) in Pose::ALL.iter().enumerate() {
         assert_eq!(pose.index(), index);
     }
@@ -620,7 +623,7 @@ fn the_sheet_grid_slices_every_pose_of_every_character() {
                 assert_eq!(sprite.width, CELL_WIDTH);
                 assert_eq!(sprite.height, CELL_HEIGHT);
                 assert_eq!(sprite.pixels.len(), CELL_WIDTH * CELL_HEIGHT * 4);
-                // The cell holds the girl: opaque pixels exist, the background is knocked out.
+                // Every pose, including legacy-sheet fallbacks for the new in-betweens, has art.
                 let opaque = sprite.pixels.chunks(4).filter(|p| p[3] > 16).count();
                 assert!(
                     opaque > 500,
@@ -1020,14 +1023,17 @@ fn every_state_of_a_manga_fighter_poses_its_sheet() {
     game.idle(10);
     assert!(matches!(
         pose(&game),
-        Pose::Stand | Pose::WalkA | Pose::WalkB
+        Pose::Stand | Pose::WalkA | Pose::WalkB | Pose::WalkC | Pose::WalkD
     ));
     // Walking: the two cells alternate with the stride. Over a few steps both walk
     // cells show (the stride alternates them); a single tick may still be standing.
     let mut seen_walk = false;
     for _ in 0..16 {
         game.hold(&[Key::D], 1);
-        if matches!(pose(&game), Pose::WalkA | Pose::WalkB) {
+        if matches!(
+            pose(&game),
+            Pose::WalkA | Pose::WalkB | Pose::WalkC | Pose::WalkD
+        ) {
             seen_walk = true;
         }
     }
