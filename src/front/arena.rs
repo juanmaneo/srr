@@ -86,6 +86,14 @@ const TAG: [Rgba; 3] = [
 ];
 const NEON: Rgba = Rgba::hex(0xff3ab4);
 
+fn sprite_facing(state: FighterState, facing: Facing, knockout_facing: Option<Facing>) -> Facing {
+    if state == FighterState::Knockout {
+        knockout_facing.unwrap_or(facing)
+    } else {
+        facing
+    }
+}
+
 /// The colour of `player`: name tag, accessory, HUD. Every seat of the room has its own; they
 /// would only cycle beyond [`MAX_PLAYERS`](crate::net::MAX_PLAYERS).
 pub fn player_color(player: PlayerId) -> Rgba {
@@ -321,7 +329,9 @@ pub fn draw(frame: &mut Frame, client: &Client, fight_ticks: u32) {
                 current.config().character(fighter.player()),
                 fight_ticks,
             );
-            let facing = match fighter.facing() {
+            let sprite_facing =
+                sprite_facing(fighter.state(), fighter.facing(), fighter.knockout_facing());
+            let facing = match sprite_facing {
                 crate::game::Facing::Right => super::skin::Facing::Right,
                 crate::game::Facing::Left => super::skin::Facing::Left,
             };
@@ -461,5 +471,35 @@ fn draw_wall(frame: &mut Frame, fight_ticks: u32) {
     while x < SCREEN_WIDTH {
         frame.rect(x, street_top + STREET_HEIGHT / 2.0, 70.0, 4.0, LINE);
         x += 140.0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sprite_facing;
+    use crate::game::{Facing, FighterState};
+
+    #[test]
+    fn knockout_sprite_uses_the_fatal_hit_direction_when_available() {
+        assert_eq!(
+            sprite_facing(FighterState::Knockout, Facing::Left, Some(Facing::Right)),
+            Facing::Right
+        );
+    }
+
+    #[test]
+    fn knockout_sprite_falls_back_to_the_current_direction() {
+        assert_eq!(
+            sprite_facing(FighterState::Knockout, Facing::Left, None),
+            Facing::Left
+        );
+    }
+
+    #[test]
+    fn other_states_use_the_current_direction() {
+        assert_eq!(
+            sprite_facing(FighterState::Idle, Facing::Right, Some(Facing::Left)),
+            Facing::Right
+        );
     }
 }

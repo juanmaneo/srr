@@ -311,6 +311,8 @@ pub struct Fighter {
     airborne: bool,
     health: i32,
     facing: Facing,
+    /// Direction the fighter was knocked when the fatal hit landed.
+    knockout_facing: Option<Facing>,
     /// Horizontal direction walked on the floor during the last update, 0 when the fighter did
     /// not walk on the floor. Used to decide whether a hit is blocked.
     stride: i32,
@@ -365,6 +367,7 @@ impl Fighter {
             } else {
                 Facing::Right
             },
+            knockout_facing: None,
             stride: 0,
             previous: Input::NONE,
             fresh: Input::NONE,
@@ -418,6 +421,11 @@ impl Fighter {
     /// The direction the fighter looks in.
     pub fn facing(&self) -> Facing {
         self.facing
+    }
+
+    /// Direction the fatal hit knocked the fighter, for orienting the lying-out sprite.
+    pub(crate) fn knockout_facing(&self) -> Option<Facing> {
+        self.knockout_facing
     }
 
     /// The attack in progress, if the fighter is attacking (a special move is not one of the
@@ -629,7 +637,7 @@ impl Fighter {
             self.echo -= 1;
             self.health = self.health.saturating_sub(config.echo_damage).max(0);
             if self.health == 0 {
-                self.knock_out();
+                self.knock_out(self.facing);
             }
         }
     }
@@ -1196,7 +1204,7 @@ impl Fighter {
         }
 
         if self.health == 0 {
-            self.knock_out();
+            self.knock_out(direction);
         } else if flinches {
             // Being hit cancels whatever the fighter was doing, including its own attack, grab
             // or grapple.
@@ -1204,7 +1212,8 @@ impl Fighter {
         }
     }
 
-    fn knock_out(&mut self) {
+    fn knock_out(&mut self, direction: Facing) {
+        self.knockout_facing = Some(direction);
         self.action = Action::KnockedOut;
         self.state = FighterState::Knockout;
     }
@@ -1283,7 +1292,7 @@ impl Fighter {
     pub(crate) fn suffer(&mut self, damage: i32) {
         self.health = self.health.saturating_sub(damage).max(0);
         if self.health == 0 {
-            self.knock_out();
+            self.knock_out(self.facing);
         }
     }
 }
@@ -1332,6 +1341,23 @@ mod tests {
         assert_eq!(fighter.state(), FighterState::Idle);
         assert_eq!(fighter.action, Action::Free);
         assert_eq!(fighter.health(), config.max_health - data.damage);
+    }
+
+    #[test]
+    fn knockout_sprite_facing_follows_the_fatal_hit_knockback() {
+        let config = MatchConfig::default();
+        let data = AttackData {
+            damage: config.max_health,
+            ..*config.attack(Attack::kick(Strength::High))
+        };
+
+        for direction in [Facing::Left, Facing::Right] {
+            let mut fighter = Fighter::spawn(PlayerId(0), 100, &config);
+            fighter.take_hit(&data, direction, false, &config);
+
+            assert_eq!(fighter.state(), FighterState::Knockout);
+            assert_eq!(fighter.knockout_facing(), Some(direction));
+        }
     }
 
     #[test]
