@@ -626,6 +626,23 @@ fn the_sheet_grid_slices_every_pose_of_every_character() {
                     opaque > 500,
                     "{variant:?} {pose:?} {facing:?}: {opaque} opaque pixels"
                 );
+                // The engine anchors the cell at bottom-centre. Its visible silhouette must
+                // therefore be centred too, or a pose change makes the fighter slide sideways.
+                let (left, right) = sprite
+                    .pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pixel)| pixel[3] > 16)
+                    .map(|(index, _)| index % CELL_WIDTH)
+                    .fold((CELL_WIDTH, 0), |(left, right), column| {
+                        (left.min(column), right.max(column))
+                    });
+                assert!(
+                    left.abs_diff(CELL_WIDTH - 1 - right) <= 1,
+                    "{variant:?} {pose:?} {facing:?}: bounds {left}..{right} are off-centre"
+                );
                 // The floor: the fighter's lowest pixels sit near the bottom of the cell.
                 let lowest = sprite
                     .pixels

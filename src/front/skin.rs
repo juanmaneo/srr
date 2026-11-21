@@ -12,9 +12,13 @@
 //! KonoSuba school of bright cel shading, big glossy eyes and bold ink outlines; the move
 //! list follows the broad tradition of sprite brawlers like Phantom Breaker: Battle
 //! Grounds — nothing is copied from either), then normalised: each cell cropped to its
-//! fighter, seated on the cell's floor, scaled to the same height. One image per character
-//! is the point: a diffusion model asked for one pose at a time drifts (hair colour, hem
-//! length, broken legs); one sheet keeps the fighter identical across its movements.
+//! fighter, seated on the cell's floor, scaled to the same height. The sheets are painted by
+//! hand, so the figures sit at varying offsets inside their cells; at load, each cell is
+//! centred horizontally on its visible content (see [`centred`]), so a fighter does not slide
+//! sideways from pose to pose — every engine anchors the cell's bottom-centre on its feet.
+//! One image per character is the point: a diffusion model asked for one pose at a time
+//! drifts (hair colour, hem length, broken legs); one sheet keeps the fighter identical
+//! across its movements.
 //!
 //! Everything else the game draws is rectangles ([`Frame`]), so the headless renderer, Bevy
 //! and Fyrox all draw the same art: the PNG is decoded here (a small DEFLATE decoder, no
@@ -494,7 +498,7 @@ fn cells() -> &'static Cells {
             let pixels = sheet_rgba(sheet).expect("the sheet decodes");
             for pose in Pose::ALL {
                 for facing in [Facing::Right, Facing::Left] {
-                    bytes.push(cell(&pixels, SHEET_WIDTH, pose.index(), facing));
+                    bytes.push(centred(&cell(&pixels, SHEET_WIDTH, pose.index(), facing)));
                 }
             }
         }
@@ -518,6 +522,39 @@ fn cell(pixels: &[u8], sheet_width: usize, index: usize, facing: Facing) -> Vec<
     for y in 0..CELL_HEIGHT {
         let from = (row * CELL_HEIGHT + y) * stride + column * CELL_WIDTH * 4;
         out.extend_from_slice(&pixels[from..from + CELL_WIDTH * 4]);
+    }
+    out
+}
+
+/// A cell with its visible content centred horizontally: the engines anchor the cell's
+/// bottom-centre on the fighter's feet, so a figure painted off-centre would slide sideways
+/// from pose to pose. The rows are untouched (the sheets already seat their fighter on the
+/// cell's floor), and the left-facing cells stay the mirror of the right-facing ones:
+/// mirroring swaps the bounds' centre with the cell's, hence the opposite shift.
+///
+/// The shift always lands inside the cell: the content is at most `CELL_WIDTH` wide, so
+/// centring it leaves at least as much margin as it had on either side.
+fn centred(cell: &[u8]) -> Vec<u8> {
+    let mut left = CELL_WIDTH;
+    let mut right = 0;
+    for row in 0..CELL_HEIGHT {
+        let base = row * CELL_WIDTH * 4;
+        for column in 0..CELL_WIDTH {
+            if cell[base + column * 4 + 3] > 16 {
+                left = left.min(column);
+                right = right.max(column);
+            }
+        }
+    }
+    // `left > right` (an empty cell) makes the copy loop below empty, leaving the cell clear.
+    let shift = ((CELL_WIDTH - 1) as isize - (left + right) as isize) / 2;
+    let mut out = vec![0u8; cell.len()];
+    for row in 0..CELL_HEIGHT {
+        for column in left..=right {
+            let from = (row * CELL_WIDTH + column) * 4;
+            let to = (row * CELL_WIDTH + (column as isize + shift) as usize) * 4;
+            out[to..to + 4].copy_from_slice(&cell[from..from + 4]);
+        }
     }
     out
 }
