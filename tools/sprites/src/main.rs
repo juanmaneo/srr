@@ -136,14 +136,26 @@ fn run() -> Result<(), String> {
             let pose_index = validate_variant_pose(&variant, &pose)?;
             let key = env::var("OPENROUTER_API_KEY")
                 .map_err(|_| "OPENROUTER_API_KEY is not set in this process".to_owned())?;
-            let pose_reference = match image::image_dimensions(&sheet) {
-                Ok((CELL_WIDTH, CELL_HEIGHT)) => fs::read(&sheet)
-                    .map_err(|error| format!("read pose reference {}: {error}", sheet.display()))?,
-                _ => crop_reference(&sheet, pose_index)?,
-            };
             let identity =
                 fs::read(&identity).map_err(|error| format!("read identity reference: {error}"))?;
-            let generated = generate_image(&key, &identity, &pose_reference, &pose)?;
+            let generated = match pose.as_str() {
+                "walk_c" | "walk_d" => {
+                    let walk_a =
+                        crop_reference(&sheet, validate_variant_pose(&variant, "walk_a")?)?;
+                    let walk_b =
+                        crop_reference(&sheet, validate_variant_pose(&variant, "walk_b")?)?;
+                    generate_walk_inbetween(&key, &identity, &walk_a, &walk_b, &pose)?
+                }
+                _ => {
+                    let pose_reference = match image::image_dimensions(&sheet) {
+                        Ok((CELL_WIDTH, CELL_HEIGHT)) => fs::read(&sheet).map_err(|error| {
+                            format!("read pose reference {}: {error}", sheet.display())
+                        })?,
+                        _ => crop_reference(&sheet, pose_index)?,
+                    };
+                    generate_image(&key, &identity, &pose_reference, &pose)?
+                }
+            };
             let cell = prepare_cell(&generated, &identity)?;
             let cell = image::load_from_memory(&cell)
                 .map_err(|error| format!("decode generated cell: {error}"))?
@@ -343,6 +355,31 @@ fn generate_walk_cycle(
         output_dir.display()
     );
     Ok(())
+}
+
+fn generate_walk_inbetween(
+    key: &str,
+    identity: &[u8],
+    walk_a: &[u8],
+    walk_b: &[u8],
+    pose: &str,
+) -> Result<Vec<u8>, String> {
+    let prompt = walk_inbetween_prompt(pose)?;
+    generate_referenced_image(key, prompt, &[identity, walk_a, walk_b])
+}
+
+fn walk_inbetween_prompt(pose: &str) -> Result<&'static str, String> {
+    match pose {
+        "walk_c" => Ok(
+            "Create exactly one full-body 2D anime game sprite of the same adult brunette woman. Reference image 1 defines her identity, face, hair, costume, colors and proportions. Reference image 2 is her Walk A stride; reference image 3 is her opposite Walk B stride. Draw the distinct passing frame halfway from Walk A to Walk B: keep her weight over the same leg that is forward in Walk A, with that support foot planted beneath her hips, while the other leg passes naturally under her body toward its next forward step. Her arms swing halfway between the two references in the matching direction. Preserve the same facing direction, camera, character scale, foot baseline, torso, head, hairstyle and outfit; change only the walk-cycle limb positions and subtle body bob. Both eyes are open and both irises are clearly matching emerald green. This must be a natural in-between frame, not a copy of either stride, a standing pose, or a mirrored character. Draw one clean, anatomically plausible figure with crisp linework and restrained cel shading on a pure solid green (#00FF00) background. No text, border, shadows, speed lines, blur, scenery, panels, extra figures or duplicated limbs. This is one still from a seamless fighting-game walk cycle.",
+        ),
+        "walk_d" => Ok(
+            "Create exactly one full-body 2D anime game sprite of the same adult brunette woman. Reference image 1 defines her identity, face, hair, costume, colors and proportions. Reference image 2 is her Walk A stride; reference image 3 is her opposite Walk B stride. Draw the distinct passing frame halfway from Walk B back to Walk A: keep her weight over the same leg that is forward in Walk B, with that support foot planted beneath her hips, while the other leg passes naturally under her body toward its next forward step. Her arms swing halfway between the two references in the opposite transition direction. Preserve the same facing direction, camera, character scale, foot baseline, torso, head, hairstyle and outfit; change only the walk-cycle limb positions and subtle body bob. Both eyes are open and both irises are clearly matching emerald green. This must be a natural in-between frame, not a copy of either stride, a standing pose, or a mirrored character. Draw one clean, anatomically plausible figure with crisp linework and restrained cel shading on a pure solid green (#00FF00) background. No text, border, shadows, speed lines, blur, scenery, panels, extra figures or duplicated limbs. This is one still from a seamless fighting-game walk cycle.",
+        ),
+        _ => Err(format!(
+            "walk in-between pose must be `walk_c` or `walk_d`, received `{pose}`"
+        )),
+    }
 }
 
 fn generate_image(
@@ -805,6 +842,21 @@ mod tests {
         assert_eq!(POSES.len(), POSE_DESCRIPTIONS.len());
         assert_eq!(POSES[22], "walk_c");
         assert_eq!(POSES[23], "walk_d");
+    }
+
+    #[test]
+    fn walk_inbetween_prompts_distinguish_both_transitions_and_reject_other_poses() {
+        let walk_c = walk_inbetween_prompt("walk_c").unwrap();
+        let walk_d = walk_inbetween_prompt("walk_d").unwrap();
+
+        assert_ne!(walk_c, walk_d);
+        for prompt in [walk_c, walk_d] {
+            assert!(prompt.contains("Reference image 2 is her Walk A stride"));
+            assert!(prompt.contains("reference image 3 is her opposite Walk B stride"));
+            assert!(prompt.contains("both irises are clearly matching emerald green"));
+            assert!(prompt.contains("natural in-between frame"));
+        }
+        assert!(walk_inbetween_prompt("walk_a").is_err());
     }
 
     #[test]
