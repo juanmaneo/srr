@@ -6,6 +6,9 @@ publish = false
 
 [workspace]
 
+[lints.rust]
+warnings = "deny"
+
 [dependencies]
 base64 = "0.22.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
