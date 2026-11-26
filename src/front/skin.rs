@@ -575,7 +575,7 @@ fn centred(cell: &[u8]) -> Vec<u8> {
 /// Empty new walk cells in older sheets borrow the matching existing stride. Generated sheets
 /// with actual artwork keep their own pixels, so upgrading the runtime never makes old assets blank.
 fn fallback_pose_if_empty(pose: Pose, pixels: &[u8]) -> Option<Pose> {
-    if !pixels.chunks_exact(4).all(|pixel| pixel[3] <= 16) {
+    if !pixels.as_chunks::<4>().0.iter().all(|pixel| pixel[3] <= 16) {
         return None;
     }
     match pose {
